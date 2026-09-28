@@ -8,7 +8,7 @@
  *   → http://127.0.0.1:29181/dev/thread-fixture.html
  */
 import { markTurn } from "@colo-design/protocol";
-import { StrictMode } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Block } from "../src/lib/daemon-client";
 import { applyStoredTheme, applyStoredTypeScale } from "../src/lib/settings";
@@ -121,6 +121,102 @@ const blocks: Block[] = [
   turn("e4", 4000),
 ];
 
+/** 도는 답 견본 — 사람 말이 올라온 뒤 글이 이어지고 마감까지를 시간대로 밟는다. */
+function LiveFixture() {
+  const [blocks, setBlocks] = useState<Block[]>([]);
+  const [live, setLive] = useState(false);
+  const timers = useRef<number[]>([]);
+  useEffect(
+    () => () => {
+      timers.current.forEach((id) => {
+        window.clearTimeout(id);
+      });
+    },
+    [],
+  );
+  const play = () => {
+    timers.current.forEach((id) => {
+      window.clearTimeout(id);
+    });
+    timers.current = [];
+    const push = (ms: number, block: Block) =>
+      timers.current.push(window.setTimeout(() => setBlocks((prev) => [...prev, block]), ms));
+    setBlocks([user("lu1", "회원 목록에 검색을 넣어 줘.")]);
+    setLive(true);
+    // 첫 글 — 처음부터 답 모양으로 선다(마감에 모양이 바뀌지 않게).
+    push(400, { ...step("lt1", "회원 목록 화면을 찾았어요"), streaming: true });
+    // 뒤에 이어 온 글이 답 자리를 받는다 — 앞의 글은 과정으로 부드럽게 내려간다.
+    push(1600, {
+      ...step("lt2", "검색창 자리를 머리 쪽에 마련했어요"),
+      streaming: true,
+    });
+    push(2800, {
+      ...step(
+        "lt3",
+        [
+          "검색창을 넣었어요. 치는 대로 목록이 좁혀져요.",
+          "",
+          `[회원 목록](${PREVIEW_URL}/member/list)`,
+        ].join("\n"),
+      ),
+      streaming: true,
+    });
+    // 마감 — 과정이 접히고 고친 화면 카드와 체크가 한 번 등장한다.
+    push(4200, turn("le1", 5200));
+    timers.current.push(window.setTimeout(() => setLive(false), 4200));
+  };
+  return (
+    <section className="nx-chat" style={{ width: 420, margin: "24px auto 0" }}>
+      <div style={{ display: "flex", gap: 8, padding: "0 20px 12px" }}>
+        <button type="button" onClick={play}>
+          도는 답 보기
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            timers.current.forEach((id) => {
+              window.clearTimeout(id);
+            });
+            setBlocks([]);
+            setLive(false);
+          }}
+        >
+          지우기
+        </button>
+      </div>
+      <div className="nx-transcript" style={{ maxHeight: "70vh" }}>
+        <Thread
+          blocks={blocks}
+          live={live}
+          showThinking={false}
+          showTools={false}
+          previewUrl={PREVIEW_URL}
+          cycleScreens={[{ route: "member/list", title: "회원 목록", note: "", at: "" }]}
+          handoff={null}
+          projectWorking={false}
+          canBranch={true}
+          queue={[]}
+          preparing={false}
+          dropped={[]}
+          onFork={() => {}}
+          onEditResend={() => {}}
+          onRetry={() => {}}
+          onRetryDropped={() => {}}
+          onOpenScreen={() => {}}
+          onOpenHistory={() => {}}
+          onReply={async () => {}}
+          onNote={async () => {}}
+          onToast={() => {}}
+          onQueueEdit={() => {}}
+          onQueueNow={() => {}}
+          onBackgroundTask={() => {}}
+          onStopTask={() => {}}
+        />
+      </div>
+    </section>
+  );
+}
+
 function Fixture() {
   return (
     /* .nx 는 견본에서 토큰 범위만 빌린다 — 셸의 그리드(사이드바 + 미리보기)와
@@ -137,6 +233,7 @@ function Fixture() {
             showThinking={false}
             showTools={false}
             previewUrl={PREVIEW_URL}
+            cycleScreens={[{ route: "member/list", title: "회원 목록", note: "", at: "" }]}
             handoff={null}
             projectWorking={false}
             canBranch={true}
@@ -159,6 +256,7 @@ function Fixture() {
           />
         </div>
       </section>
+      <LiveFixture />
     </div>
   );
 }

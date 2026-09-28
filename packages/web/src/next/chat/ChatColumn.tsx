@@ -181,20 +181,27 @@ export function ChatColumn({
   const scroll = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const [unpinned, setUnpinned] = useState(false);
+  // 바닥을 떠난 동안 온 변화 — `맨 아래로` 가 `새 내용` 로 바뀌는 조건이다.
+  const [hasNew, setHasNew] = useState(false);
   const remember = () => {
     const el = scroll.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     pinned.current = atBottom;
     setUnpinned(!atBottom);
+    if (atBottom) setHasNew(false);
   };
-  const toBottom = useCallback(() => {
+  const toBottom = useCallback((smooth = false) => {
     const el = scroll.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    // 부드러운 이동은 사람이 누른 길에만 — 따라가기는 흐르는 답과 싸우지 않게 즉시.
+    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else el.scrollTop = el.scrollHeight;
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 블록이 바뀔 때마다(흐르는 답 포함) 따라간다.
   useEffect(() => {
     if (pinned.current) toBottom();
+    else setHasNew(true);
   }, [blocks, pending.length]);
   // 입력창이 커져 대화가 줄어들 때도 바닥에 붙어 있으면 그 자리를 지킨다 —
   // 여러 줄 · 핀 줄 · 첨부가 늘어나도 마지막 말이 가려지지 않게.
@@ -211,7 +218,8 @@ export function ChatColumn({
   useEffect(() => {
     pinned.current = true;
     setUnpinned(false);
-    requestAnimationFrame(toBottom);
+    setHasNew(false);
+    requestAnimationFrame(() => toBottom());
   }, [activeId]);
 
   // --- 진행 시계: 테이프가 조용한 동안만 ----------------------------------
@@ -222,6 +230,34 @@ export function ChatColumn({
   // 대화를 밀어내지 않게.
   const clockMounted = sessions.running || awaiting !== null;
   const showClock = clockMounted && !tailLive;
+  const empty = blocks.length === 0 && sessions.queue.length === 0 && !clockMounted;
+
+  // --- 빈 화면이 빠지는 모습 · 대화록의 열쇠 ----------------------------------
+  // 첫 말이 올라오면 빈 화면은 흐려지며 빠진다 — 깜빡이며 사라지지 않게.
+  const [emptyFade, setEmptyFade] = useState(false);
+  const wasEmpty = useRef(empty);
+  useEffect(() => {
+    const was = wasEmpty.current;
+    wasEmpty.current = empty;
+    if (empty) {
+      setEmptyFade(false);
+      return undefined;
+    }
+    if (!was) return undefined;
+    setEmptyFade(true);
+    const timer = window.setTimeout(() => setEmptyFade(false), 240);
+    return () => window.clearTimeout(timer);
+  }, [empty]);
+  // 대화가 갈리면 대화록은 새로 마운트되지만, 첫 말로 대화가 태어나는 순간(대화
+  // 없음 → 첫 대화)은 그대로 이어 받는다 — 다시 마운트되면 모든 줄의 등장
+  // 애니메이션이 한 번 더 돈다.
+  const threadKeyNav = useRef<{ id: string | null; key: string }>({ id: null, key: "new" });
+  if (activeId !== threadKeyNav.current.id) {
+    threadKeyNav.current =
+      activeId === null || threadKeyNav.current.id === null
+        ? { id: activeId, key: "new" }
+        : { id: activeId, key: activeId };
+  }
 
   // --- 끌어다 놓기: 칸 어디에 놓아도 입력창의 첨부로 ---------------------------
   const composer = useRef<ComposerHandle | null>(null);
@@ -246,7 +282,6 @@ export function ChatColumn({
         ? L.composer.placeholderMerged
         : L.composer.placeholder;
   const contextFull = sessions.usage !== null && Math.round(sessions.usage.percentage) >= 85;
-  const empty = blocks.length === 0 && sessions.queue.length === 0 && !clockMounted;
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 칸 전체가 파일을 놓는 자리다 — 드롭은 포인터의 일이고, 키보드는 입력창의 첨부 단추로 닿는다.
@@ -274,8 +309,8 @@ export function ChatColumn({
             </button>
           </div>
         )}
-        {empty ? (
-          <div className="nx-empty-chat">
+        {(empty || emptyFade) && (
+          <div className={`nx-empty-chat${emptyFade && !empty ? " nx-empty-chat--out" : ""}`}>
             <span className="nx-empty-sp">
               <SparkIcon />
             </span>
@@ -288,9 +323,10 @@ export function ChatColumn({
               </p>
             )}
           </div>
-        ) : (
+        )}
+        {!empty && (
           <Thread
-            key={activeId ?? "new"}
+            key={threadKeyNav.current.key}
             blocks={blocks}
             live={sessions.running}
             showThinking={chat.showThinking}
@@ -367,21 +403,23 @@ export function ChatColumn({
           </div>
         )}
       </div>
-      {unpinned && (
-        <button
-          type="button"
-          className="nx-jump"
-          onClick={() => {
-            pinned.current = true;
-            setUnpinned(false);
-            toBottom();
-          }}
-        >
-          {sessions.running ? L.chat.newContent : L.chat.toBottom}
-          <ChevIcon />
-        </button>
-      )}
       <div className="nx-cmp-wrap">
+        {/* 맨 아래로 — 입력창 바로 위에 떠서 입력창이 커져도 겹치지 않는다. */}
+        {unpinned && (
+          <button
+            type="button"
+            className="nx-jump"
+            onClick={() => {
+              pinned.current = true;
+              setUnpinned(false);
+              setHasNew(false);
+              toBottom(true);
+            }}
+          >
+            {hasNew ? L.chat.newContent : L.chat.toBottom}
+            <ChevIcon />
+          </button>
+        )}
         {contextFull && <div className="nx-cmp-hint">{L.chat.contextFull}</div>}
         <Composer
           daemon={daemon}

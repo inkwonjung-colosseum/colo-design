@@ -32,6 +32,7 @@
 
 /* ---------- 대화록 ---------- */
 .nx-transcript {
+  position: relative;
   flex: 1;
   overflow: auto;
   padding: 22px 20px 10px;
@@ -254,10 +255,11 @@
 
 /* 답이 되지 못한 말은 13px 의 연한 글자로 왼쪽 세로선에 매달린다. 세로선과
    점은 얼굴이 서는 자리(0–32px)를 쓴다 — 활동 막대도 그 자리를 비우므로 줄이
-   이어 보인다. 점의 배경 테두리가 선을 끊어 점으로 읽힌다(활동 막대와 같은 셈). */
+   이어 보인다. 점의 배경 테두리가 선을 끊어 점으로 읽힌다(활동 막대와 같은 셈).
+   점 · 선은 감싸개(nx-m-stepwrap)에 붙는다 — 글이 담긴 줄은 접힐 때 잘리므로. */
 .nx-m-step {
   position: relative;
-  margin: 0 0 6px 32px;
+  margin: 0;
   min-width: 0;
   font-size: 13px;
   line-height: 1.55;
@@ -265,7 +267,12 @@
   word-break: keep-all;
 }
 
-.nx-m-step::before {
+.nx-m-stepwrap {
+  position: relative;
+  margin: 0 0 6px 32px;
+}
+
+.nx-m-stepwrap::before {
   content: "";
   position: absolute;
   left: -11px;
@@ -277,7 +284,7 @@
   box-shadow: 0 0 0 3px var(--bg);
 }
 
-.nx-m-step::after {
+.nx-m-stepwrap::after {
   content: "";
   position: absolute;
   left: -9px;
@@ -285,15 +292,6 @@
   bottom: -7px;
   width: 1px;
   background: var(--line);
-}
-
-/* 도는 동안의 마지막 줄 — 한 줄만 강조한다. */
-.nx-m-step--now {
-  color: var(--ink);
-}
-
-.nx-m-step--now::before {
-  background: var(--accent);
 }
 
 /* 마크다운의 본문 규칙(.md)은 답의 몫이다 — 과정은 줄 간격과 강조를 눌러
@@ -359,7 +357,8 @@
   background: var(--card);
   transition:
     border-color 0.15s,
-    box-shadow 0.15s;
+    box-shadow 0.15s,
+    transform 0.15s;
 }
 
 .nx .nx-shot:hover {
@@ -549,7 +548,8 @@
 .nx .nx-jump {
   position: absolute;
   left: 50%;
-  bottom: 118px;
+  /* 입력창 감싸개(nx-cmp-wrap) 바로 위에 떠서 입력창이 커져도 겹치지 않는다. */
+  bottom: calc(100% + 6px);
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
@@ -562,6 +562,7 @@
   font-size: 12px;
   color: var(--ink2);
   z-index: 5;
+  animation: nx-rise 0.2s;
 }
 
 /* ---------- 카드 ---------- */
@@ -768,6 +769,7 @@
 
 /* ---------- 입력창 ---------- */
 .nx-cmp-wrap {
+  position: relative;
   padding: 6px 14px 14px;
   flex: none;
 }
@@ -1353,5 +1355,115 @@
 
   .nx-m-run {
     transition: none;
+  }
+}
+
+/* ---------- 답이 끝나는 순간 ----------
+   도는 동안 마지막 글은 처음부터 답 모양으로 서고(판정은 textRoles), 과정 줄은
+   접힐 때 높이를 줄이며 사라진다. 끝난 답의 보상 — 카드 · 체크 — 은 이번 창에서
+   살아 있던 답에만 한 번. 동작 줄이기(next.css)가 이 파일의 움직임도 함께 줄인다. */
+
+/* 과정 한 줄 — 접힘의 높이를 줄 길(grid 1fr→0fr)로 담는다. 답이 끝나거나
+   사용자가 접으면 220ms 로 낮아지며 사라진다. 벌어진 글은 안쪽 줄(nx-m-step)이
+   잘라 담는다 — 점 · 선은 감싸개에 있으므로 잘리지 않는다. */
+.nx-m-stepwrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 220ms ease,
+    margin-bottom 220ms ease,
+    opacity 220ms ease;
+}
+
+.nx-m-stepwrap > .nx-m-step {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.nx-m-stepwrap--gone {
+  grid-template-rows: 0fr;
+  margin-bottom: 0;
+  opacity: 0;
+}
+
+/* 답 자리에서 과정으로 내려간 글 — 답 본문의 몸값에서 과정의 몸값으로 한 번
+   부드럽게 내려온다. 감싸개가 새로 서므로 등장 애니메이션은 끈다. */
+.nx-thread > .nx-m-stepwrap--was {
+  animation: none;
+}
+
+.nx-m-step--was {
+  animation: nx-step-calm 0.3s ease;
+}
+
+.nx-m-stepwrap--was::before,
+.nx-m-stepwrap--was::after {
+  animation: nx-fade 0.3s;
+}
+
+@keyframes nx-step-calm {
+  from {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--ink);
+  }
+}
+
+/* 끝난 답의 고친 화면 카드 — 살짝 튀어 올라오며 등장한다(이번 창에서 살아 있던
+   답에만 한 번). 감싸개의 등장 애니메이션과 겹치지 않게 그쪽은 끈다. */
+.nx-thread > .nx-shots--new {
+  animation: none;
+}
+
+.nx-shots--new .nx-shot {
+  animation: nx-shot-pop 0.3s cubic-bezier(0.2, 0.7, 0.3, 1.1) both;
+}
+
+@keyframes nx-shot-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+}
+
+/* 카드의 화살표 — 손이 가면 오른쪽으로, 누르면 카드가 살짝 줄어든다. */
+.nx .nx-shot .nx-go {
+  transition: transform 0.15s;
+}
+
+.nx .nx-shot:hover .nx-go {
+  transform: translateX(2px);
+}
+
+.nx .nx-shot:active {
+  transform: scale(0.99);
+}
+
+/* 끝난 답의 체크 — 선이 그려지듯 나타난다(이번 창에서 살아 있던 답에만). */
+.nx-settle--draw > .nx-i path {
+  stroke-dasharray: 30;
+  stroke-dashoffset: 30;
+  animation: nx-check-draw 0.3s ease-out forwards;
+}
+
+@keyframes nx-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* 첫 말이 올라오며 빈 화면이 빠질 때 — 제자리에 겹쳐 흐려진다. 대화록이 이미
+   그 자리에 올라와 있으므로 세로를 다시 쓰지 않는다. */
+.nx-empty-chat--out {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  pointer-events: none;
+  animation: nx-fade-out 0.24s forwards;
+}
+
+@keyframes nx-fade-out {
+  to {
+    opacity: 0;
   }
 }

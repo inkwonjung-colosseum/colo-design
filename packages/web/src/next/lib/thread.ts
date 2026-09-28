@@ -323,3 +323,66 @@ export function screenTitle(
   );
   return found?.title ?? words.unknownScreen;
 }
+
+/** 말줄 역할 판정이 읽는 테이프의 모양 — 대화록(Block)에서 필요한 칸만. */
+export interface RoleTapeBlock {
+  type: string;
+  id: string;
+  agentId?: string | null;
+}
+
+/** 과정 문장의 역할 — 접는 줄이 서는 자리와 그 묶음의 열쇠, 답이 끝났는가. */
+export interface StepRole {
+  /** 접는 줄이 서는 자리 — 묶음의 첫 과정 문장. */
+  head: boolean;
+  /** 묶음의 첫 과정 문장 id — 펼침 상태의 열쇠. */
+  key: string;
+  /** 답이 끝났는가 — 끝나면 과정은 접힌다. */
+  settled: boolean;
+}
+
+/** 한 답 묶음 안에서 글 블록의 역할 — 답 자리와 과정 문장들. */
+export interface TextRoles {
+  /** 최종 답 자리의 글 블록 id — 묶음마다 마지막 글. 도는 동안에도 이 자리는 답 모양이다. */
+  answers: ReadonlySet<string>;
+  /** 과정 문장 — 답이 끝나면 한 줄로 접힌다. */
+  steps: ReadonlyMap<string, StepRole>;
+}
+
+/**
+ * 한 답 묶음(사람의 말 뒤부터 답이 끝날 때까지)에서 어느 글이 최종 답 자리인가 —
+ * 묶음마다 마지막 글이 답이고 그 앞의 글은 과정이다. 도는 중에도 마지막 글은
+ * 답 자리다: 답이 끝나는 순간 모양이 바뀌며 다시 마운트되는 일이 없게. 뒤에 이어
+ * 온 글이 답 자리를 받으면 앞의 글은 과정으로 내려간다. 답을 여는 말 · 답을
+ * 닫는 기록이 묶음의 경계고, 생각 · 도구 · 알림은 묶음 안의 일이며 하위
+ * 에이전트의 글(agentId)은 답도 과정도 아니다.
+ */
+export function textRoles(tape: readonly RoleTapeBlock[], live: boolean): TextRoles {
+  const answers = new Set<string>();
+  const steps = new Map<string, StepRole>();
+  let bundle: string[] = [];
+  const close = (settled: boolean) => {
+    if (bundle.length === 0) return;
+    answers.add(bundle[bundle.length - 1]!);
+    const stepIds = bundle.slice(0, -1);
+    stepIds.forEach((id, at) => {
+      steps.set(id, { head: at === 0, key: stepIds[0]!, settled });
+    });
+    bundle = [];
+  };
+  for (const block of tape) {
+    if (block.type === "text" && block.agentId == null) bundle.push(block.id);
+    else if (
+      block.type === "user" ||
+      block.type === "turn" ||
+      block.type === "human" ||
+      block.type === "milestone" ||
+      block.type === "save" ||
+      block.type === "saveBlocked"
+    ) {
+      close(true);
+    }
+  }
+  close(!live); // 꼬리의 묶음 — 답이 도는 중이면 아직 끝나지 않았다.
+  return { answers, steps };
+}
