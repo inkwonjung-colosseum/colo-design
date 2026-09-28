@@ -470,3 +470,54 @@
   outline: 0;
   min-width: 0;
 }
+
+/* 입력칸의 초점 고리 — 키보드로 닿을 때만 테두리와 겉 띠가 선다. */
+.nx-ob-fold input:focus-visible,
+.nx-inv-author input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 설치 단계의 말 — 단계가 바뀔 때만 아주 옅게 번쩍인다. */
+.nx-inst-word {
+  animation: nx-fade 0.15s;
+}
+
+/* 끌어온 동안의 놓는 칸 — 점선이 실선으로 서고 그림이 2px 떠오른다. */
+.nx-drop .nx-i {
+  transition: transform 0.15s;
+}
+
+.nx-drop--over {
+  border-style: solid;
+}
+
+.nx-drop--over .nx-i {
+  transform: translateY(-2px);
+}
+
+/* 여는 중의 놓는 칸 — 칸이 사라지지 않고 같은 자리에서 기다린다. */
+.nx-drop--busy {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--ink3);
+}
+
+.nx-drop--busy .nx-i {
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-inst-word {
+    animation: none;
+  }
+
+  .nx-drop .nx-i {
+    transition: none;
+  }
+
+  .nx-drop--over .nx-i {
+    transform: none;
+  }
+}

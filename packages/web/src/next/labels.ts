@@ -588,7 +588,6 @@ export const L = {
     confirm: "확인",
     invite: "초대 파일",
     inviteFrom: "개발자에게 받은 파일",
-    inviteDrop: "파일을 여기에 놓으세요",
     invitePick: "파일 고르기",
     inviteOpening: "초대 파일을 여는 중…",
     inviteDone: (names: string) => `${names}를 가져왔어요.`,
@@ -605,6 +604,17 @@ export const L = {
     close: "닫기",
     /** policy 가 아닌 설치 실패의 오른쪽 문구 — 본문 문장은 데몬의 detail 이 말한다. */
     agentFailed: "설치가 안 됐어요",
+    /** 확인이 실패로 끝난 항목 — 도는 표시 대신 손이 필요하다는 말. */
+    toolsBlocked: "확인이 막힌 항목이 있어요",
+    /** 설치 진행기의 날 줄을 가려낸 세 단계의 말 — lib/install-step.ts 의 판정과 짝이다. */
+    installSteps: {
+      download: "내려받는 중…",
+      install: "설치하는 중…",
+      verify: "확인하는 중…",
+    },
+    /** 초대 파일 놓는 칸의 문장 — 확장자 대신 쉬운 말로. */
+    inviteDropName: "개발자에게 받은 초대 파일",
+    inviteDropHow: "여기에 놓으면 가져와요",
   },
   /** 처음 여는 프로젝트의 준비 화면(U8). */
   prepare: {
@@ -713,7 +723,6 @@ export const L = {
     dailyLog: "하루 로그",
     openLogFolder: "로그 폴더 열기",
     loggedIn: "로그인됨",
-    installing: (line: string) => `설치하는 중 · ${line}`,
     testSent: "보냈어요",
     testBlocked: (reason?: string) =>
       reason ? `컴퓨터가 알림을 막았어요 — ${reason}` : "컴퓨터가 알림을 막았어요",
@@ -724,6 +733,10 @@ export const L = {
     connectionEnding: (days: number) => `연결이 ${days}일 뒤 끝나요`,
     connectionAsked: "개발자에게 새 초대 파일을 부탁했어요",
     connectionAsk: "개발자에게 새 초대 파일을 부탁하세요",
+    /** 설치 · 로그인 단추가 도는 동안의 말 — 확인이 아니라 하는 일의 이름이다. */
+    installBusy: "설치하는 중…",
+    loginBusy: "로그인하는 중…",
+    codeSending: "보내는 중…",
   },
   /** 업데이트 줄(U12) — 앱 · Claude Code · Codex 가 한 목록. */
   update: {
@@ -748,6 +761,8 @@ export const L = {
     current: (version: string) => `현재 ${version}`,
     appAvailable: (to: string) => `새 버전 ${to} 있어요`,
     app: "앱",
+    /** 재시작 설치가 도는 동안의 말 — 내려받고 다시 시작하는 일이다. */
+    appBusy: "다시 시작하는 중…",
   },
 
 

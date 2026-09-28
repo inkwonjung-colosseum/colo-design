@@ -316,7 +316,8 @@
 
   --text: #0d0d0d;
   --text-2: #5d5d5d;
-  --muted: #8f8f8f;
+  /* 8f8f8f 는 흰 바탕에서 3.2:1 — 읽는 글자의 아래 한 등급으로는 얇았다. */
+  --muted: #6e6e6e;
 
   --accent: #0d0d0d;
   --accent-soft: rgba(13, 13, 13, 0.06);

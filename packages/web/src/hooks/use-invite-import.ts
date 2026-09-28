@@ -43,7 +43,12 @@ export type InviteImportState =
       /** 가져온 초대 파일의 디스크 위치 — 있으면 `invite.discard(path)` 로 지울 수 있다. */
       path?: string;
     }
-  | { phase: "error"; error: string };
+  | {
+      phase: "error";
+      error: string;
+      /** 읽기를 시작한 순간의 첫 실행 여부 — 체크리스트가 이미 같은 오류를 말할 때 판이 이중으로 세지 않게. */
+      firstRun: boolean;
+    };
 
 export interface InviteImportController {
   state: InviteImportState;
@@ -77,7 +82,7 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
       const path = window.coloDesignDesktop?.invite?.pathOf?.(file) ?? null;
       void readInviteFile(file).then((read) => {
         if (!read.ok) {
-          setState({ phase: "error", error: read.error });
+          setState({ phase: "error", error: read.error, firstRun: daemon.projects.length === 0 });
           return;
         }
         // firstRun 은 이 순간에 기억한다 — 적용 도중 첫 프로젝트가 생겨도 판정은

@@ -21,6 +21,11 @@
   animation: nx-pop 0.15s;
 }
 
+/* 창 자체가 초점을 받을 때(tabIndex -1)의 윤곽은 소음이다. */
+.nx-set:focus {
+  outline: none;
+}
+
 .nx-set-hd {
   display: flex;
   align-items: center;
@@ -188,6 +193,13 @@
   border-color: var(--accent);
 }
 
+/* 초점 고리는 키보드로 닿을 때만 — 마우스로 누를 때는 조용히 둔다. */
+.nx-sline select:focus-visible,
+.nx-sline input[type="text"]:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 /* 스위치 — 알림 소리 · 자동 설치. */
 .nx-sw {
   width: 36px;
@@ -207,7 +219,8 @@
   width: 17px;
   height: 17px;
   border-radius: 50%;
-  background: var(--card);
+  /* 손잡이는 어두운 테마에서도 흰 알 — 카드색을 물려받으면 트랙에 묻힌다. */
+  background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition: left 0.15s;
 }
@@ -218,6 +231,15 @@
 
 .nx-sw.nx-sw--on::after {
   left: 17px;
+}
+
+/* 올려 놓으면 트랙이 한 단계 짙어진다 — 꺼진 트랙 · 켜진 트랙이 같은 걸음으로. */
+.nx-sw:hover {
+  background: color-mix(in srgb, var(--line2) 88%, var(--ink));
+}
+
+.nx-sw.nx-sw--on:hover {
+  background: color-mix(in srgb, var(--accent) 88%, var(--ink));
 }
 
 .nx-snote {

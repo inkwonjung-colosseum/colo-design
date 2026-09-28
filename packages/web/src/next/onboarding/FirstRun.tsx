@@ -1,5 +1,6 @@
 import type { OnboardingStep } from "@colo-design/protocol";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useInstallStep } from "../../hooks/use-install-step";
 import type { InviteImportController } from "../../hooks/use-invite-import";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
@@ -40,6 +41,8 @@ export function FirstRun({
   const toolSteps = [gitStep, runtimeStep].filter((step): step is OnboardingStep => step !== null);
   const toolsPass = toolSteps.length === 2 && toolSteps.every((step) => step.status === "pass");
   const toolsOpen = toolSteps.filter((step) => step.status !== "pass");
+  // 확인이 실패한 항목 — 도는 표시 대신 손이 필요하다는 말을 낸다.
+  const toolsFailed = toolSteps.some((step) => step.status === "fail");
 
   // ── AI 연결 — 설치 진행기와 로그인 판이 데몬에 산다.
   const installing = daemon.install?.kind === "install-claude";
@@ -85,6 +88,26 @@ export function FirstRun({
   const projects = daemon.projects;
   const inviteImporting = invite.state.phase === "reading" || invite.state.phase === "applying";
   const [dropOver, setDropOver] = useState(false);
+  // 설치 진행기의 날 줄은 화면에 내리지 않는다 — 단계 말만 선다.
+  const installStep = useInstallStep(daemon.install?.line ?? null);
+  const installStepWord =
+    installStep === null ? L.settings.installBusy : L.onboarding.installSteps[installStep];
+  // 끌어옴의 깊이 — 칸 안의 자식을 오갈 때마다 leave 가 섞여도 강조가 버티게 센다.
+  const dropDepth = useRef(0);
+  // 칸 밖에서 끝난 끌기도 강조를 푼다 — 초대 파일의 전역 드롭은 칸의 onDrop 에
+  // 닿지 않고 지나가므로(capture 에서 가로막힌다) 창에서 먼저 듣는다.
+  useEffect(() => {
+    const clear = () => {
+      dropDepth.current = 0;
+      setDropOver(false);
+    };
+    window.addEventListener("drop", clear, true);
+    window.addEventListener("dragend", clear, true);
+    return () => {
+      window.removeEventListener("drop", clear, true);
+      window.removeEventListener("dragend", clear, true);
+    };
+  }, []);
 
   // ── Codex — 건너뛰어도 되는 선택 줄.
   const codexMissing =
@@ -150,12 +173,16 @@ export function FirstRun({
         <ol className="nx-ob-steps">
           {/* 도구 준비 */}
           <li className={`nx-ob-step${toolsPass ? "" : " nx-ob-step--act"}`}>
-            {sic(toolsPass ? "ok" : "run")}
+            {sic(toolsPass ? "ok" : toolsFailed ? "act" : "run")}
             <div>
               <div className="nx-ob-t">
                 {L.onboarding.tools}
                 <span className="nx-ob-r">
-                  {toolsPass ? L.vocab.toolsReady : L.onboarding.toolsChecking}
+                  {toolsPass
+                    ? L.vocab.toolsReady
+                    : toolsFailed
+                      ? L.onboarding.toolsBlocked
+                      : L.onboarding.toolsChecking}
                 </span>
               </div>
               {toolsOpen.map((step) => (
@@ -188,13 +215,13 @@ export function FirstRun({
             </div>
           </li>
 
-          {/* AI 연결 */}
+          {/* AI 연결 — 갈림길이 있는 칸은 흐리지 않는다. 정말 기다릴 때만 흐린다. */}
           <li
             className={`nx-ob-step${
-              agentState === "idle"
-                ? " nx-ob-step--wait"
-                : agentState === "pass"
-                  ? ""
+              agentState === "pass"
+                ? ""
+                : agentState === "idle" && !agentFix
+                  ? " nx-ob-step--wait"
                   : " nx-ob-step--act"
             }`}
           >
@@ -202,7 +229,9 @@ export function FirstRun({
               agentState === "pass"
                 ? "ok"
                 : agentState === "idle"
-                  ? "wait"
+                  ? agentFix
+                    ? "act"
+                    : "wait"
                   : agentState === "blocked"
                     ? "act"
                     : "run",
@@ -222,8 +251,11 @@ export function FirstRun({
                   <div className="nx-bar" aria-hidden="true">
                     <i />
                   </div>
+                  {/* 설치 프로그램의 날 줄은 내리지 않는다 — 단계 말만 바뀐다. */}
                   <div className="nx-ob-log" role="status">
-                    {daemon.install.line}
+                    <b key={installStepWord} className="nx-inst-word">
+                      {installStepWord}
+                    </b>
                   </div>
                 </>
               )}
@@ -321,20 +353,34 @@ export function FirstRun({
                 </span>
               </div>
 
+              {projects.length === 0 && inviteImporting && (
+                <div className="nx-drop nx-drop--busy" role="status">
+                  <Spin />
+                  <div>{L.onboarding.inviteOpening}</div>
+                </div>
+              )}
+
               {projects.length === 0 && !inviteImporting && (
                 // biome-ignore lint/a11y/noStaticElementInteractions: 드롭은 포인터의 일이다 — 키보드는 안의 `파일 고르기` 단추로 같은 곳에 닿는다.
                 // biome-ignore lint/a11y/noNoninteractiveElementInteractions: 위와 같다.
                 <div
                   className={`nx-drop${dropOver ? " nx-drop--over" : ""}`}
-                  onDragOver={(event) => {
+                  onDragEnter={(event) => {
                     event.preventDefault();
+                    dropDepth.current += 1;
                     setDropOver(true);
                   }}
-                  onDragLeave={(event) => {
-                    if (event.currentTarget === event.target) setDropOver(false);
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "copy";
+                  }}
+                  onDragLeave={() => {
+                    dropDepth.current = Math.max(0, dropDepth.current - 1);
+                    if (dropDepth.current === 0) setDropOver(false);
                   }}
                   onDrop={(event) => {
                     event.preventDefault();
+                    dropDepth.current = 0;
                     setDropOver(false);
                     // 초대 파일은 컨트롤러의 전역(capture) 드롭 리스너가 먼저 잡는다 —
                     // 여기까지 오는 드롭은 초대 파일이 아니고, 같은 오류 문장으로 답한다.
@@ -344,7 +390,7 @@ export function FirstRun({
                 >
                   <UploadIcon />
                   <div>
-                    <b>*.colo-invite</b> {L.onboarding.inviteDrop}
+                    <b>{L.onboarding.inviteDropName}</b> {L.onboarding.inviteDropHow}
                   </div>
                   <button type="button" className="nx-btn" onClick={invite.openPicker}>
                     {L.onboarding.invitePick}
