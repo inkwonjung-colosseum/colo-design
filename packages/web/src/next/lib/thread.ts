@@ -305,6 +305,19 @@ export function fastBlockedWords(reason: string, words: FastBlockedWords): strin
 }
 
 /**
+ * 프로바이더별 빠르게의 비용 문장(§5.2) — 툴팁 카드와 켜는 순간의 토스트가
+ * 같은 문장을 쓴다. 문장의 주인은 이 파일이 아니라 `L.fast` 다.
+ */
+export function fastCost(
+  provider: string,
+  words: Pick<FastWords, "costClaude" | "costOmp" | "costOther">,
+): string {
+  if (provider === "claude") return words.costClaude;
+  if (provider === "omp") return words.costOmp;
+  return words.costOther;
+}
+
+/**
  * 빠르게 툴팁 카드의 문장(§5.2) — 제목 하나와 비고 줄들(한 줄에 하나, 없으면 빈
  * 배열). 막힌 이유는 몸이 있는 session 만 보인다 — next 는 아직 켜 주지 않으므로
  * blocked 가 와도 무시한다. 대화 중간에 켜면 그때까지의 대화가 한 번 더 계산되는
@@ -314,9 +327,7 @@ export function fastTipWords(
   state: { subject: "next" | "session"; on: boolean; blocked: string | null; provider: string },
   words: FastWords,
 ): { title: string; notes: string[] } {
-  let cost = words.costOther;
-  if (state.provider === "claude") cost = words.costClaude;
-  else if (state.provider === "omp") cost = words.costOmp;
+  const cost = fastCost(state.provider, words);
   if (state.blocked != null && state.subject === "session") {
     return { title: fastBlockedWords(state.blocked, words.blocked), notes: [] };
   }

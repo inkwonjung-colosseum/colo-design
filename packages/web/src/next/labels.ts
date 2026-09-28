@@ -179,12 +179,6 @@ export const L = {
     attach: "그림 · 문서 첨부 (한 건 8MB까지)",
     pin: "찍기",
     pinTip: "화면에서 고칠 곳 찍기 · ⌘⇧P",
-    fast: "빠르게",
-    fastTip: "같은 모델이 더 빨리 답해요 — 사용량은 약 2배 빨리 닳아요",
-    fastPickTip: "다음 대화부터 빠르게 — 같은 모델이 더 빨리 답해요 · 사용량은 약 2배 빨리 닳아요",
-    fastOn: "빠르게 켜졌어요 · 같은 모델이 더 빨리 답해요",
-    fastOff: "빠르게를 껐어요",
-    fastFail: "빠르게를 바꾸지 못했어요 — 다시 눌러 주세요",
     send: "보내기 · ↵",
     stop: "멈추기",
     pinNote: "어떻게 바꿀까요? (선택)",
@@ -195,7 +189,7 @@ export const L = {
     ai: "AI",
     aiNext: "보내면 이 AI 로 대화가 열려요",
     aiFixed: "이 대화의 AI 예요 · 다른 AI 는 새 대화에서 골라요",
-    fastMissing: "이 모델은 빠르게를 받지 않아요 — 번개 칩은 받는 모델의 대화에만 섰어요.",
+    fastMissing: "이 모델은 빠르게를 받지 않아요 — 번개는 받는 모델에서만 서요",
     model: "모델",
     filter: "모델 고르기",
     filterPlaceholder: "모델 이름으로 고르세요",
@@ -208,6 +202,34 @@ export const L = {
     thinkMax: "최대",
     usage: "사용량",
     loggedIn: "로그인됨",
+  },
+  /**
+   * 빠르게의 문장 묶음(§5.4) — 칩의 이름 · 툴팁 카드 · 토스트. `FastWords`
+   * 모양은 thread.ts 가 정하고 이 묶음이 채운다(통째로 건네므로 불리지 않는
+   * 칸 검사의 표가 `fast` 를 안다).
+   */
+  fast: {
+    name: "빠르게",
+    offTitle: "빠르게 — 같은 모델이 더 빨리 답해요",
+    nextTitle: "다음 대화부터 빠르게 — 같은 모델이 더 빨리 답해요",
+    onTitle: "빠르게 켜짐 · 누르면 꺼요",
+    costClaude: "요금제 사용량과 별도로 사용량 크레딧에서 빠져요 · 같은 답에 약 2배",
+    costMidway: "대화 중간에 켜면 지금까지의 대화도 한 번 더 계산해요",
+    costOmp: "빠른 변종 모델로 답해요 · 사용량이 더 빨리 닳을 수 있어요",
+    costOther: "사용량이 더 빨리 닳아요",
+    blocked: {
+      creditsGone: "사용량 크레딧이 다 떨어져 보통 속도로 답해요",
+      credits: "사용량 크레딧을 켜야 빠르게를 쓸 수 있어요 — claude.ai 설정 → 사용량",
+      org: "조직 설정이 빠르게를 막아 두었어요",
+      orgModels: "조직이 허용한 모델에 빠르게 모델이 없어요",
+      network: "연결 문제로 지금은 빠르게를 쓸 수 없어요",
+      evaluation: "평가 플랜에서는 빠르게를 쓸 수 없어요",
+      cooldown: "빠르게 한도에 닿아 잠시 보통 속도로 답해요 · 풀리면 저절로 다시 켜져요",
+    },
+    /** 켜는 순간 한 번은 비용을 말한다 — 토스트가 그 자리다. */
+    toastOn: (cost: string) => `빠르게 켜졌어요 · ${cost}`,
+    toastOff: "빠르게를 껐어요",
+    toastFail: "빠르게를 바꾸지 못했어요 — 다시 눌러 주세요",
   },
   transcript: {
     emptyTitle: "무엇을 만들까요?",

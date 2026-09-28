@@ -244,11 +244,11 @@ export function fastTipWords(
 | A | 1 | §2 데몬 probe + 시험 | `claude/session.ts` · `claude/driver.ts` · `agent/driver.ts`(주석 · 시그니처) · `server.ts`(catalogSources 자리만) · `plan-tracker.ts` · 새 시험 둘 | GLM 5.3 flash |
 | B | 1 | §3 `ChipTarget` · §4 팝 · 빠르게 버튼의 새 주인(§5.1 규칙은 식으로 제자리에) | `hooks/useSessions.ts` · `chat/ModelChip.tsx` · `chat/Composer.tsx` · `home/HomeComposer.tsx` · `chat/ChatColumn.tsx` · `labels.ts`(`model.*` 칸만) | GLM 5.3 |
 | C | 1 | §5.1~5.3 순수 함수 · 시험 · `.nx-fast-tip` | `next/lib/thread.ts`(파일 끝에 더하기 + `fastToast` 의 선택 칸) · `web/test/next-thread.test.ts` · `chat/chat.css`(파일 끝) | GLM 5.3 flash |
-| D | 2 | §5.2 `Tip` 감싸기 · `fastChip` · `fastTipWords` 를 입력창에 · §5.4 `L.fast` 로 옮기기 · §7 문서 | `chat/Composer.tsx`(번개 자리) · `labels.ts`(`composer.fast*` → `fast`) · `README.md` · `next/README.md` | GLM 5.3 flash |
+| D | 2 | §5.2 `Tip` 감싸기 · `fastChip` · `fastTipWords` 를 입력창에 · §5.4 `L.fast` 로 옮기기 · §7 문서 · 견본 `dev/chip-fixture` | `chat/Composer.tsx`(번개 자리) · `labels.ts`(`composer.fast*` → `fast`) · `README.md` · `next/README.md` | GLM 5.3(B 의 에이전트가 문맥을 이어 맡음) |
 
 - 물결 1 의 셋은 같은 줄을 만지지 않는다. `labels.ts` 는 B 만(`model` 묶음), `Composer.tsx` 는 B 만,
   `thread.ts` · `chat.css` 는 C 만.
-- D 는 A · B · C 를 합친 통합 브랜치에서 가른다.
+- D 는 A · B · C 를 합친 통합 브랜치에서 간다 — 실제로는 `chip-b` 를 통합 상태로 앞당겨 B 의 에이전트가 이어 했다(Composer 의 문맥이 그대로 있다).
 
 ## 9. 가장자리
 
