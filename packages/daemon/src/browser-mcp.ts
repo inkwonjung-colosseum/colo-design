@@ -14,8 +14,9 @@
  *   notifications/initialized, tools/list, tools/call, ping. MCP SDK를 끌지
  *   않는다(의존성 없음): 이 파일은 데몬 번들과 분리된 별도 엔트리다.
  * - 실패도 도구 결과다: 데몬의 ok:false·401·404와 도달 실패는 모두 isError
- *   텍스트로 내려가 턴을 죽이는 대신 모델이 읽고 고치게 한다. 스냅샷 첨부
- *   (모든 액션 도구의 결과에 새 스냅샷)은 데몬 쪽 드라이버 계약이 담당한다.
+ *   텍스트로 내려가 턴을 죽이는 대신 모델이 읽고 고치게 한다. 스냅샷은
+ *   한 줄 표기로 줄어 있고 액션의 답은 바뀐 줄의 요약이다(PLAN-MCP §3.C) —
+ *   그 가공은 데몬이 하고, 여기는 와이어 번역만 한다.
  */
 
 // 이 진입점의 stdout 은 JSON-RPC 전용 채널이다 — 어떤 콘솔 출력보다 먼저 경계를
@@ -74,7 +75,8 @@ async function handle(message: Wire): Promise<void> {
         serverInfo: { name: "colo-browser", title: "콜로디자인 인앱 브라우저", version: "0" },
         instructions:
           "인앱 브라우저 도구 — 사용자가 보고 있는 페이지를 드라이브한다. browser_snapshot의 ref로 " +
-          "요소를 가리키며, 모든 액션의 결과에 새 스냅샷이 실려 온다.",
+          "요소를 가리키며, 액션의 결과는 바뀐 줄의 요약으로 돌아온다. 화면 전체가 필요할 때만 " +
+          "browser_snapshot, 조건으로 찾을 때는 browser_find",
       });
       return;
     case "notifications/initialized":
