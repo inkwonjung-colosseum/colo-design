@@ -56,6 +56,9 @@ export const L = {
     makingFile: "화면 파일을 고치는 중",
     makingCheck: "검사를 돌리는 중",
     firstTurnHint: "처음은 몇 분 걸려요",
+    /** 여정 단추의 접근 이름 — 시계가 매초 이름을 갈아 놓지 않게 보이는 몸과
+       갈라 쓴다. */
+    openWorkNow: (point: string) => `이번 작업 보기 · ${point}`,
   },
 
 
@@ -118,7 +121,10 @@ export const L = {
     submitReadyAny: "만든 것을 개발자에게 제출해요",
     submitMoreAny: "제출한 뒤로 바뀐 것을 같은 요청에 더해 제출해요",
     commentsArrived: "코멘트가 왔어요",
+    /** 열 경계(Splitter)의 접근 값 — 화면 낭독이 폭을 말로 읽는다. */
+    pixels: (n: number) => `${n}픽셀`,
   },
+
   /** 홈의 받은 편지함(U6). */
   inbox: {
     send: "보내기",
@@ -758,6 +764,28 @@ export const L = {
     body: "다시 열면 대화와 작업은 그대로예요.",
     reopen: "다시 열기",
     bootTitle: "화면이 열리지 않아요",
+  },
+
+
+
+  // ── 찾기(⌘K) 창 — 셸 밖(components/shell)에 빌려 쓰는 판이라 사이드바와
+  // 같은 말을 쓴다.
+  palette: {
+    find: "대화, 프로젝트 찾기",
+    findInProject: "이 프로젝트의 대화 찾기",
+    recentConvs: "최근 대화",
+    projectConvs: (name: string) => `${name}의 대화`,
+    screens: "화면",
+    commands: "명령",
+    nowOpen: "지금 열림",
+    noMatch: (word: string) => `'${word}'와 맞는 것이 없어요`,
+    noConvs: "아직 대화가 없어요",
+    noConvsInProject: "이 프로젝트에 아직 대화가 없어요",
+    moveFailed: "프로젝트로 옮기지 못했어요 — 잠시 뒤 다시 시도해 주세요",
+    settingsHint: "AI · 알림 · 연결 · 업데이트",
+    move: "이동",
+    open: "열기",
+    close: "닫기",
   },
 } as const;
 

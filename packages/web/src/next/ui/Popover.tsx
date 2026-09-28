@@ -12,6 +12,7 @@ export function Popover({
   className,
   align = "start",
   up = false,
+  label,
   children,
 }: {
   /** 팝오버를 연 요소 — 이 안의 누름은 바깥이 아니다. */
@@ -22,6 +23,8 @@ export function Popover({
   align?: "start" | "end";
   /** 위로 열기 — 바닥에 붙은 요소(사이드바 아래 · 입력창)의 팝오버. */
   up?: boolean;
+  /** 대화상자의 이름 — 화면 낭독이 이 팝이 무엇인지 말해 준다. */
+  label?: string;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -35,7 +38,12 @@ export function Popover({
       close.current();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close.current();
+      if (event.key !== "Escape") return;
+      /* 다른 Esc 처리기(서랍 닫기 등)까지 내려가지 않게 여기서 멈춘다. */
+      event.stopPropagation();
+      close.current();
+      /* 닫힌 뒤 초점이 허공에 남지 않게 여는 요소로 되돌린다. */
+      anchor.current?.focus();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -83,7 +91,7 @@ export function Popover({
     .filter(Boolean)
     .join(" ");
   return (
-    <div ref={ref} className={classes} role="dialog">
+    <div ref={ref} className={classes} role="dialog" aria-label={label}>
       {children}
     </div>
   );

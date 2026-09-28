@@ -174,6 +174,33 @@ export function Workspace({
   const home = state.view === "home";
   const pinCount = pins.list.length;
 
+  // 좁은 창 서랍 — Esc 로 닫히고, 열리면 첫 줄로 초점이 간다. 위에 대화상자가
+  // 떠 있으면 물러난다(위의 조합키와 같은 규칙).
+  const sidebarRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!(narrow && state.drawer)) return;
+    sidebarRef.current?.querySelector<HTMLElement>(".nx-side-nav .nx-side-row")?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (document.querySelector(".modal, .palette, .nx-set") !== null) return;
+      setDrawer(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [narrow, state.drawer, setDrawer]);
+
+  // 사이드바가 접히거나 닫힐 때 — 초점이 그 안에 있었다면 펼치기 · ≡ 단추로
+  // 되돌린다. 홈은 홈 막대의 단추, 대화 화면은 상태 줄의 단추가 그 자리다.
+  const sidebarWasHidden = useRef(sidebarHidden);
+  useEffect(() => {
+    if (sidebarHidden === sidebarWasHidden.current) return;
+    sidebarWasHidden.current = sidebarHidden;
+    if (!sidebarHidden) return;
+    if (!sidebarRef.current?.contains(document.activeElement)) return;
+    const bar = home ? ".nx-homebar" : ".nx-statusbar";
+    document.querySelector<HTMLElement>(`${bar} .nx-ibtn`)?.focus();
+  }, [sidebarHidden, home]);
+
   return (
     <>
       <div className={classes} data-testid="next-shell">
@@ -187,6 +214,8 @@ export function Workspace({
           onPalette={() => setPalette(true)}
           onCollapse={() => (narrow ? setDrawer(false) : setCollapsed(true))}
           onRenameSession={onRenameSession}
+          hidden={sidebarHidden}
+          containerRef={sidebarRef}
         />
         {narrow && state.drawer && (
           <button

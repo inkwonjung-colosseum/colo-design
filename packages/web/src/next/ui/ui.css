@@ -5,6 +5,18 @@
     transform: rotate(360deg);
   }
 }
+/* 동작 줄이기의 도는 표시 — 멈춘 각도로 서면 깨진 것처럼 보이므로 깜빡임으로
+   살아 있음을 말한다(next.css 의 동작 줄이기 블록이 부른다). */
+@keyframes nx-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
 
 @keyframes nx-fade {
   from {
@@ -16,6 +28,13 @@
   from {
     opacity: 0;
     transform: translateY(-4px) scale(0.98);
+  }
+}
+/* 위로 여는 팝 — 아래로 여는 `nx-pop` 과 같은 모양을 반대 방향에서 온다. */
+@keyframes nx-pop-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
   }
 }
 
@@ -139,7 +158,7 @@
 }
 
 .nx-cnt--g {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--nx-selected);
   color: var(--ink2);
 }
 
@@ -159,7 +178,7 @@
 }
 
 .nx-ibtn:hover {
-  background: rgba(0, 0, 0, 0.055);
+  background: var(--nx-hover);
   color: var(--ink);
 }
 
@@ -204,7 +223,7 @@
 }
 
 .nx .nx-btn--ghost:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--nx-hover);
 }
 
 /* 팝오버 — 누른 요소를 감싼 `.nx-anchor` 에 붙어 선다. */
@@ -238,6 +257,8 @@
 .nx-pop--up {
   top: auto;
   bottom: calc(100% + 6px);
+  transform-origin: bottom;
+  animation: nx-pop-up 0.12s ease-out;
 }
 
 .nx-mh {
@@ -259,7 +280,7 @@
 }
 
 .nx .nx-mi:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--nx-hover);
 }
 
 .nx-mi b {

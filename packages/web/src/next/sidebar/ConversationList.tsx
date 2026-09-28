@@ -257,6 +257,7 @@ export function ConversationList({
             onClose={closeMenu}
             align="end"
             className="nx-conv-pop"
+            label={L.convMenu.label}
           >
             {confirmFor === thread.id ? (
               <div className="nx-conv-confirm">

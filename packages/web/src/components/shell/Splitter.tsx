@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { L } from "../../next/labels";
 
 /**
  * The one draggable column boundary. Drawn over the 1px border the
@@ -47,7 +48,7 @@ export function Splitter({
       aria-valuemin={bounds.min}
       aria-valuemax={bounds.max}
       aria-valuenow={width}
-      aria-valuetext={`${width}픽셀`}
+      aria-valuetext={L.shell.pixels(width)}
       tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
