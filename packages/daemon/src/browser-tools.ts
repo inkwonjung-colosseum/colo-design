@@ -210,8 +210,14 @@ export const BROWSER_TOOLS: ToolDef[] = [
     description:
       "이번 작업을 개발자에게 보낸다(제출). 사용자가 개발자에게 보내 달라고 " +
       "분명히 말했을 때만 부른다 — 짐작으로 부르지 않는다. 결과는 곧바로 오고 " +
-      "진행은 화면의 상태 칩이 알려 준다.",
-    properties: {},
+      "진행은 화면의 상태 칩이 알려 준다. 사용자가 개발자에게 전할 한마디를 " +
+      "말했으면 그 말을 note 에 담는다.",
+    properties: {
+      note: {
+        type: "string",
+        description: "개발자에게 한마디(선택) — 사용자가 한마디를 말했을 때만 그 말 그대로.",
+      },
+    },
   },
 ];
 
@@ -225,6 +231,21 @@ export function browserTools(submitFromChat: boolean): ToolDef[] {
   return submitFromChat
     ? BROWSER_TOOLS
     : BROWSER_TOOLS.filter((tool) => tool.op !== "submitForReview");
+}
+
+/** 제출 한마디의 상한 — 영수증 한 줄의 크기(PLAN-MCP §3.B, HANDOFF_BODY_MAX_CHARS 보다 훨씬 짧다). */
+export const SUBMIT_NOTE_MAX_CHARS = 200;
+
+/**
+ * 제출 한마디의 정규화 — 앞뒤 공백을 걷고 상한에서 자르며, 빈 문자열은
+ * 한마디 없음(undefined)으로 둔다. 도구 인자와 감독자(`submit(via, sessionId,
+ * note)`) 사이에서 같은 뜻으로 넘기기 위한 한 곳 — 감독자도 빈손을 무시하지만
+ * 여기서 한 번 걷어 둔다.
+ */
+export function submitNoteOf(params: Record<string, unknown>): string | undefined {
+  if (typeof params.note !== "string") return undefined;
+  const trimmed = params.note.trim().slice(0, SUBMIT_NOTE_MAX_CHARS);
+  return trimmed === "" ? undefined : trimmed;
 }
 
 /** 데몬의 `/internal/browser`가 답을 먹고 버티는 유예 — waitFor의 5초 폴링과 스크린샷 인코딩까지 담는다. */

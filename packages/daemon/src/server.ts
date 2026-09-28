@@ -20,6 +20,7 @@ import { DriverRegistry } from "./agent/registry.js";
 import { AgentInstall } from "./agent-install.js";
 import { AgentUpdates } from "./agent-update.js";
 import { browserMcpEntry } from "./browser-launch.js";
+import { submitNoteOf } from "./browser-tools.js";
 import { CommandDedupe } from "./command-dedupe.js";
 import {
   type CredentialStore,
@@ -1358,7 +1359,9 @@ export class DaemonServer {
     }
     // submit_for_review (PLAN L6 · O6) — pane 이 아니라 감독자에 향한다.
     // 도구는 의도를 적을 뿐이고 네 단계는 감독자의 틱이 끝낸다. 실림과 실행
-    // 모두 프로젝트의 lifecycle.submitFromChat(기본 true)을 따른다.
+    // 모두 프로젝트의 lifecycle.submitFromChat(기본 true)을 따른다. 세션 id 는
+    // 제출 완료의 귀속 대화가, 한마디는 PR 본문과 영수증이 쓴다 — 버튼 제출과
+    // 같은 자리로.
     if (op === "submitForReview") {
       const workspaces = this.workspaceOfSession(sessionId);
       const slug = workspaces?.slug ?? null;
@@ -1370,7 +1373,11 @@ export class DaemonServer {
         });
         return;
       }
-      workspaces?.supervisor.submit("chat");
+      workspaces?.supervisor.submit(
+        "chat",
+        sessionId,
+        submitNoteOf(params as Record<string, unknown>),
+      );
       reply(200, {
         ok: true,
         result: "개발자에게 보냈어요 — 진행은 상단의 상태 칩이 알려 줍니다.",
@@ -1572,6 +1579,12 @@ export class DaemonServer {
         .filter((line) => TROUBLE_LEVELS[line.level.toLowerCase()] === true)
         .slice(0, MAX_LINES_PER_SCREEN)
         .map((line) => `${line.level}: ${line.text}`);
+      // screen_check 로만 확인한 화면도 이번 작업의 장부에 적는다 —
+      // notePinned 가 게이트 · screen-map.jsonl · 「이번 작업」의 바뀐 화면
+      // (project-fleet 의 screensOfTurn)의 유일한 재료라, navigate 없이
+      // screen_check 만으로 확인한 화면은 장부에서 빠졌다. navigate 가
+      // 남기는 것과 같은 전체 주소다.
+      this.drivers.notePinned(sessionId, target.toString());
       return {
         status: 200,
         body: {
