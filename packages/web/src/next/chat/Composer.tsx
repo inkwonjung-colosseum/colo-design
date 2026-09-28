@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Tip } from "../../components/Tip";
 import type { PinAttachment } from "../../hooks/usePins";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Attachment } from "../../lib/attachment";
@@ -8,7 +9,7 @@ import { koreanNoticeWords } from "../../lib/error-words";
 import { composing } from "../../lib/ime";
 import { isInviteFile, offerInviteFile } from "../../lib/invite-bus";
 import { L } from "../labels";
-import { fastToast, sizeText } from "../lib/thread";
+import { fastChip, fastCost, fastTipWords, fastToast, sizeText } from "../lib/thread";
 import { BoltIcon, ClipIcon, FileIcon, ImageIcon, PinIcon, StopIcon, UpIcon, XIcon } from "./icons";
 import { ModelChip } from "./ModelChip";
 
@@ -365,23 +366,28 @@ export function Composer({
   // 빠르게 — 칩의 주인(target)이 값을 쥔다. 누르면 부탁하고 그 답으로 선다
   // (요금제가 막으면 제자리). 다음 정산의 선택자가 오면 그것이 이긴다.
   const target = sessions.chipTarget(subject);
-  // §5.1 — 묶음 D 가 fastChip() 으로 바꾼다. 켜져 있으면 언제나 보이고(끌 길은
-  // 남긴다 — omp 의 `-fast` 변종으로 도는 대화가 이 경우), 행을 모르면(아직
-  // 목록이 없을 때) 프로바이더 능력으로 보인다.
   const capability =
     daemon.status?.providers?.find((p) => p.id === target.provider)?.capabilities?.fastMode ===
     true;
   const row = modelRowOf(target.models, target.model);
-  const fastShown = target.fastMode || (capability && (row ? row.supportsFastMode : true));
+  const fastShown = fastChip({ capability, row, on: target.fastMode });
   const [fastAck, setFastAck] = useState<{ key: string; on: boolean } | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 주인의 값이 바뀌면(선택자 재읽기 · 모델 바꿈) 데몬의 답이 이긴다 — 의존성은 값으로.
   useEffect(() => {
     setFastAck(null);
   }, [target.key, target.provider, target.model, target.fastMode]);
   const fastOn = fastAck && fastAck.key === target.key ? fastAck.on : target.fastMode;
-  // 데몬이 대신 말하는 거절 이유(요금제 · 쿨다운) — 막혀 있으면 칩의 풍선이
-  // 비용 안내 대신 그 이유를 입는다.
-  const fastBlocked = target.fastModeBlocked;
+  // 툴팁 카드의 문장(§5.2) — 순수 함수가 고르고 Tip 이 띄운다. 네이티브 title 과
+  // 달리 포커스에도 뜨고 자르는 상자를 벗어난다.
+  const fastTip = fastTipWords(
+    {
+      subject: target.subject,
+      on: fastOn,
+      blocked: target.fastModeBlocked,
+      provider: target.provider,
+    },
+    L.fast,
+  );
   const [fastBusy, setFastBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => {
@@ -401,7 +407,7 @@ export function Composer({
       .then((reply) => {
         if (reply === null) {
           setFastAck(null);
-          setToast(L.composer.fastFail);
+          setToast(L.fast.toastFail);
           return;
         }
         // 되살린 몸은 새 id 일 수 있다 — 답을 준 그 주인의 열쇠가 ack 의 주인이다.
@@ -409,15 +415,16 @@ export function Composer({
         setNotice(null);
         setToast(
           fastToast(want, reply.on, reply.blocked, {
-            on: L.composer.fastOn,
-            off: L.composer.fastOff,
-            fail: L.composer.fastFail,
+            on: L.fast.toastOn(fastCost(target.provider, L.fast)),
+            off: L.fast.toastOff,
+            fail: L.fast.toastFail,
+            blocked: L.fast.blocked,
           }),
         );
       })
       .catch(() => {
         setFastAck({ key: target.key, on: fastOn });
-        setToast(L.composer.fastFail);
+        setToast(L.fast.toastFail);
       })
       .finally(() => setFastBusy(false));
   };
@@ -578,22 +585,31 @@ export function Composer({
           up={variant === "thread"}
         />
         {fastShown && (
-          // 아이콘만 서는 칩 — 이름은 aria-label이, 비용 안내는 title이 맡는다.
-          <button
-            type="button"
-            className={`nx-tbtn nx-fast${fastOn ? " nx-tbtn--on" : ""}`}
-            title={
-              target.subject === "next"
-                ? L.composer.fastPickTip
-                : (fastBlocked ?? L.composer.fastTip)
+          <Tip
+            label={
+              <>
+                <b>{fastTip.title}</b>
+                {fastTip.notes.map((note) => (
+                  <small key={note}>{note}</small>
+                ))}
+              </>
             }
-            aria-label={L.composer.fast}
-            aria-pressed={fastOn}
-            disabled={fastBusy}
-            onClick={toggleFast}
+            side={variant === "thread" ? "top" : "bottom"}
+            align="end"
+            bubbleClass="nx-fast-tip"
           >
-            <BoltIcon />
-          </button>
+            {/* 아이콘만 서는 칩 — 이름은 aria-label이, 비용 안내는 툴팁 카드가 맡는다. */}
+            <button
+              type="button"
+              className={`nx-tbtn nx-fast${fastOn ? " nx-tbtn--on" : ""}`}
+              aria-label={L.fast.name}
+              aria-pressed={fastOn}
+              disabled={fastBusy}
+              onClick={toggleFast}
+            >
+              <BoltIcon />
+            </button>
+          </Tip>
         )}
         {showStop ? (
           <button

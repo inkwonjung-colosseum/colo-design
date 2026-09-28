@@ -12,6 +12,7 @@ import {
   failureCards,
   fastBlockedWords,
   fastChip,
+  fastCost,
   fastTipWords,
   fastToast,
   handoffOpen,
@@ -232,6 +233,12 @@ test("fastChip: 켜져 있으면 능력을 몰라도 보인다 — 끌 길은 �
   // 행이 알아 주면 능력과 함께, 거절하면 숨는다.
   assert.equal(fastChip({ capability: true, row: { supportsFastMode: true }, on: false }), true);
   assert.equal(fastChip({ capability: true, row: { supportsFastMode: false }, on: false }), false);
+});
+
+test("fastCost: 프로바이더별 비용 문장 — 툴팁과 토스트가 같은 문장을 쓴다", () => {
+  assert.equal(fastCost("claude", fast), "cost-c");
+  assert.equal(fastCost("omp", fast), "cost-o");
+  assert.equal(fastCost("codex", fast), "cost-x");
 });
 
 test("fastBlockedWords: CLI 영어 원문을 단서로 가른다 — 단서의 순서가 곧 우선순위", () => {
