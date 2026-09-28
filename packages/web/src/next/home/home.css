@@ -193,3 +193,46 @@
   align-items: center;
   gap: 6px;
 }
+
+/* 답을 보낸 카드는 접히며 사라진다 — 갑자기 사라져 나머지 카드가 튀지 않게.
+   카드 사이의 간격은 감싸개의 몫이다(카드의 아래 여백은 0에 두고 둘레가 낸다 —
+   감싸개 안의 여백은 접혀도 남는 자리가 되어 맨 끝 여백이 한 번에 사라진다). */
+.nx-dfold {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-bottom: 10px;
+  opacity: 1;
+  transition:
+    grid-template-rows 220ms ease,
+    margin-bottom 220ms ease,
+    opacity 220ms ease;
+}
+
+.nx-dfold > .nx-dcard {
+  min-height: 0;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.nx-dfold--gone {
+  grid-template-rows: 0fr;
+  margin-bottom: 0;
+  opacity: 0;
+}
+/* 전하지 못한 카드의 한 줄 — 다시 눌러 보라는 말이 카드 안에 선다. */
+.nx-dfail {
+  margin-top: 10px;
+  font-size: 12.5px;
+}
+
+/* 누를 수 없는 줄(업데이트 소식 같은 div)은 손끝의 반응을 내지 않는다 —
+   버튼 줄만 밝아진다. */
+.nx div.nx-irow:hover {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-dfold {
+    transition: none;
+  }
+}

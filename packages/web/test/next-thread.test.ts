@@ -20,6 +20,7 @@ import {
   promptNumbers,
   rawErrorLine,
   retryCount,
+  screenTitle,
   sizeText,
   splitDuration,
 } from "../src/next/lib/thread.ts";
@@ -313,4 +314,32 @@ test("fastToast: blocked 묶음을 넘기면 거절 이유가 한국어로, 안 
     }),
     "Fast mode requires usage credits",
   );
+});
+
+test("screenTitle: 고친 화면 카드의 제목 — 링크 제목 · 이번 작업의 화면 · 첫 화면 · 일반 이름", () => {
+  const words = { homeScreen: L.preview.homeScreen, unknownScreen: L.transcript.unknownScreen };
+  const cycleScreens = [
+    { route: "member/list", title: "회원 목록" },
+    { route: "home", title: "" },
+  ];
+  // 답이 링크에 붙인 제목이 먼저다.
+  assert.equal(screenTitle({ path: "/", title: "대문" }, cycleScreens, words), "대문");
+  // 제목이 없으면 이번 작업의 화면 이름에서 찾는다 — 표기 차이는 같은 화면으로 겨눈다.
+  assert.equal(
+    screenTitle({ path: "/member/list", title: null }, cycleScreens, words),
+    "회원 목록",
+  );
+  assert.equal(
+    screenTitle({ path: "/member/list/", title: null }, cycleScreens, words),
+    "회원 목록",
+  );
+  // 빈 제목의 화면은 후보가 아니다 — 루트는 첫 화면으로.
+  assert.equal(screenTitle({ path: "/", title: null }, cycleScreens, words), L.preview.homeScreen);
+  assert.equal(screenTitle({ path: "/home", title: null }, cycleScreens, words), "이름 없는 화면");
+  // 그래도 모르면 일반 이름 — 주소가 그대로 제목에 서지 않게.
+  assert.equal(
+    screenTitle({ path: "/event/12", title: null }, cycleScreens, words),
+    "이름 없는 화면",
+  );
+  assert.equal(screenTitle({ path: "/event/12", title: null }, undefined, words), "이름 없는 화면");
 });

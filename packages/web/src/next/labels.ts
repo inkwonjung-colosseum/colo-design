@@ -260,6 +260,8 @@ export const L = {
     minutesSeconds: (m: number, s: number) => `${m}분 ${s}초`,
     /** 접힌 진행 문장의 머리 — 답이 끝난 뒤 과정은 이 한 줄로 접힌다. */
     steps: (n: number) => `작업 과정 ${n}단계`,
+    /** 고친 화면 카드의 마지막 이름 — 제목을 모를 때 주소가 서지 않게. */
+    unknownScreen: "이름 없는 화면",
   },
   cards: {
     gateFixed: "AI가 고쳤어요",

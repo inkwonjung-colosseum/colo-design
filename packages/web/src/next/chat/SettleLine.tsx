@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { L } from "../labels";
 import { splitDuration } from "../lib/thread";
 import { Popover } from "../ui/Popover";
@@ -45,6 +45,24 @@ export function SettleLine({
 }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
+  // 복사가 닿았다는 답 — 아이콘이 잠깐 확인으로 바뀐다(토스트와 함께).
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
+  const copyWhole = () => {
+    if (whole === null) return;
+    copyText(whole, () => {
+      onToast(L.transcript.copyAllToast);
+      setCopied(true);
+      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
   const hasMenu = onFork !== null || lastAnswer !== null;
   if (durationMs == null && whole == null && !hasMenu) return null;
   return (
@@ -54,11 +72,8 @@ export function SettleLine({
       {whole != null && (
         <>
           {durationMs != null && <span className="nx-sep">·</span>}
-          <button
-            type="button"
-            onClick={() => copyText(whole, () => onToast(L.transcript.copyAllToast))}
-          >
-            <CopyIcon />
+          <button type="button" onClick={copyWhole}>
+            {copied ? <CheckIcon /> : <CopyIcon />}
             {L.transcript.copyAll}
           </button>
         </>

@@ -188,14 +188,25 @@ export function ChatColumn({
     pinned.current = atBottom;
     setUnpinned(!atBottom);
   };
-  const toBottom = () => {
+  const toBottom = useCallback(() => {
     const el = scroll.current;
     if (el) el.scrollTop = el.scrollHeight;
-  };
+  }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 블록이 바뀔 때마다(흐르는 답 포함) 따라간다.
   useEffect(() => {
     if (pinned.current) toBottom();
   }, [blocks, pending.length]);
+  // 입력창이 커져 대화가 줄어들 때도 바닥에 붙어 있으면 그 자리를 지킨다 —
+  // 여러 줄 · 핀 줄 · 첨부가 늘어나도 마지막 말이 가려지지 않게.
+  useEffect(() => {
+    const el = scroll.current;
+    if (el === null || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => {
+      if (pinned.current) toBottom();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [toBottom]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 다른 대화는 새로 보는 것 — 맨 아래부터.
   useEffect(() => {
     pinned.current = true;
@@ -207,7 +218,10 @@ export function ChatColumn({
   const tailLive = tailMoving(blocks, chat.showThinking, chat.showTools, isToolRunning);
   const awaiting = sessions.awaitingTurn?.sessionId === activeId ? sessions.awaitingTurn : null;
   const clockStart = active?.turnStartedAt ?? awaiting?.since ?? null;
-  const showClock = (sessions.running || awaiting !== null) && !tailLive;
+  // 도는 동안 줄은 늘 그 자리에 서 있고 보이기만 바뀐다 — 붙였다 떨어졌다 하며
+  // 대화를 밀어내지 않게.
+  const clockMounted = sessions.running || awaiting !== null;
+  const showClock = clockMounted && !tailLive;
 
   // --- 끌어다 놓기: 칸 어디에 놓아도 입력창의 첨부로 ---------------------------
   const composer = useRef<ComposerHandle | null>(null);
@@ -232,7 +246,7 @@ export function ChatColumn({
         ? L.composer.placeholderMerged
         : L.composer.placeholder;
   const contextFull = sessions.usage !== null && Math.round(sessions.usage.percentage) >= 85;
-  const empty = blocks.length === 0 && sessions.queue.length === 0 && !showClock;
+  const empty = blocks.length === 0 && sessions.queue.length === 0 && !clockMounted;
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 칸 전체가 파일을 놓는 자리다 — 드롭은 포인터의 일이고, 키보드는 입력창의 첨부 단추로 닿는다.
@@ -282,6 +296,7 @@ export function ChatColumn({
             showThinking={chat.showThinking}
             showTools={chat.showTools}
             previewUrl={daemon.repo?.previewUrl ?? null}
+            cycleScreens={daemon.repo?.cycleScreens}
             handoff={daemon.repo?.handoff ?? null}
             projectWorking={project?.working === true}
             canBranch={canBranch}
@@ -331,22 +346,21 @@ export function ChatColumn({
             key={request.requestId}
             request={request}
             commands={daemon.repo?.commands}
-            onQuestion={(answers) => {
-              void api
-                .respondQuestion(request.requestId, answers, {})
-                .then(() => resolvePending(request.requestId))
-                .catch(() => undefined);
-            }}
-            onPermission={(decision) => {
-              void api
-                .respondPermission(request.requestId, decision)
-                .then(() => resolvePending(request.requestId))
-                .catch(() => undefined);
-            }}
+            onQuestion={(answers) =>
+              // 실패는 카드가 받는다 — 거절이 돌아와 옵션이 다시 눌리는 자리가 된다.
+              api.respondQuestion(request.requestId, answers, {}).then(() => {
+                resolvePending(request.requestId);
+              })
+            }
+            onPermission={(decision) =>
+              api.respondPermission(request.requestId, decision).then(() => {
+                resolvePending(request.requestId);
+              })
+            }
           />
         ))}
-        {showClock && (
-          <div className="nx-m-run" role="status">
+        {clockMounted && (
+          <div className={`nx-m-run${showClock ? "" : " nx-m-run--quiet"}`} role="status">
             <i className="nx-spin" aria-hidden="true" />
             <span>{L.chat.working}</span>
             {clockStart !== null && <Elapsed startedAt={clockStart} />}
