@@ -279,9 +279,9 @@ export const BROWSER_TOOLS: ToolDef[] = [
     name: "screen_files",
     op: "screenFiles",
     description:
-      "화면을 고친 파일 후보를 찾는다 — 그 화면을 고친 커밋이 건드린 파일의 관찰 " +
-      "지도와, 화면 제목이 코드에 적힌 자리에서. 미리보기를 띄우지 않아도 돈다. " +
-      "화면을 고치기 전에 파일을 찾을 때 먼저 부른다.",
+      "화면을 고친 파일 후보를 찾는다 — 레포의 파일 구조(주소와 같은 이름의 파일)와, " +
+      "그 화면을 고친 커밋이 건드린 파일의 관찰 지도, 화면 제목이 코드에 적힌 자리에서. " +
+      "미리보기를 띄우지 않아도 돈다. 화면을 고치기 전에 파일을 찾을 때 먼저 부른다.",
     properties: {
       route: {
         type: "string",
@@ -341,29 +341,43 @@ export function submitNoteOf(params: Record<string, unknown>): string | undefine
 export const SCREEN_FILES_MAX = 6;
 
 /**
- * screen_files 의 판정 (PLAN-MCP §3.E) — 관찰 지도의 파일을 먼저, 제목 글자의
- * 적중을 그 뒤에. 겹치는 파일은 관찰 쪽에 한 번만 남고, 합이 상한을 넘으면
- * 관찰이 먼저다. 출처 표식이 순위를 말한다: `(관찰)` 은 그 화면을 고친 커밋이
- * 건드린 파일이고, `(글자 "…")` 은 화면 제목이 코드에 적힌 자리다. 빈손은
- * 오류가 아니다 — 화면을 고친 기록이 아직 없을 뿐이다.
+ * screen_files 의 판정 (PLAN-MCP §3.E · PLAN-HARNESS §3.B B-2) — 레포 구조의
+ * 파일을 먼저, 관찰 지도의 파일을 그 뒤에, 제목 글자의 적합을 마지막에.
+ * 겹치는 파일은 앞 줄에 한 번만 남고, 합이 상한을 넘으면 앞줄이 먼저다.
+ * 출처 표식이 순위를 말한다: `(주소)` 는 주소와 같은 이름의 파일(레포 구조),
+ * `(관찰)` 은 그 화면을 고친 커밋이 건드린 파일이고, `(글자 "…")` 은 화면
+ * 제목이 코드에 적힌 자리다. 빈손은 오류가 아니다 — 화면을 고친 기록이 아직
+ * 없을 뿐이다.
  */
-export function screenFilesAnswer(observed: string[], hunted: string[], title: string): string {
+export function screenFilesAnswer(
+  observed: string[],
+  hunted: string[],
+  title: string,
+  routed: string[] = [],
+): string {
   const seen = new Set<string>();
-  const observedOnly: string[] = [];
-  for (const file of observed) {
-    if (seen.has(file)) continue;
-    seen.add(file);
-    observedOnly.push(file);
-  }
-  const huntedOnly: string[] = [];
-  for (const file of hunted) {
-    if (seen.has(file)) continue;
-    seen.add(file);
-    huntedOnly.push(file);
-  }
-  const observedCapped = observedOnly.slice(0, SCREEN_FILES_MAX);
-  const huntedCapped = huntedOnly.slice(0, Math.max(0, SCREEN_FILES_MAX - observedCapped.length));
+  const onlyOf = (files: string[]): string[] => {
+    const only: string[] = [];
+    for (const file of files) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      only.push(file);
+    }
+    return only;
+  };
+  const routedOnly = onlyOf(routed);
+  const observedOnly = onlyOf(observed);
+  const huntedOnly = onlyOf(hunted);
+  const routedCapped = routedOnly.slice(0, SCREEN_FILES_MAX);
+  const observedCapped = observedOnly.slice(0, Math.max(0, SCREEN_FILES_MAX - routedCapped.length));
+  const huntedCapped = huntedOnly.slice(
+    0,
+    Math.max(0, SCREEN_FILES_MAX - routedCapped.length - observedCapped.length),
+  );
   const lines: string[] = [];
+  if (routedCapped.length > 0) {
+    lines.push(`파일 후보: ${routedCapped.join(" · ")} (주소)`);
+  }
   if (observedCapped.length > 0) {
     lines.push(`파일 후보: ${observedCapped.join(" · ")} (관찰)`);
   }

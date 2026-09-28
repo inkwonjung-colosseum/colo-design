@@ -401,3 +401,21 @@ test("noteBrowserOp — op 시간을 더하고 실패 종류는 0이 아닌 것�
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("noteGateCheck — fallback 칸은 되짚은 수를 싣고 0이면 싣지 않는다 (PLAN-HARNESS §3.B B-4)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false, fallback: 3 });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false, fallback: 0 });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 0, reopened: false, skipped: "no-screens" });
+    const rows = readRows(dir).filter((r) => r.kind === "gateset");
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]?.fallback, 3);
+    assert.equal("fallback" in (rows[1] ?? {}), false);
+    assert.equal(rows[2]?.skipped, "no-screens");
+    assert.equal("fallback" in (rows[2] ?? {}), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
