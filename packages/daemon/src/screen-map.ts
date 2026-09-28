@@ -20,9 +20,10 @@ const MAX_OBSERVED = 3;
 /**
  * 이 기계의 미리보기 호스트 — cycle-screens 의 screenPathOf 가 origin 없이
  * 부를 때 쓰는 LOOPBACK 과 같은 집합이다. 임포트하면 cycle-screens →
- * screen-map 의 임포트가 돌므로 같은 판정을 이곳에 둔다.
+ * screen-map 의 임포트가 돌므로 같은 판정을 이곳에 둔다. route-index(화면
+ * 색인, PLAN-HARNESS §3.B)도 같은 집합을 쓴다 — export 로 함께 쓴다.
  */
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+export const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 export interface ScreenMapRow {
   at: string;
@@ -74,9 +75,10 @@ export async function appendScreenMap(projectRoot: string, row: ScreenMapRow): P
  * 판정이지만, 여기서 임포트하면 cycle-screens → screen-map 의 임포트가 돌게
  * 되므로 모양과 루프백 집합만 이곳에 둔다. 절대 주소는 이 기계의 미리보기
  * (루프백)일 때만 경로로 편다 — 외부 주소까지 경로로 펴면 그 턴이 고친 파일이
- * 같은 경로의 미리보기 화면 후보로 둔갑한다.
+ * 같은 경로의 미리보기 화면 후보로 둔갑한다. route-index 도 같은 규칙으로
+ * 쓴다(PLAN-HARNESS §3.B — 복제 금지).
  */
-function normalizeRoute(raw: string): string {
+export function normalizeRoute(raw: string): string {
   const noHash = raw.split("#")[0] ?? "";
   const [path = "", query] = noHash.split("?");
   let body = path;

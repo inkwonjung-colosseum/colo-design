@@ -134,6 +134,17 @@ export class PreviewDrivers {
   }
 
   /**
+   * (PLAN-HARNESS §3.B B-4) 게이트를 걸 수 있는 세션인가 — gatePossible 에서
+   * "모인 화면이 있다" 조건만 뺀 것. 드라이버가 없는 브라우저 개발 경로와
+   * 이미 한 번 건 세션은 화면이 있어도 없어도 걸 수 없으므로, 바꾼 파일에서
+   * 화면을 되짚는 길(fallback)도 이 조건을 지난 뒤에야 간다.
+   */
+  gateEligible(sessionId: string): boolean {
+    if (!this.deps.factory()) return false;
+    return !this.gatedSessions.has(sessionId);
+  }
+
+  /**
    * 턴이 끝난 뒤 그 화면들을 기계가 다시 열어 본다 (screen-gate.ts). 문제가
    * 있으면 AI 에게 게이트 턴으로 돌려보내고, 없으면 미뤄 둔 완료 알림을
    * 그제야보낸다 — 순서가 뒤집히면 사용자는 `작업이 끝났습니다` 를 읽은

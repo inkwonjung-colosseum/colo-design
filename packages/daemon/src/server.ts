@@ -12,6 +12,7 @@ import {
   parseClientMessage,
   type ServerMessage,
   type SessionPinHint,
+  type SessionState,
 } from "@colo-design/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
 import type { Diagnostic } from "./agent/driver.js";
@@ -81,8 +82,9 @@ import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
 import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
 import { repoCommandEnv } from "./repo-bringup.js";
+import { filesForRoute, routesForFiles } from "./route-index.js";
 import { judgeScreen, normalizeScreenCheckArgs } from "./screen-gate.js";
-import { observedFilesFor } from "./screen-map.js";
+import { observedFilesFor, readScreenMap } from "./screen-map.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { TurnStats } from "./turn-stats.js";
@@ -482,6 +484,12 @@ export class DaemonServer {
    */
   private readonly screenMapDue = new Map<string, string[]>();
   /**
+   * 바뀐 파일에서 되짚은 화면 수(PLAN-HARNESS §3.B B-4) — gateFromChangedFiles
+   * 가 적고 startGate 가 통계 행(fallback 칸)으로 내려앉힌다. 소비한 자리에서
+   * 지우므로 다음 게이트는 다시 0에서 시작한다.
+   */
+  private readonly gateFallbackCount = new Map<string, number>();
+  /**
    * 브라우저 MCP 자식의 세션별 시크릿(3단계): Map<secret, {sessionId,
    * issuedAt}>. 데몬의 config.token은 전역 공유라 자식에게 못 준다 — 세션마다
    * 새 시크릿을 발급해 메모리에 매핑하면 자식이 타 세션의 RPC를 칠 수 없고,
@@ -751,60 +759,22 @@ export class DaemonServer {
           // (runScreenGate 가 둘 중 하나를 내보낸다). 여기서 먼저 부르면
           // 사용자는 `작업이 끝났습니다` 를 읽은 직후 다시 도는 대화를 본다.
           if (state === "idle" && this.drivers.gatePossible(sessionId)) {
-            // 게이트의 한 바퀴를 재서 통계에 남긴다 — 다시 연 여부는
-            // gatedSessions(사람의 다음 보내기 전까지 산다)로 판정이 났을 때
-            // 읽는다. 판정 상세는 runGate 의 결과에서 온다(kept 는 필터를
-            // 통과한 화면 수다).
-            const gateStart = Date.now();
-            // 라우트↔파일 지도의 재료(2026-09-22): runGate 가 pinnedThisTurn
-            // 을 지우기 전에 화면 집합을 스냅샷한다 — 커밋이 성공한 뒤 sha 와
-            // 함께 한 줄로 내려앉는다.
-            const pinnedNow = this.drivers.pinnedThisTurn.get(sessionId);
-            if (pinnedNow !== undefined && pinnedNow.size > 0) {
-              this.screenMapDue.set(sessionId, [...pinnedNow.keys()]);
-            }
-            // P2-1: 자동 저장의 커밋은 게이트의 판정이 끝난 **뒤**에 건다.
-            // 게이트가 고침 턴을 열면 워크트리가 다시 더러워지므로, 먼저
-            // 커밋하면 한 턴이 커밋 둘로 갈린다. 게이트가 깨져도(reject) 커밋은
-            // 치른다 — 확인 못 한 것이 저장하지 않을 이유는 아니다.
-            void this.drivers.runGate(sessionId, turnDurationMs).then(
-              (outcome) => {
-                this.stats.noteGateCheck(sessionId, {
-                  ms: Date.now() - gateStart,
-                  reopened: this.drivers.gatedSessions.has(sessionId),
-                  ...gateOutcomeStats(outcome),
-                });
-                this.runAutoSave(sessionId);
-              },
-              () => this.runAutoSave(sessionId),
+            this.startGate(sessionId, turnDurationMs);
+          } else if (
+            state === "idle" &&
+            this.autoSaveDue.has(sessionId) &&
+            this.drivers.gateEligible(sessionId)
+          ) {
+            // 묶음 B(PLAN-HARNESS §3.B B-4): 이 턴이 가리킨 화면이 없어도 바뀐
+            // 파일에서 되짚는다 — 관찰 지도에 그 파일을 고친 화면이 있거나,
+            // 그 파일이 Next.js 의 고정 경로 page 파일일 때만(H-5 — 파일
+            // 이름에서 주소를 지어내지 않는다).
+            void this.gateFromChangedFiles(sessionId).then(
+              () => this.gateAfterFallback(sessionId, turnDurationMs),
+              () => this.gateAfterFallback(sessionId, turnDurationMs),
             );
           } else {
-            // 답을 낸 턴에 게이트가 돌지 않은 이유도 한 줄로 남는다(2026-09-22)
-            // — gateset 행의 분모다. idle 이 아닌 방송은 아직 턴의 끝이 아니므로
-            // 세지 않는다.
-            if (state === "idle" && this.autoSaveDue.has(sessionId)) {
-              const reason = this.drivers.gatedSessions.has(sessionId)
-                ? "once"
-                : (this.drivers.pinnedThisTurn.get(sessionId)?.size ?? 0) > 0
-                  ? "no-driver"
-                  : "no-screens";
-              this.stats.noteGateCheck(sessionId, {
-                ms: 0,
-                screens: 0,
-                reopened: false,
-                skipped: reason,
-              });
-            }
-            const notice = noticeForState(
-              sessionId,
-              state,
-              this.manager.get(sessionId)?.title ?? NEW_SESSION_TITLE,
-              turnDurationMs,
-            );
-            if (notice) this.config.onNotice?.(notice);
-            // 게이트가 없는 턴의 커밋은 여기서 곧바로 — idle 에만. 다른 상태의
-            // idle 아닌 방송(running · waiting_*)은 아직 턴의 끝이 아니다.
-            if (state === "idle") this.runAutoSave(sessionId);
+            this.finishWithoutGate(sessionId, state, turnDurationMs);
           }
           // 게이트의 판정 상태는 세션과 함께 간다 — close, delete, remove,
           // daemon stop all land here as `closed`.
@@ -1370,6 +1340,120 @@ export class DaemonServer {
   }
 
   /**
+   * 게이트의 첫 갈래 — 이 턴이 가리킨 화면이 있을 때(PLAN-HARNESS §3.B B-4 가
+   * onState 의 if 몸통을 그대로 옮긴 자리다). 판정 → 알림 → 자동 보관의
+   * 순서가 이 안에 있다.
+   */
+  private startGate(sessionId: string, turnDurationMs: number | undefined): void {
+    // 게이트의 한 바퀴를 재서 통계에 남긴다 — 다시 연 여부는
+    // gatedSessions(사람의 다음 보내기 전까지 산다)로 판정이 났을 때
+    // 읽는다. 판정 상세는 runGate 의 결과에서 온다(kept 는 필터를
+    // 통과한 화면 수다).
+    const gateStart = Date.now();
+    // 라우트↔파일 지도의 재료(2026-09-22): runGate 가 pinnedThisTurn
+    // 을 지우기 전에 화면 집합을 스냅샷한다 — 커밋이 성공한 뒤 sha 와
+    // 함께 한 줄로 내려앉는다.
+    const pinnedNow = this.drivers.pinnedThisTurn.get(sessionId);
+    if (pinnedNow !== undefined && pinnedNow.size > 0) {
+      this.screenMapDue.set(sessionId, [...pinnedNow.keys()]);
+    }
+    // P2-1: 자동 저장의 커밋은 게이트의 판정이 끝난 **뒤**에 건다.
+    // 게이트가 고침 턴을 열면 워크트리가 다시 더러워지므로, 먼저
+    // 커밋하면 한 턴이 커밋 둘로 갈린다. 게이트가 깨져도(reject) 커밋은
+    // 치른다 — 확인 못 한 것이 저장하지 않을 이유는 아니다.
+    // 묶음 B: 바뀐 파일에서 되짚은 화면 수(fallback)도 이 행에 싣는다 —
+    // 0이면 칸이 아예 안 선다.
+    const fallback = this.gateFallbackCount.get(sessionId);
+    this.gateFallbackCount.delete(sessionId);
+    void this.drivers.runGate(sessionId, turnDurationMs).then(
+      (outcome) => {
+        this.stats.noteGateCheck(sessionId, {
+          ms: Date.now() - gateStart,
+          reopened: this.drivers.gatedSessions.has(sessionId),
+          ...gateOutcomeStats(outcome),
+          ...(fallback !== undefined && fallback > 0 ? { fallback } : {}),
+        });
+        this.runAutoSave(sessionId);
+      },
+      () => this.runAutoSave(sessionId),
+    );
+  }
+
+  /**
+   * 게이트 없는 갈래 — onState 의 else 몸통을 그대로 옮긴 자리다(§3.B B-4).
+   * 바꾼 파일에서 되짚은 수는 싣지 않는다: 게이트가 돌지 않았으므로.
+   */
+  private finishWithoutGate(
+    sessionId: string,
+    state: SessionState,
+    turnDurationMs: number | undefined,
+  ): void {
+    // 답을 낸 턴에 게이트가 돌지 않은 이유도 한 줄로 남는다(2026-09-22)
+    // — gateset 행의 분모다. idle 이 아닌 방송은 아직 턴의 끝이 아니므로
+    // 세지 않는다.
+    if (state === "idle" && this.autoSaveDue.has(sessionId)) {
+      const reason = this.drivers.gatedSessions.has(sessionId)
+        ? "once"
+        : (this.drivers.pinnedThisTurn.get(sessionId)?.size ?? 0) > 0
+          ? "no-driver"
+          : "no-screens";
+      this.stats.noteGateCheck(sessionId, {
+        ms: 0,
+        screens: 0,
+        reopened: false,
+        skipped: reason,
+      });
+    }
+    const notice = noticeForState(
+      sessionId,
+      state,
+      this.manager.get(sessionId)?.title ?? NEW_SESSION_TITLE,
+      turnDurationMs,
+    );
+    if (notice) this.config.onNotice?.(notice);
+    // 게이트가 없는 턴의 커밋은 여기서 곧바로 — idle 에만. 다른 상태의
+    // idle 아닌 방송(running · waiting_*)은 아직 턴의 끝이 아니다.
+    if (state === "idle") this.runAutoSave(sessionId);
+  }
+
+  /**
+   * (§3.B B-4) 바뀐 파일에서 화면을 되짚어 이 턴의 게이트 입력에 담는다 —
+   * screenMapDue 스냅샷이 그대로 관찰 지도에 적는다 — 지도가 스스로 자란다.
+   * 실패는 조용하다(0개).
+   */
+  private async gateFromChangedFiles(sessionId: string): Promise<void> {
+    const workspaces = this.workspaceOfSession(sessionId);
+    if (workspaces === null) return;
+    const changed = await workspaces.repo
+      .diff()
+      .then((files) => files.map((file) => file.path))
+      .catch(() => [] as string[]);
+    if (changed.length === 0) return;
+    const rows = await readScreenMap(workspaces.paths.root).catch(() => []);
+    const routes = routesForFiles(changed, rows);
+    for (const route of routes) this.drivers.notePinned(sessionId, route);
+    this.gateFallbackCount.set(sessionId, routes.length);
+  }
+
+  /**
+   * (§3.B B-4) 되짚기가 끝난 뒤의 갈래 — 세션이 여전히 idle 이면 평소의 두
+   * 갈래로, 아니면 아무것도 하지 않는다. 그 사이 다시 돌기 시작했다면
+   * (onTurnStart 가 모인 화면을 이미 비웠다) 판정도 완료 알림도 낡은 것이다 —
+   * finishWithoutGate 를 부르지 않는다. 자동 보관의 표(autoSaveDue)는 남아
+   * 다음 idle 이 치른다(runAutoSave 는 도는 턴을 스스로 거르지 않으므로 표가
+   * 세션에 남는 한 반드시 치러진다).
+   */
+  private gateAfterFallback(sessionId: string, turnDurationMs: number | undefined): void {
+    if (this.manager.get(sessionId)?.state !== "idle") return;
+    if (this.drivers.gatePossible(sessionId)) {
+      this.startGate(sessionId, turnDurationMs);
+    } else {
+      this.gateFallbackCount.delete(sessionId);
+      this.finishWithoutGate(sessionId, "idle", turnDurationMs);
+    }
+  }
+
+  /**
    * P2-1: 대기표의 이 턴을 치른다 — 표를 뽑아 쓰므로 한 턴은 한 번만 커밋한다
    * (게이트가 판정을 마친 뒤에만 불린다). 지도의 재료는 커밋이 성공해야
    * 쓴다 — 소비는 autoSaveTurn 안에서고, 표가 없으면 그냥 사라진다(다음
@@ -1567,6 +1651,10 @@ export class DaemonServer {
         return;
       }
       const title = typeof args.title === "string" ? args.title.trim() : "";
+      // 묶음 B(§3.B B-2): 레포 구조에서 주소와 같은 이름의 파일 — 세 길의
+      // 첫째다. 실패는 빈손(관찰과 같은 조용함).
+      const routed =
+        (await filesForRoute(workspaces.paths.repoRoot, route).catch(() => null))?.files ?? [];
       const observed = await observedFilesFor(
         workspaces.paths.root,
         workspaces.paths.repoRoot,
@@ -1583,7 +1671,7 @@ export class DaemonServer {
         hunted = hits.map((hit) => hit.file);
       }
       this.observeBrowserOp(sessionId, op, Date.now() - opStart);
-      reply(200, { ok: true, result: screenFilesAnswer(observed, hunted, title) });
+      reply(200, { ok: true, result: screenFilesAnswer(observed, hunted, title, routed) });
       return;
     }
     // notify_developer (PLAN-MCP §3.E) — AI 도 고칠 수 없는 문제를 개발자에게

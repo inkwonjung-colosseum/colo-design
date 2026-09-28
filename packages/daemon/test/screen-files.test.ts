@@ -49,6 +49,33 @@ test("screenFilesAnswer — 빈손은 오류가 아니다", () => {
   assert.equal(screenFilesAnswer([], [], "회원 목록"), "이 화면을 고친 기록이 아직 없습니다");
 });
 
+// ————— (주소) 줄 (PLAN-HARNESS §3.B B-2) —————
+
+test("screenFilesAnswer — 주소의 파일이 맨 앞 줄에 (주소) 표식으로", () => {
+  assert.equal(
+    screenFilesAnswer(["src/obs.tsx"], ["src/word.tsx"], "제목", ["src/route.tsx"]),
+    '파일 후보: src/route.tsx (주소)\n파일 후보: src/obs.tsx (관찰)\n파일 후보: src/word.tsx (글자 "제목")',
+  );
+});
+
+test("screenFilesAnswer — 겹치는 파일은 앞 줄에 한 번만", () => {
+  assert.equal(
+    screenFilesAnswer(["src/a.tsx", "src/b.tsx"], ["src/b.tsx"], "제목", ["src/b.tsx"]),
+    "파일 후보: src/b.tsx (주소)\n파일 후보: src/a.tsx (관찰)",
+  );
+});
+
+test("screenFilesAnswer — 합이 상한을 넘으면 (주소) 줄이 먼저 실린다", () => {
+  const routed = ["src/r1.tsx", "src/r2.tsx", "src/r3.tsx"];
+  const observed = ["src/o1.tsx", "src/o2.tsx", "src/o3.tsx"];
+  const hunted = ["src/h1.tsx", "src/h2.tsx"];
+  assert.equal(
+    screenFilesAnswer(observed, hunted, "제목", routed),
+    "파일 후보: src/r1.tsx · src/r2.tsx · src/r3.tsx (주소)\n" +
+      "파일 후보: src/o1.tsx · src/o2.tsx · src/o3.tsx (관찰)",
+  );
+});
+
 // ————— 도구 계약 —————
 
 test("screen_files 도구 — 두 새 도구는 목록의 맨 끝이고 route 는 필수다", () => {

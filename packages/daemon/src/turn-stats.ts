@@ -144,6 +144,8 @@ interface TurnGateRow {
   netLines?: number;
   /** D3 재시도로 구제된 화면 수. */
   rescued?: number;
+  /** 바뀐 파일에서 되짚은 화면 수(PLAN-HARNESS §3.B B-4) — 0 이면 싣지 않는다. */
+  fallback?: number;
 }
 
 /** 하루 파일의 한 줄 — 턴 행이거나 게이트 행. */
@@ -381,6 +383,7 @@ export class TurnStats {
       consoleLines?: number;
       netLines?: number;
       rescued?: number;
+      fallback?: number;
     },
   ): void {
     const row: TurnGateRow = {
@@ -397,6 +400,9 @@ export class TurnStats {
       ...(outcome.consoleLines !== undefined ? { consoleLines: outcome.consoleLines } : {}),
       ...(outcome.netLines !== undefined ? { netLines: outcome.netLines } : {}),
       ...(outcome.rescued !== undefined ? { rescued: outcome.rescued } : {}),
+      ...(outcome.fallback !== undefined && outcome.fallback > 0
+        ? { fallback: outcome.fallback }
+        : {}),
     };
     this.write(row);
   }
