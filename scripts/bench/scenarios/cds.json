@@ -1,0 +1,32 @@
+[
+  {
+    "id": "member-field",
+    "kind": "user",
+    "text": "회원 등록 화면에 연락처를 적는 칸을 넣어 줘.",
+    "expect": { "files": ["src/screens/member/"] }
+  },
+  {
+    "id": "product-detail",
+    "kind": "user",
+    "text": "상품 상세 화면에 이 상품을 수정하는 버튼을 넣어 줘.",
+    "expect": { "files": ["src/screens/product/"] }
+  },
+  {
+    "id": "coupon-quantity",
+    "kind": "user",
+    "text": "쿠폰 발행 화면에 발행 수량을 정하는 칸을 넣어 줘.",
+    "expect": { "files": ["src/screens/coupon/"] }
+  },
+  {
+    "id": "order-sort",
+    "kind": "user",
+    "text": "주문 목록을 최근 주문부터 보이게 정렬해 줘.",
+    "expect": { "files": ["src/screens/order/"] }
+  },
+  {
+    "id": "member-role",
+    "kind": "user",
+    "text": "회원 등록 화면의 권한 선택에 매니저를 하나 더 추가해 줘.",
+    "expect": { "files": ["src/screens/member/"] }
+  }
+]
