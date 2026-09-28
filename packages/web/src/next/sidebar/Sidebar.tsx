@@ -53,6 +53,10 @@ export function Sidebar({
   return (
     <aside className="nx-sidebar">
       <div className="nx-side-top">
+        <span className="nx-brand">
+          <img src="/colonova-icon.svg" alt="" width={20} height={20} />
+          {L.sidebar.brand}
+        </span>
         <button
           type="button"
           className="nx-ibtn nx-collapse-btn"

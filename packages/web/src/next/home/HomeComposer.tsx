@@ -24,6 +24,7 @@ export function HomeComposer({
   active,
   onSwitch,
   onOpened,
+  onToast,
 }: {
   daemon: Daemon;
   sessions: Sessions;
@@ -32,6 +33,7 @@ export function HomeComposer({
   onSwitch: (slug: string) => void;
   /** 새 대화가 태어났다 — 셸이 대화 보기로 넘어간다. */
   onOpened: () => void;
+  onToast: (text: string) => void;
 }) {
   const [pickOpen, setPickOpen] = useState(false);
   const chip = useRef<HTMLButtonElement>(null);
@@ -65,7 +67,8 @@ export function HomeComposer({
         <ChevronDownIcon />
       </button>
       {pickOpen && (
-        <Popover anchor={chip} onClose={() => setPickOpen(false)} up>
+        /* 모델 칩과 같은 줄 — 홈에서는 아래로 열어 팝이 창 위로 나가지 않게. */
+        <Popover anchor={chip} onClose={() => setPickOpen(false)}>
           <div className="nx-mh">{L.home.whichService}</div>
           {projects.map((project) => (
             <button
@@ -100,6 +103,7 @@ export function HomeComposer({
       placeholder={L.home.placeholder}
       leading={projectChip}
       lockReason={daemon.connection === "open" ? null : L.chat.connecting}
+      onToast={onToast}
       onSend={(text, attachments) => send(text, attachments)}
     />
   );

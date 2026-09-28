@@ -22,6 +22,9 @@
 .nx {
   --side: var(--bg-2);
   --card: var(--panel);
+  /* 입력창의 바탕과 테두리 — 기본은 카드와 같다. Claude 만 밑에서 흰 종이로 올린다. */
+  --cmp: var(--card);
+  --cmp-line: var(--line2);
   --ink: var(--text);
   --ink2: var(--text-2);
   --ink3: var(--muted);
@@ -93,4 +96,14 @@ html[data-theme="github"] .nx {
 }
 html[data-theme="github-light"] .nx {
   --blue: #0969da;
+}
+
+/*
+ * Claude 의 입력창 — claude.ai 처럼 종이색 바탕(#faf9f5) 위의 흰 종이 한 장. 카드색
+ * (#f5f4ee)은 바탕보다 한 톤 어두워 쓸 자리가 가라앉아 보였다. 테두리는 한 단계
+ * 옅게 쉬다가 초점에서 --line-strong 으로 짙어진다(.nx-composer:focus-within).
+ */
+html[data-theme="claude"] .nx {
+  --cmp: #fff;
+  --cmp-line: var(--line);
 }

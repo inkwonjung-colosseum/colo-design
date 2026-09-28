@@ -66,6 +66,11 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     /** Reasoning effort the query starts on; omitted = CLI default. */
     effort: effortLevelSchema.optional(),
     /**
+     * Fast mode the query starts on — 새 대화 자리에서 미리 켠 ⚡ 선택.
+     * 태어난 직후 몸에 부치고, 받지 못하는 에이전트는 조용히 무시한다.
+     */
+    fastMode: z.boolean().optional(),
+    /**
      * A name for a thread the tool is opening on the planner's behalf. The
      * first turn names an unnamed thread, so a handoff — whose first turn is
      * a sentence the tool wrote — would otherwise be titled with the file
@@ -238,6 +243,13 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.contextUsage"),
     sessionId: z.string().min(1),
   }),
+  /**
+   * 사용량 칸이 열렸다 — 그 AI 계정의 한도를 지금 다시 읽는다. 한도는 대화가
+   * 아니라 계정의 것이라 열린 대화가 없어도(다른 AI 의 대화 안이어도) 읽는다.
+   * 답은 `status` 방송으로 돌아와 모든 화면의 칩이 함께 따라온다; 읽기 간격의
+   * 하한(2분)은 데몬이 지킨다.
+   */
+  z.object({ ...withId, type: z.literal("plan.refresh"), provider: z.string().min(1).max(64) }),
   /**
    * 이 작업만 중지 (PLAN D101): kill ONE background task — a runaway command
    * or a subagent — without interrupting the turn that spawned it. The id is
@@ -452,6 +464,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
       "install-claude",
       "install-codex",
       "login-claude",
+      "login-codex",
       "install-git",
       "install-node",
       "install-pnpm",

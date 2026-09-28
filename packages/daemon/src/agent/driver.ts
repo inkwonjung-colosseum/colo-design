@@ -170,6 +170,12 @@ export interface LaunchConfig {
   sessionId: string;
   model: string | null;
   effort: EffortLevel | null;
+  /**
+   * Fast mode the query starts on — 새 대화 자리의 ⚡ 선택이 실려 온다. 코어가
+   * attach 직후 몸에 부치는 값이라 드라이버는 읽을 필요 없다. 받지 못하는
+   * 에이전트의 setFastMode 는 거절로 답한다.
+   */
+  fastMode?: boolean;
   appendSystemPrompt: string | null;
   /** Resume an existing transcript (the provider's stored session id). */
   resume?: string;
@@ -274,6 +280,15 @@ export interface AgentDriver {
    * for the first session's report as before.
    */
   listModels?(): Promise<SessionModelInfo[]>;
+  /**
+   * The account's plan limits without a thread — a driver whose CLI can read
+   * them on its own (Claude's probe query, Codex's bare app-server) answers
+   * here, so the chip shows a provider's budget before any thread of that
+   * provider exists. Null when there is nothing to read (no CLI, no plan
+   * login); it must resolve, never hang — the daemon's shutdown aborts
+   * `signal`. Absent = only a live session can read the limits.
+   */
+  probeUsage?(options: { cwd: string; signal: AbortSignal }): Promise<PlanUsage | null>;
   /**
    * 기계 잔일의 단답 턴 (저장 메모 · 넘기기 초안) — machine-provider.ts 가
    * 담당을 골라 여기로 온다. 계약의 전부는 세 보장이다: ① 도구는 절대

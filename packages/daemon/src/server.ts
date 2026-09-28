@@ -783,7 +783,10 @@ export class DaemonServer {
           .filter((candidate) => candidate.state === "idle")
           .filter((candidate) => candidate.provider === provider)
           .sort((a, b) => b.lastActivity - a.lastActivity)[0] ?? null,
-      claudeExecutable: () => this.claudeExecutable,
+      usageProbes: this.agentDrivers.all().flatMap((driver) => {
+        const read = driver.probeUsage?.bind(driver);
+        return read ? [{ provider: driver.id, read }] : [];
+      }),
       probeCwd: () => {
         const active = this.activeOrNull();
         return active?.repo.isCloned() ? realpathBestEffort(active.paths.repoRoot) : homedir();

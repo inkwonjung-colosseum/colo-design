@@ -599,10 +599,11 @@ export async function probeCommands(options: {
 /**
  * The SDK's usage answer as the protocol's plan reading. API-key, Bedrock and
  * Vertex sessions answer `rate_limits_available: false` and get null — plan
- * limits do not apply there at all. Pure — the classification is the only
- * bridge between the SDK's answer and the chip's rows.
+ * limits do not apply there at all. Pure, and exported for the mapper test —
+ * the classification is the only bridge between the SDK's answer and the
+ * chip's rows.
  */
-function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
+export function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
   const limits = usage.rate_limits;
   if (!usage.rate_limits_available || !limits) return null;
   return {
@@ -617,10 +618,12 @@ function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
     // The per-model weekly rows (Fable, Opus, …) are additive and named by
     // the server, so they are carried through as they arrive rather than
     // picked one by one — a bucket this build has never heard of still gets
-    // its row. The label spells the period too: the chip renders it
-    // verbatim, and "Fable" alone would not say the row is a week.
+    // its row. Every one of them is a week (the SDK's own word for the
+    // array); the label spells that too, for a reader without `period`.
     modelWeekly: (limits.model_scoped ?? []).map((row) => ({
       label: `${row.display_name} 주간`,
+      name: row.display_name,
+      period: "week" as const,
       utilization: row.utilization,
       resetsAt: row.resets_at,
     })),

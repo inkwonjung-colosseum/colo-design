@@ -641,6 +641,11 @@ interface DaemonApi {
   queueTakeDropped: (sessionId: string, itemId: string) => Promise<QueuedSendPayload>;
   queueDismissDropped: (sessionId: string, itemId: string) => Promise<unknown>;
   contextUsage: (sessionId: string) => Promise<ContextUsage | null>;
+  /**
+   * 그 AI 계정의 한도를 지금 다시 읽어 달라 — 열린 대화가 없어도 된다. 답은
+   * `status` 의 `planUsageByProvider` 로 돌아온다(읽기 간격의 하한은 데몬이 지킨다).
+   */
+  planRefresh: (provider: string) => Promise<unknown>;
   /** 모델·노력·권한 chips; switches apply from the next response. */
   selectors: (sessionId: string) => Promise<SessionSelectors>;
   /** The /command palette rows. */
@@ -1587,6 +1592,7 @@ export function useDaemon(url: string | null): Daemon {
         call({ type: "session.queue.dismissDropped", sessionId, itemId }),
       contextUsage: (sessionId: string) =>
         call<ContextUsage | null>({ type: "session.contextUsage", sessionId }),
+      planRefresh: (provider: string) => call({ type: "plan.refresh", provider }),
       selectors: (sessionId: string) =>
         call<SessionSelectors>({ type: "session.selectors", sessionId }),
       commands: (sessionId: string) =>

@@ -7,6 +7,7 @@ import {
   getSessionMessages,
   listSessions,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { PlanUsage } from "@colo-design/protocol";
 import { readAuthStatus, readClaudeVersion } from "../../../environment.js";
 import type {
   AgentDriver,
@@ -19,7 +20,7 @@ import type {
 import { HISTORY_LIMIT, isPrompt, resolveBranchCutoff } from "./cutoff.js";
 import { replayHistory } from "./import.js";
 import { claudeOneShot } from "./one-shot.js";
-import { ClaudeAgentSession, type ClaudeLaunch } from "./session.js";
+import { ClaudeAgentSession, type ClaudeLaunch, probePlanUsage } from "./session.js";
 
 /**
  * A transcript's summary can be the conversation's own first line — and the
@@ -112,6 +113,14 @@ export class ClaudeDriver implements AgentDriver {
       model: MACHINE_MODEL,
       timeoutMs: opts.timeoutMs,
     });
+  }
+
+  /**
+   * The plan's windows with no thread open — one probe query, no tokens
+   * (`probePlanUsage`). API-key logins answer null: plan limits do not apply.
+   */
+  probeUsage(options: { cwd: string; signal: AbortSignal }): Promise<PlanUsage | null> {
+    return probePlanUsage({ ...options, executable: this.executable() });
   }
 
   /**

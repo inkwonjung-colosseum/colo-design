@@ -805,7 +805,8 @@ select {
 .md {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  line-height: 1.7;
 }
 .md > :first-child {
   margin-top: 0;
@@ -815,6 +816,10 @@ select {
 }
 .md p {
   margin: 0;
+}
+.md strong {
+  color: var(--text);
+  font-weight: 600;
 }
 .md h1,
 .md h2,
@@ -826,14 +831,20 @@ select {
   font-weight: 650;
   text-wrap: balance;
 }
+.md h2,
+.md h3 {
+  margin-top: 16px;
+}
 .md h1 {
   font-size: 1.2em;
 }
 .md h2 {
-  font-size: 1.1em;
+  font-size: 1.15em;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line-soft);
 }
 .md h3 {
-  font-size: 1.02em;
+  font-size: 1.05em;
 }
 .md h4 {
   font-size: 1em;
@@ -844,10 +855,10 @@ select {
   padding-left: 1.35em;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
 }
 .md li::marker {
-  color: var(--muted);
+  color: var(--accent);
 }
 .md code {
   font-family: var(--mono);
@@ -920,8 +931,10 @@ select {
 }
 .md blockquote {
   margin: 0;
-  padding: 2px 14px;
-  border-left: 2px solid var(--line);
+  padding: 8px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--panel-2);
+  border-radius: var(--r-md);
   color: var(--muted);
 }
 .md a {
@@ -941,14 +954,40 @@ select {
   margin: 6px 0;
 }
 .md table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.94em;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
 }
 .md th,
 .md td {
-  border: 1px solid var(--line);
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   padding: 4px 10px;
   text-align: left;
+}
+.md tr > :last-child {
+  border-right: 0;
+}
+.md tbody tr:last-child > td {
+  border-bottom: 0;
+}
+.md thead th:first-child {
+  border-top-left-radius: var(--r-md);
+}
+.md thead th:last-child {
+  border-top-right-radius: var(--r-md);
+}
+.md tbody tr:last-child td:first-child {
+  border-bottom-left-radius: var(--r-md);
+}
+.md tbody tr:last-child td:last-child {
+  border-bottom-right-radius: var(--r-md);
+}
+.md tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
 }
 .md th {
   background: var(--panel-2);

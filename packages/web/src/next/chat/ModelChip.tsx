@@ -1,17 +1,18 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Sessions } from "../../hooks/useSessions";
 import { modelOptions, modelRowOf } from "../../lib/chat-options";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
+import { chipLabel, EFFORT_OF, type EffortWord, effortWord } from "../lib/thread";
 import {
-  chipLabel,
-  EFFORT_OF,
-  type EffortWord,
-  effortWord,
+  refillWhen,
+  USAGE_HOT_MIN,
   USAGE_WORD_MIN,
-  type UsageReading,
+  usageHeat,
   usageReading,
-} from "../lib/thread";
+  usageRowName,
+  usageRows,
+} from "../lib/usage";
 import { Popover } from "../ui/Popover";
 import { CheckIcon, ChevIcon } from "./icons";
 
@@ -19,39 +20,35 @@ const EFFORT_WORDS: Record<EffortWord, string> = {
   short: L.model.thinkShort,
   normal: L.model.thinkNormal,
   long: L.model.thinkLong,
+  longer: L.model.thinkLonger,
+  max: L.model.thinkMax,
 };
 
 /** 이 개수부터는 모델 줄을 눈으로 걷지 않고 거르는 편이 빠르다. */
 const MODEL_FILTER_MIN = 8;
 
-function windowName(reading: UsageReading): string {
-  if (reading.window.kind === "fiveHour") return L.chat.usageFiveHour;
-  if (reading.window.kind === "sevenDay") return L.chat.usageWeek;
-  return reading.window.label;
-}
-
-function clock(at: string): string {
-  return new Date(at).toLocaleTimeString("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
 /**
- * 입력창의 설정 칩 `Claude · 보통 ▾` 과 그 팝오버(목업 `modelPop`) —
- * 프로바이더(쓸 수 있는 것이 둘 이상일 때만) · 모델 · 생각 시간 · 사용량. 부르는
- * 길은 옛 입력창과 같다: `sessions.pickProvider` · `setModel` · `setEffort`.
- * 한도가 가까우면(P6, 70% 넘음) 칩 옆에 사용량 한 단어가 선다.
+ * 입력창의 설정 칩 `Opus 5.5 · 보통 ▾` 과 그 팝오버(목업 `modelPop`) —
+ * 칩은 모델과 생각 시간을 말한다(모델 목록이 오지 않았을 때만 프로바이더가 앞말).
+ * 팝오버는 프로바이더(쓸 수 있는 것이 둘 이상일 때만) · 모델 · 생각 시간 · 사용량.
+ * 부르는 길은 옛 입력창과 같다: `sessions.pickProvider` · `setModel` · `setEffort`.
+ * 한도가 가까우면(P6, 70% 넘음) 칩 옆에 사용량 한 단어가 선다 — 가장 찬 창의
+ * 것. 팝의 사용량 칸은 창을 모두 한 줄씩 세운다(5시간 · 이번 주 · 모델별 창).
  */
 export function ModelChip({
   daemon,
   sessions,
   disabledProviders = [],
+  up = true,
 }: {
   daemon: Daemon;
   sessions: Sessions;
   disabledProviders?: string[];
+  /**
+   * 여는 방향 — 입력창이 화면 바닥에 붙는 대화 칸은 위로, 홈처럼 화면 가운데
+   * 있는 입력창은 아래로. 위로만 열면 홈에서 팝의 머리가 창 밖으로 나간다.
+   */
+  up?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
@@ -74,19 +71,34 @@ export function ModelChip({
     needle === ""
       ? models
       : models.filter((row) => `${row.label} ${row.hint ?? ""}`.toLowerCase().includes(needle));
-  const levels = modelRow?.supportedEffortLevels ?? null;
-  const efforts = (Object.keys(EFFORT_OF) as EffortWord[]).filter(
-    (word) => levels === null || levels.includes(EFFORT_OF[word]),
-  );
-  const showEffort = modelRow?.supportsEffort !== false && efforts.length > 0;
+  // 다섯 칸을 모두 내놓는다. CLI 가 알려 준 지원 목록(supportedEffortLevels)으로
+  // 거르면 낡거나 좁은 목록이 실제 단계(xhigh · max)를 가려 두세 개만 남는 수가
+  // 있다 — 생각 시간 자체가 없는 모델(supportsEffort === false)만 칸을 통째로 숨긴다.
+  const efforts = Object.keys(EFFORT_OF) as EffortWord[];
+  const showEffort = modelRow?.supportsEffort !== false;
   const think = effortWord(selector.effort);
-  const label = chipLabel(providerLabel, showEffort ? EFFORT_WORDS[think] : null);
-  const reading = usageReading(daemon.status?.planUsageByProvider?.[provider]);
+  const label = chipLabel(
+    modelRow?.displayName ?? providerLabel,
+    showEffort ? EFFORT_WORDS[think] : null,
+  );
+  const plan = daemon.status?.planUsageByProvider?.[provider];
+  const reading = usageReading(plan);
+  const usage = usageRows(plan);
+  // 팝이 열려 있는 동안 그 AI 계정의 한도를 한 번 다시 읽는다 — 팝 안에서 AI 를
+  // 바꾸면 바뀐 계정을. 한도는 대화가 아니라 계정의 것이라, 다른 곳(터미널 ·
+  // 웹)에서 쓴 만큼도 여기서 따라온다. 답은 status 방송으로 돌아온다.
+  const { api } = daemon;
+  useEffect(() => {
+    if (open) void api.planRefresh(provider).catch(() => undefined);
+  }, [open, provider, api]);
+  const now = new Date();
 
   return (
     <div className="nx-anchor nx-model">
       {reading && reading.pct >= USAGE_WORD_MIN && (
-        <span className={`nx-usage-word${reading.pct >= 90 ? " nx-usage-word--hot" : ""}`}>
+        <span
+          className={`nx-usage-word${reading.pct >= USAGE_HOT_MIN ? " nx-usage-word--hot" : ""}`}
+        >
           {L.chat.usageWord(reading.pct)}
         </span>
       )}
@@ -106,7 +118,7 @@ export function ModelChip({
         <ChevIcon />
       </button>
       {open && (
-        <Popover anchor={anchor} onClose={close} align="end" up className="nx-model-pop">
+        <Popover anchor={anchor} onClose={close} align="end" up={up} className="nx-model-pop">
           {usable.length >= 2 && (
             <>
               <div className="nx-mh">{L.model.ai}</div>
@@ -174,6 +186,11 @@ export function ModelChip({
                 ))}
                 {visibleModels.length === 0 && <div className="nx-mempty">{L.model.noMatch}</div>}
               </div>
+              {modelRow?.supportsFastMode === false && (
+                // 번개 칩이 없는 이유를 팝이 대신 대답한다 — 모델이 조용히
+                // 가려진 것을 빠르게의 부재로 오해하는 일이 없게.
+                <div className="nx-mnote">{L.model.fastMissing}</div>
+              )}
             </>
           )}
           {showEffort && (
@@ -196,18 +213,29 @@ export function ModelChip({
               </div>
             </>
           )}
-          {reading && (
+          {usage.length > 0 && (
             <>
               <div className="nx-msep" />
+              <div className="nx-mh">{L.model.usage}</div>
               <div className="nx-usage">
-                <div className="nx-mh">{L.model.usage}</div>
-                <div className="nx-bar">
-                  <i style={{ width: `${reading.pct}%` }} />
-                </div>
-                <div>
-                  {L.chat.usageLine(windowName(reading), reading.pct)}
-                  {reading.resetsAt && ` · ${L.chat.usageRefill(clock(reading.resetsAt))}`}
-                </div>
+                {usage.map((row) => {
+                  const name = usageRowName(row, L);
+                  const heat = usageHeat(row.pct);
+                  const when = row.resetsAt ? refillWhen(row.resetsAt, now, L) : null;
+                  return (
+                    <div key={name} className={`nx-urow nx-urow--${heat}`}>
+                      <div className="nx-urow-head">
+                        <span className="nx-urow-name">{name}</span>
+                        <span className="nx-urow-pct">{L.chat.usageUsed(row.pct)}</span>
+                      </div>
+                      {/* 쓴 비율은 위의 글이 말한다 — 막대는 눈으로 가늠하는 자리다. */}
+                      <div className="nx-meter" aria-hidden="true">
+                        <i style={{ width: `${row.pct}%` }} />
+                      </div>
+                      {when && <div className="nx-urow-when">{L.chat.usageRefill(when)}</div>}
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}

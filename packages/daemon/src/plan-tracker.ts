@@ -1,7 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PlanUsage, PlanWindow, SessionModelInfo } from "@colo-design/protocol";
-import { probePlanUsage } from "./agent/drivers/claude/session.js";
 import { CONFIG_DIR } from "./environment.js";
 import type { Session } from "./session.js";
 
@@ -39,7 +38,17 @@ export interface PlanTrackerDeps {
    * session answers.
    */
   idleSession: (provider: string) => Pick<Session, "usage"> | null;
-  claudeExecutable: () => string | null;
+  /**
+   * Session-less plan readings, per provider — a driver whose CLI can read
+   * its account without a thread (Claude's probe query, Codex's bare
+   * app-server) is asked here when none of its sessions is idle. A null
+   * answer is no reading; the probe decides for itself whether there is
+   * anything to start (no CLI, no plan login).
+   */
+  usageProbes: Array<{
+    provider: string;
+    read: (options: { cwd: string; signal: AbortSignal }) => Promise<PlanUsage | null>;
+  }>;
   /** Where a probe CLI runs when no session can be asked. */
   probeCwd: () => string;
   /** Aborted when the daemon stops — a probe must not outlive it. */
@@ -162,9 +171,10 @@ export class PlanTracker {
    * A provider with no reading yet owes one — the first codex session to go
    * idle is asked even before its first turn, which is the whole point: the
    * planner who just opened codex is exactly the one who needs its numbers
-   * now. A provider that can never answer (the session-less drivers) pays
-   * for that with one no-op ask per backoff window — a resolved null, no
-   * subprocess — until its first reading retires the debt.
+   * now. A provider that cannot answer yet — no idle session, and a probe
+   * with nothing to start (no CLI, no plan login) — pays for that with one
+   * resolved null per backoff window, no subprocess, until its first reading
+   * retires the debt; a provider with no probe at all is not even asked.
    */
   currentAll(providers: readonly string[]): Record<string, PlanUsage> {
     const now = Date.now();
@@ -193,42 +203,32 @@ export class PlanTracker {
 
   /**
    * Re-read one provider's limits, through the most recently active idle
-   * session of that provider — claude falls back to a probe CLI when no
-   * session is idle, because the limits are the account's and a planner who
-   * has opened no thread is exactly the planner most in need of being told.
-   * Failures stay silent: the cache keeps serving whatever it still has.
-   * Spaced out because status() runs on every broadcast, and a CLI that
-   * cannot answer must not turn those broadcasts into a request storm.
+   * session of that provider — or, when none is idle, through that
+   * provider's own session-less probe, because the limits are the account's
+   * and a planner who has opened no thread is exactly the planner most in
+   * need of being told. Failures stay silent: the cache keeps serving
+   * whatever it still has. Spaced out because status() runs on every
+   * broadcast, and a CLI that cannot answer must not turn those broadcasts
+   * into a request storm.
    *
-   * A scoped ask (a rate-limit hit naming its account) stays scoped: with
-   * none of that provider's sessions idle, the reading stays owed and the
-   * next natural window tries again — silence beats the right shape of the
-   * wrong answer, and the row would only caption the substitution.
+   * A scoped ask (a rate-limit hit naming its account) stays scoped: each
+   * probe reads its own provider's account only, and a provider with neither
+   * an idle session nor a probe keeps the reading owed until the next
+   * natural window — silence beats the right shape of the wrong answer, and
+   * the row would only caption the substitution.
    */
   refresh(provider: string): void {
     const now = Date.now();
     if (now - (this.lastPlanRefresh[provider] ?? 0) < PlanTracker.REFRESH_BACKOFF_MS) return;
     const session = this.deps.idleSession(provider);
-    // The probe reads claude, so only claude may fall back to it; every other
-    // provider waits for one of its own sessions to go idle.
-    if (!session) {
-      if (provider !== "claude") return;
-      if (!this.deps.claudeExecutable()) return;
-      this.lastPlanRefresh[provider] = now;
-      void probePlanUsage({
-        cwd: this.deps.probeCwd(),
-        executable: this.deps.claudeExecutable(),
-        signal: this.deps.signal,
-      })
-        .then((plan) => this.rememberPlanUsage(plan))
-        .catch(() => undefined);
-      return;
-    }
+    const reading = session
+      ? session.usage()
+      : this.deps.usageProbes
+          .find((probe) => probe.provider === provider)
+          ?.read({ cwd: this.deps.probeCwd(), signal: this.deps.signal });
+    if (!reading) return;
     this.lastPlanRefresh[provider] = now;
-    void session
-      .usage()
-      .then((plan) => this.rememberPlanUsage(plan))
-      .catch(() => undefined);
+    void reading.then((plan) => this.rememberPlanUsage(plan)).catch(() => undefined);
   }
 
   /**

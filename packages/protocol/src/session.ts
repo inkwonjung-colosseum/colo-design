@@ -312,16 +312,33 @@ export interface PlanWindow {
   resetsAt: string | null;
 }
 
+/** How long a plan window runs — the periods the usage rows know how to spell. */
+export type PlanPeriod = "fiveHour" | "week" | "month";
+
 /**
  * A budget window that is neither the plan's 5-hour nor its whole-week row —
- * a per-model cap (the Fable/Opus row of the usage dialog) or a provider's
- * own longer window. The label travels with the numbers fully spelled
- * ("Fable 주간", "이번 달"), because only the producing driver knows the
- * period the row actually runs on.
+ * a per-model cap (the Fable/Opus row of the usage dialog), a metered extra
+ * with its own 5-hour and weekly pair (Codex's per-model limits), or a
+ * provider's own longer window. Only the producing driver knows the period
+ * the row actually runs on, so it says so twice: as `name` + `period` for
+ * the chip to spell in its own words, and as a fully spelled `label` for a
+ * reader that predates those two (a cache written by an older build).
  */
-interface PlanModelWindow extends PlanWindow {
-  /** Fully spelled row label, e.g. 'Fable 주간'. */
+export interface PlanModelWindow extends PlanWindow {
+  /** Fully spelled row label, e.g. 'Fable 주간' — the fallback spelling. */
   label: string;
+  /**
+   * The bucket's own name as the server spelled it ('Fable',
+   * 'GPT-5.3-Codex-Spark'); null for a window no name scopes — the plan's
+   * own monthly budget. Absent on a reading from before this field.
+   */
+  name?: string | null;
+  /**
+   * The period the window runs on; null when it is none of the three — the
+   * label then carries the period itself ("3일"). Absent on a reading from
+   * before this field.
+   */
+  period?: PlanPeriod | null;
 }
 
 /**
@@ -334,8 +351,10 @@ export interface PlanUsage {
   fiveHour: PlanWindow | null;
   sevenDay: PlanWindow | null;
   /**
-   * Per-model weekly windows, in the order the server sent them. Empty when
-   * the plan has none — a Pro account, or a server that does not emit them.
+   * Every other window, in the order the server sent them — per-model weekly
+   * caps first among them. Empty when the plan has none — a Pro account, or
+   * a server that does not emit them. The name is older than the rows it
+   * now carries; each row's own `period` says how long it runs.
    */
   modelWeekly: PlanModelWindow[];
   /**

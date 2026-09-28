@@ -268,6 +268,7 @@ export class RequestRouter {
           defaults !== undefined && (!defaults.provider || defaults.provider === provider);
         const model = message.model ?? (defaultsFit ? defaults.model : undefined);
         const effort = message.effort ?? (defaultsFit ? defaults.effort : undefined);
+        const fastMode = message.fastMode === true;
         const session = this.deps.manager.create({
           cwd: sessionCwd,
           provider,
@@ -280,8 +281,13 @@ export class RequestRouter {
             ...(message.resume ? { resume: message.resume } : {}),
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
+            ...(fastMode ? { fastMode: true } : {}),
           },
         });
+        // 태어날 때의 빠르게 — 새 대화 자리에서 미리 켠 ⚡ 선택. 첫 selectors
+        // 읽기가 이미 켠 상태를 보도록 여기서 기다린다. 받지 못하는 에이전트의
+        // 거절은 조용히 흘린다 — 칩이 이미 그 모델의 줄로 걸러 서 있었다.
+        if (fastMode) await session.setFastMode(true).catch(() => undefined);
         // The plan reading is owed per provider, and a fresh session is
         // already idle — ask it now rather than waiting for a status
         // broadcast nothing schedules. A codex thread's first composer
@@ -466,6 +472,13 @@ export class RequestRouter {
         this.deps.plans.rememberPlanUsage(usage?.plan ?? null);
         return usage;
       }
+
+      case "plan.refresh":
+        // 사용량 칸이 열렸다 — 그 계정의 한도를 지금 다시 읽는다. 쉬는 대화가
+        // 없으면 드라이버의 probe 가 읽고, 읽기 간격의 하한은 추적기가 지킨다.
+        // 답은 status 방송으로 돌아온다.
+        this.deps.plans.refresh(message.provider);
+        return { ok: true };
 
       case "repo.files": {
         // @-mention autocomplete draws from the repo clone only.
@@ -668,12 +681,15 @@ export class RequestRouter {
               },
             });
           }
-          case "login-claude": {
+          case "login-claude":
+          case "login-codex": {
             // P1-1: 데몬이 로그인을 대신 몰고, 주소·끝은 방송으로 나간다.
             // 각 드라이버가 자기 로그인 명령을 선언한다(loginCommand) — claude 는
             // `auth login`(스파이크로 확인: 주소는 stdout, 코드는 stdin), codex 는
-            // `login`(주소는 stderr, 콜백 대기).
-            const provider = message.provider ?? "claude";
+            // `login`(주소는 stderr, 콜백 대기). login-codex 는 설정의 「로그인이
+            // 필요해요」 행이 부르는 같은 길이다(2026-09-28).
+            const provider =
+              message.provider ?? (message.kind === "login-codex" ? "codex" : "claude");
             const driver = this.deps.agentDrivers.get(provider);
             const command = driver?.loginCommand?.();
             if (!command) {

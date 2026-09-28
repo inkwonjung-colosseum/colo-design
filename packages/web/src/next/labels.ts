@@ -35,6 +35,8 @@ export const L = {
     reconnectLogin: "AI 로그인이 끝났어요. 브라우저에서 한 번만 다시 로그인해 주세요.",
     openInvite: "초대 파일 열기",
     loginInBrowser: "브라우저에서 로그인",
+    /** `개발자에게 알렸어요` 줄의 ✕ — 같은 문제를 이 탭이 사는 동안 숨긴다. */
+    dismiss: "이 문제 알림 닫기",
   },
   /** 여정 세 점(U2) — `제출 전 ─ 개발자 확인 ─ 반영됨`. */
   journey: {
@@ -60,6 +62,7 @@ export const L = {
 
   // ── 단계 1 뼈대
   sidebar: {
+    brand: "Colo Design",
     newConv: "새 대화",
     home: "홈",
     find: "찾기",
@@ -177,9 +180,11 @@ export const L = {
     pin: "찍기",
     pinTip: "화면에서 고칠 곳 찍기 · ⌘⇧P",
     fast: "빠르게",
-    fastTip: "같은 모델을 더 빨리 답하게 해요 — 모델은 그대로예요",
-    fastOn: "빠르게 켜졌어요 · 같은 모델이 더 빨리 답해요",
+    fastTip: "같은 모델이 더 빨리 답해요 — 사용량은 약 2배 빨리 닳아요",
+    fastPickTip: "다음 대화부터 빠르게 — 같은 모델이 더 빨리 답해요 · 사용량은 약 2배 빨리 닳아요",
+    fastOn: "빠르게 켜졌어요 — 더 빨리 답하는 대신 사용량이 약 2배 빨리 닳아요",
     fastOff: "빠르게를 껐어요",
+    fastFail: "빠르게를 바꾸지 못했어요 — 다시 눌러 주세요",
     send: "보내기 · ↵",
     stop: "멈추기",
     pinNote: "어떻게 바꿀까요? (선택)",
@@ -189,14 +194,17 @@ export const L = {
   model: {
     ai: "AI",
     openConvNote: "열린 대화는 처음 고른 AI 그대로예요. 바꾸면 다음 새 대화부터 써요.",
+    fastMissing: "이 모델은 빠르게를 받지 않아요 — 번개 칩은 받는 모델의 대화에만 섰어요.",
     model: "모델",
-    filter: "모델 거르기",
-    filterPlaceholder: "모델 이름으로 거르세요",
+    filter: "모델 고르기",
+    filterPlaceholder: "모델 이름으로 고르세요",
     noMatch: "맞는 모델이 없어요",
     think: "생각 시간",
     thinkShort: "짧게",
     thinkNormal: "보통",
     thinkLong: "길게",
+    thinkLonger: "아주 길게",
+    thinkMax: "최대",
     usage: "사용량",
     loggedIn: "로그인됨",
   },
@@ -227,6 +235,8 @@ export const L = {
     revived: "AI 프로그램이 멈춰 다시 일으켰어요 · 하던 일을 그대로 이어서 해요",
     seconds: (s: number) => `${s}초`,
     minutesSeconds: (m: number, s: number) => `${m}분 ${s}초`,
+    /** 접힌 진행 문장의 머리 — 답이 끝난 뒤 과정은 이 한 줄로 접힌다. */
+    steps: (n: number) => `작업 과정 ${n}단계`,
   },
   cards: {
     gateFixed: "AI가 고쳤어요",
@@ -308,10 +318,19 @@ export const L = {
     reviewText: "코멘트를 남겼어요",
     reviewAuthor: "개발자",
     usageWord: (pct: number) => `사용량 ${pct}%`,
-    usageLine: (window: string, pct: number) => `${window} 동안 ${pct}% 썼어요`,
-    usageRefill: (time: string) => `${time}에 다시 차요`,
+    /** 사용량 칸의 한 줄(창 하나) — 이름 · 쓴 비율 · 다시 차는 때. */
+    usageUsed: (pct: number) => `${pct}% 썼어요`,
+    usageRefill: (when: string) => `${when}에 다시 차요`,
     usageFiveHour: "이번 5시간",
     usageWeek: "이번 주",
+    usageMonth: "이번 달",
+    /** 모델마다 따로 있는 창 — `Fable · 이번 주`. */
+    usageScoped: (name: string, period: string) => `${name} · ${period}`,
+    usageTomorrow: (time: string) => `내일 ${time}`,
+    usageOnDate: (month: number, day: number, weekday: string, time: string) =>
+      `${month}월 ${day}일(${weekday}) ${time}`,
+    /** `Date.getDay()` 의 차례 — 일요일부터. */
+    usageWeekdays: ["일", "월", "화", "수", "목", "금", "토"],
     pinFlash: "화면에서 이 자리 보기",
     files: (n: number) => `파일 ${n}개`,
     /** 잃은 말의 실패 카드 이유(W8) — 다시 시도는 같은 말을 다시 보낸다. */
@@ -627,6 +646,11 @@ export const L = {
     unavailable: (n: number) => `쓸 수 없는 AI ${n}`,
     notInstalled: "설치되지 않았어요 · 없어도 모든 일이 돼요",
     install: "설치",
+    login: "로그인",
+    loginNeeded: "로그인이 필요해요 · 설치는 돼 있어요",
+    loginReopen: "로그인 창 다시 열기",
+    loginCode: "로그인 코드 붙여넣기",
+    loginCodeSend: "코드 보내기",
     theme: "테마",
     themeSub: "화면 전체의 색깔이에요 · Claude 가 기본이에요",
     notify: "알림",
@@ -702,6 +726,16 @@ export const L = {
     appAvailable: (to: string) => `새 버전 ${to} 있어요`,
     app: "앱",
   },
+
+
+
+  // ── 크래시 안내(PLAN-CRASH-PROCESS 3.A) — 와치독 문장과의 글자 동치는 시험이 지킨다.
+  crash: {
+    title: "화면에 문제가 생겼어요",
+    body: "다시 열면 대화와 작업은 그대로예요.",
+    reopen: "다시 열기",
+    bootTitle: "화면이 열리지 않아요",
+  },
 } as const;
 
 /**
@@ -715,4 +749,7 @@ export const DEV = {
   activeProject: (repo: string | null, ready: boolean) =>
     `활성 프로젝트 · ${repo ?? "-"} · 미리보기 ${ready ? "준비됨" : "대기"}`,
   selfUpdateNote: "AI 프로그램의 자기 업데이트는 꺼 두고 이 앱이 대신 맡아요",
+  crash: {
+    details: "자세히",
+  },
 } as const;

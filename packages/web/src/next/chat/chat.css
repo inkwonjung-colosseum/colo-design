@@ -228,6 +228,89 @@
   animation: nx-fade 0.8s infinite alternate;
 }
 
+/* ---------- 진행 문장의 타임라인(A) ---------- */
+
+/* 답이 되지 못한 말은 13px 의 연한 글자로 왼쪽 세로선에 매달린다. 세로선과
+   점은 얼굴이 서는 자리(0–32px)를 쓴다 — 활동 막대도 그 자리를 비우므로 줄이
+   이어 보인다. 점의 배경 테두리가 선을 끊어 점으로 읽힌다(활동 막대와 같은 셈). */
+.nx-m-step {
+  position: relative;
+  margin: 0 0 6px 32px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink2);
+  word-break: keep-all;
+}
+
+.nx-m-step::before {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--ink3);
+  box-shadow: 0 0 0 3px var(--bg);
+}
+
+.nx-m-step::after {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: -7px;
+  bottom: -7px;
+  width: 1px;
+  background: var(--line);
+}
+
+/* 도는 동안의 마지막 줄 — 한 줄만 강조한다. */
+.nx-m-step--now {
+  color: var(--ink);
+}
+
+.nx-m-step--now::before {
+  background: var(--accent);
+}
+
+/* 마크다운의 본문 규칙(.md)은 답의 몫이다 — 과정은 줄 간격과 강조를 눌러
+   연한 몸값을 유지한다. */
+.nx-m-step .md {
+  line-height: 1.55;
+}
+
+.nx-m-step .md strong {
+  color: inherit;
+}
+
+/* 접힌 과정의 머리 줄 — 답이 끝난 뒤 과정은 이 한 줄로 접힌다. */
+.nx-m-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 6px 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink3);
+  cursor: pointer;
+}
+
+.nx .nx-m-fold:hover {
+  color: var(--ink2);
+}
+
+.nx-m-fold .nx-i {
+  transition: transform 0.15s;
+}
+
+.nx-m-fold--on .nx-i {
+  transform: rotate(90deg);
+}
+
 /* 옛 대화록의 부품(활동 · 생각 · 도구 · 할 일)은 AI 답의 줄에 맞춰 들여 선다. */
 .nx-m-work {
   margin: 0 0 10px 32px;
@@ -672,8 +755,8 @@
 
 .nx-composer {
   position: relative;
-  background: var(--card);
-  border: 1px solid var(--line2);
+  background: var(--cmp);
+  border: 1px solid var(--cmp-line);
   border-radius: 18px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
   padding: 10px 10px 8px 12px;
@@ -700,6 +783,12 @@
   padding: 2px;
 }
 
+/* 전역 textarea:focus(styles.css)가 특이도가 같고 뒤에 와서, 초점마다 안쪽을
+   --panel-3 으로 칠했다 — 입력창은 틀이 곧 칸이니 안쪽은 늘 비워 둔다. */
+.nx-composer textarea:focus {
+  background: transparent;
+}
+
 .nx-cmp-tools {
   display: flex;
   align-items: center;
@@ -720,10 +809,6 @@
 
 .nx-cmp-note--danger {
   color: var(--red);
-}
-
-.nx-cmp-note--ok {
-  color: var(--ink3);
 }
 
 .nx .nx-tbtn {
@@ -752,6 +837,11 @@
   border-color: var(--accent-line);
 }
 
+.nx .nx-tbtn--on.nx-fast .nx-i {
+  /* 꺼진 번개는 윤곽, 켜진 번개는 채움 — 눌림이 색만이 아니라 모양으로도 남는다. */
+  fill: currentColor;
+}
+
 .nx .nx-tbtn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -766,7 +856,8 @@
 
 .nx .nx-tbtn--model {
   min-width: 0;
-  max-width: 220px;
+  /* `Opus 5.5 · 아주 길게` 까지 — 칩이 모델 이름을 입으면서 길어졌다. */
+  max-width: 264px;
 }
 
 .nx-model-label {
@@ -785,17 +876,20 @@
 }
 
 .nx .nx-model-pop {
-  width: 300px;
+  width: 384px;
+  /* 줄이 한 단계 커진 만큼 팝의 안쪽 여백도 함께 — 줄의 12px 와 더해 화면
+     가장자리부터 글자까지 20px 가 남는다. */
+  padding: 8px;
   display: flex;
   flex-direction: column;
   /* 팝 전체를 굴리는 길은 맨 끝에 둔다 — 모델 줄이 먼저 눌리고, 그래도 넘치는
      작은 창만 팝 전체가 굴러 아래 칸(생각 시간 · 사용량)에 닿게 한다. 팝이
      굴릴 때는 목록과 같은 페이드가 잘린 끝을 표시한다 — 표시가 없으면 아래
-     칸이 있는 줄 모른다. */
+     칸이 있는 줄 모른다. 페이드 폭은 모델 줄 하나의 키다. */
   overflow-y: auto;
   background:
-    linear-gradient(var(--card) 30%, transparent) local 0 0 / 100% 34px no-repeat,
-    linear-gradient(transparent, var(--card) 70%) local 0 100% / 100% 34px no-repeat,
+    linear-gradient(var(--card) 30%, transparent) local 0 0 / 100% 56px no-repeat,
+    linear-gradient(transparent, var(--card) 70%) local 0 100% / 100% 56px no-repeat,
     radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.14), transparent) scroll 0 0 / 100% 14px
     no-repeat,
     radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.14), transparent) scroll 0 100% /
@@ -805,19 +899,31 @@
 
 .nx .nx-mlist {
   flex: 0 1 auto;
-  /* 두 칸이 보이는 아래로는 안 눌린다 — 굴리는 표면이 남고, 그 밑의 칸(생각
-     시간 · 사용량)이 팝 안에 들어올 자리를 먼저 내준다. */
-  min-height: 96px;
+  /* 바닥은 아래 @supports 가 정한다 — 이 값은 calc-size 를 모르는 엔진
+     (브라우저 개발 경로)의 두 줄 바닥이다. */
+  min-height: 112px;
   overflow-y: auto;
   /* 접힌 줄이 있다는 신호 — 스크롤 그림자(아래·위) + 아래쪽 바탕 페이드.
      배경 없이 굴리면 잘린 마지막 줄이 전부인 줄 안다. */
   background:
-    linear-gradient(var(--card) 30%, transparent) local 0 0 / 100% 34px no-repeat,
-    linear-gradient(transparent, var(--card) 70%) local 0 100% / 100% 34px no-repeat,
+    linear-gradient(var(--card) 30%, transparent) local 0 0 / 100% 56px no-repeat,
+    linear-gradient(transparent, var(--card) 70%) local 0 100% / 100% 56px no-repeat,
     radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.14), transparent) scroll 0 0 / 100% 14px
     no-repeat,
     radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.14), transparent) scroll 0 100% /
     100% 14px no-repeat;
+}
+
+/* 네 줄 반(줄 하나 57px)이 보이는 아래로는 안 눌린다 — 두 줄까지 눌리면 AI 줄 ·
+   사용량 줄이 자리를 먼저 가져가, 모델이 둘뿐인 줄 알았다(실사). 반 줄은 아래에
+   더 있다는 표시다. 줄이 그보다 적으면 그 높이까지만(`size` 가 내용의 키) —
+   바닥이 내용보다 크면 거른 결과 한 줄 밑에 빈 칸이 선다. 작은 창에서는 바닥도
+   30vh 로 낮춰 목록이 팝보다 커지지 않게 하고, 모자란 자리는 팝 전체가 굴러
+   아래 칸(생각 시간 · 사용량)에 닿는다. */
+@supports (min-height: calc-size(max-content, 1px)) {
+  .nx .nx-mlist {
+    min-height: calc-size(max-content, min(size, 257px, 30vh));
+  }
 }
 
 .nx .nx-model-pop > :not(.nx-mlist) {
@@ -827,10 +933,35 @@
   flex: none;
 }
 
+/* 모델 팝 안의 글자·줄은 한 단계 크게 — 300px 시절에는 Claude Desktop 의 모델
+   팝과 나란히 놓으면 절반 크기로 읽혔다. nx-mi · nx-mh 는 프로젝트 갈이 · 대화
+   목록 등 다른 메뉴와 함께 쓰는 문양이라 그대로 두고, 모델 팝 안에서만 입는다. */
+.nx .nx-model-pop .nx-mh {
+  padding: 8px 12px 5px;
+  font-size: 12px;
+}
+
+.nx .nx-model-pop .nx-mi {
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.nx .nx-model-pop .nx-mt small {
+  font-size: 12.5px;
+}
+
+.nx .nx-model-pop .nx-mnote,
+.nx .nx-model-pop .nx-mempty {
+  padding-left: 12px;
+  padding-right: 12px;
+  font-size: 12.5px;
+}
+
 .nx .nx-mfilter {
-  width: calc(100% - 20px);
+  width: calc(100% - 24px);
   height: 42px;
-  margin: 4px 10px 8px;
+  margin: 4px 12px 8px;
   border: 1px solid var(--line2);
   border-radius: 10px;
   padding: 0 12px;
@@ -872,7 +1003,7 @@
 .nx-mseg {
   display: flex;
   gap: 2px;
-  margin: 2px 6px 6px;
+  margin: 4px 8px 8px;
   background: rgba(0, 0, 0, 0.05);
   border-radius: var(--r);
   padding: 2px;
@@ -880,9 +1011,9 @@
 
 .nx .nx-mseg button {
   flex: 1;
-  height: 28px;
-  border-radius: 6px;
-  font-size: 12.5px;
+  height: 32px;
+  border-radius: 7px;
+  font-size: 13px;
   color: var(--ink2);
   text-align: center;
 }
@@ -894,32 +1025,73 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
+/* 사용량 칸 — 창마다 한 줄: 이름 · 쓴 비율, 막대, 다시 차는 때. 머리(`사용량`)는
+   다른 칸의 머리와 같은 자리에 서도록 칸 밖에 둔다. */
 .nx-usage {
-  padding: 0 10px 8px;
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 10px;
 }
 
-.nx-usage .nx-mh {
-  padding: 8px 0 0;
+.nx-urow-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
 }
 
-.nx-usage > div:last-child {
+.nx-urow-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-urow-pct {
+  flex: none;
+  color: var(--ink2);
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-urow-when {
   font-size: 12px;
   color: var(--ink3);
+  font-variant-numeric: tabular-nums;
 }
 
-.nx-bar {
+/* 쓴 만큼 왼쪽부터 차는 막대. 온보딩의 끝없는 진행 막대(`.nx-bar`)와 이름을
+   나눠 쓰면 그쪽의 달리는 애니메이션이 옮아 붙어 채움이 가운데로 흘러간다. */
+.nx-meter {
   height: 5px;
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.07);
+  background: var(--panel-3);
   overflow: hidden;
-  margin: 6px 0 5px;
+  margin: 5px 0 4px;
 }
 
-.nx-bar i {
+.nx-meter > i {
   display: block;
   height: 100%;
   background: var(--accent);
   border-radius: 3px;
+}
+
+/* 칩 옆 한 단어와 같은 문턱과 색 — 70% 주의, 90% 위험. */
+.nx-urow--warm .nx-meter > i {
+  background: var(--amber);
+}
+
+.nx-urow--warm .nx-urow-pct {
+  color: var(--amber);
+}
+
+.nx-urow--hot .nx-meter > i {
+  background: var(--red);
+}
+
+.nx-urow--hot .nx-urow-pct {
+  color: var(--red);
 }
 
 .nx .nx-send {

@@ -393,6 +393,7 @@ export function ChatColumn({
           prefill={prefill}
           listenPinsSend
           registerHandle={registerHandle}
+          onToast={nav.toast}
           onSend={send}
         />
       </div>

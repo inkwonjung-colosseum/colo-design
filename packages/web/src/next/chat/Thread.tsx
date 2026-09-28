@@ -5,7 +5,7 @@ import {
   type RepoStatus,
   readTurn,
 } from "@colo-design/protocol";
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import { Markdown } from "../../components/Markdown";
 import { ActivitySummary, groupActivity } from "../../components/transcript/activity";
 import { ThinkingBlock, ToolBlock } from "../../components/transcript/blocks";
@@ -25,7 +25,7 @@ import {
   retryCount,
 } from "../lib/thread";
 import { BriefCard, FailCard, GateCard, ReceiptCard, ReviewCard, reviewParts } from "./cards";
-import { CheckIcon, ClockIcon, EditIcon, SparkIcon } from "./icons";
+import { CheckIcon, ClockIcon, EditIcon, FwdIcon, SparkIcon } from "./icons";
 import { SettleLine, ShotCard } from "./SettleLine";
 
 /** CLI 가 사람의 말이나 답인 척 내려놓는 살림 줄 — 사람의 말이 아니다. */
@@ -119,6 +119,65 @@ export function Thread(props: ThreadProps) {
       todosSoFar = [];
     }
   }
+
+  // 한 답 묶음(사람의 말 뒤부터 답이 끝날 때까지)에서 마지막 말이 답이고 그 앞의
+  // 말은 과정이다 — 과정은 타임라인으로 그리고(A) 답이 끝나면 한 줄로 접는다.
+  // 도는 동안에는 펼친 채 마지막 줄만 강조한다.
+  type StepRole = {
+    /** 접는 줄이 서는 자리 — 묶음의 첫 과정 문장. */
+    head: boolean;
+    /** 묶음의 첫 과정 문장 id — 펼침 상태의 열쇠. */
+    key: string;
+    /** 과정의 수 — 접는 줄의 숫자. */
+    count: number;
+    /** 답이 끝났는가 — 끝나면 과정은 접힌다. */
+    settled: boolean;
+    /** 도는 동안의 마지막 줄 — 강조하는 한 줄. */
+    now: boolean;
+  };
+  const stepRoles = new Map<string, StepRole>();
+  {
+    let bundle: string[] = [];
+    const close = (settled: boolean) => {
+      if (bundle.length === 0) return;
+      const steps = settled ? bundle.slice(0, -1) : bundle;
+      steps.forEach((id, at) => {
+        stepRoles.set(id, {
+          head: at === 0,
+          key: steps[0]!,
+          count: steps.length,
+          settled,
+          now: !settled && at === steps.length - 1,
+        });
+      });
+      bundle = [];
+    };
+    // 답을 여는 말 · 답을 닫는 기록이 묶음의 경계다 — 생각 · 도구 · 알림은
+    // 묶음 안의 일이다.
+    for (const block of tape) {
+      if (block.type === "text" && block.agentId === null) {
+        bundle.push(block.id);
+      } else if (
+        block.type === "user" ||
+        block.type === "turn" ||
+        block.type === "human" ||
+        block.type === "milestone" ||
+        block.type === "save" ||
+        block.type === "saveBlocked"
+      ) {
+        close(true);
+      }
+    }
+    close(!live); // 꼬리의 묶음 — 답이 도는 중이면 펼친 채 둔다.
+  }
+  const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(new Set());
+  const toggleSteps = (key: string) =>
+    setOpenSteps((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const prompts = promptNumbers(blocks);
   const turnNumbers = turnBlockNumbers(blocks);
@@ -272,6 +331,34 @@ export function Thread(props: ThreadProps) {
         const trimmed = block.text.trim();
         if (trimmed === NO_RESPONSE) return null;
         if (trimmed === INTERRUPTED) return <Note>{L.transcript.stopped}</Note>;
+        const step = stepRoles.get(block.id);
+        if (step) {
+          // 과정 문장 — 답이 끝나면 한 줄로 접히고(A), 도는 동안에는 펼친 채
+          // 마지막 줄만 강조한다. 얼굴은 답에만 선다.
+          const open = !step.settled || openSteps.has(step.key);
+          if (!open && !step.head) return null;
+          return (
+            <>
+              {step.settled && step.head && (
+                <button
+                  type="button"
+                  className={`nx-m-fold${open ? " nx-m-fold--on" : ""}`}
+                  aria-expanded={open}
+                  onClick={() => toggleSteps(step.key)}
+                >
+                  <FwdIcon />
+                  {L.transcript.steps(step.count)}
+                </button>
+              )}
+              {open && (
+                <div className={`nx-m-step${step.now ? " nx-m-step--now" : ""}`}>
+                  <Markdown text={block.text} />
+                  {block.streaming && <span className="nx-caret" />}
+                </div>
+              )}
+            </>
+          );
+        }
         const first = !aiOpened;
         aiOpened = true;
         return (

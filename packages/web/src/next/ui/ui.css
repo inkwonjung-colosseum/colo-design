@@ -291,14 +291,113 @@
   transform: translateX(-50%);
   background: var(--ink);
   color: var(--bg);
-  padding: 9px 15px;
+  padding: 9px 15px 11px;
   border-radius: var(--r-md);
   font-size: 13px;
   box-shadow: var(--pop);
-  animation: nx-rise 0.18s;
+  animation: nx-toast-in 0.52s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   z-index: 95;
   white-space: nowrap;
   max-width: 90%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 내려앉은 뒤 한 번 지나가는 빛줄기. */
+.nx-toast::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    color-mix(in srgb, var(--bg) 28%, transparent) 50%,
+    transparent 65%
+  );
+  transform: translateX(-120%);
+  animation: nx-toast-shine 0.9s 0.28s ease-out both;
+  pointer-events: none;
+}
+
+.nx-toast-text {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: nx-toast-text 0.4s 0.08s ease-out both;
+}
+
+/* 머무는 시간 — 다 닳으면 토스트가 나간다. */
+.nx-toast-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.85;
+  transform-origin: left;
+  animation: nx-toast-bar var(--nx-toast-ms, 2600ms) linear both;
+}
+
+.nx-toast--out {
+  animation: nx-toast-out 0.22s ease-in both;
+}
+
+@keyframes nx-toast-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -22px) scale(0.86);
+    filter: blur(6px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes nx-toast-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -10px) scale(0.94);
+    filter: blur(4px);
+  }
+}
+
+@keyframes nx-toast-shine {
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes nx-toast-text {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+    letter-spacing: 0.04em;
+  }
+}
+
+@keyframes nx-toast-bar {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-toast,
+  .nx-toast--out,
+  .nx-toast-text,
+  .nx-toast::after {
+    animation-duration: 0.01ms;
+    animation-delay: 0s;
+  }
 }

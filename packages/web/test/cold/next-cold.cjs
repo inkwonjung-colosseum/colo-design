@@ -967,7 +967,9 @@ TASK[8] = async () => {
     const text = await bodyText(page);
     check(text.includes("생각 시간"), "생각 시간 없음");
     check(text.includes(T.thinkShort) && text.includes(T.thinkLong), "짧게 · 길게 없음");
-    const fast = text.includes(T.fast);
+    // 빠르게 칩은 아이콘만 서고 이름은 aria-label 이 입는다 — 말뭉치(text)엔 없다.
+    const fast =
+      text.includes(T.fast) || (await page.getByRole("button", { name: T.fast }).count()) > 0;
     await page.keyboard.press("Escape");
     return fast ? "빠르게 있음" : "빠르게 없음(이 모델이 받지 않음)";
   });

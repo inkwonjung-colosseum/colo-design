@@ -51,6 +51,9 @@ declare global {
       notifyTest?: () => Promise<{ shown: boolean; error?: string }>;
       /** 설정의 `시스템 알림 설정 열기` — OS 의 알림 허용 스위치로 데려간다. */
       openNotificationSettings?: () => Promise<{ opened?: string; error?: string }>;
+      /** 직전 부팅의 렌더러 사망 기록(크래시 방어 층 3) — 부팅 때 한 번.
+       * 읽으면 메인이 비운다. 없으면 null. */
+      lastRendererCrash?: () => Promise<{ reason: string; at: number } | null>;
       /** 알림 클릭 → 그 대화 열기: the session id to open. */
       onOpenSession?: (callback: (sessionId: string) => void) => Unsubscribe;
       /** 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */

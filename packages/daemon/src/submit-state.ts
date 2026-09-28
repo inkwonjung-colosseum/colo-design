@@ -127,7 +127,14 @@ export function advanceSubmitTrail(
     return { trail: prev, changed: false, blocked: null };
   }
   const log = [...prev.log, ...lines.map((text) => ({ at, text }))].slice(-SUBMIT_LOG_MAX);
-  return { trail: { phase, log }, changed: true, blocked };
+  // 막힘에 새로 들어선 순간이 그 문제의 신원이다 — 닫은 줄이 같은 문제를
+  // 계속 말할 때 다시 뜨지 않는다(풀렸다 다시 막히면 새 신원으로 다시 선다).
+  const blockedAt = next.phase === "blocked" && prev.phase !== "blocked" ? at : prev.blockedAt;
+  return {
+    trail: { phase, log, ...(blockedAt ? { blockedAt } : {}) },
+    changed: true,
+    blocked,
+  };
 }
 
 /**

@@ -11,6 +11,9 @@ import { isPreparing } from "./project-note";
 const NARROW_QUERY = "(max-width: 900px)";
 
 /** 창이 900px 아래인가 — 목업은 창 폭의 컨테이너 질의, 앱은 창 자체다. */
+/** 토스트가 머무는 시간 — 토스트의 줄어드는 막대가 같은 값으로 닳는다. */
+export const TOAST_MS = 2600;
+
 export function useNarrow(): boolean {
   const [narrow, setNarrow] = useState(() => window.matchMedia?.(NARROW_QUERY).matches ?? false);
   useEffect(() => {
@@ -65,7 +68,7 @@ export function useShellNav({
   const [toastText, setToastText] = useState<string | null>(null);
   useEffect(() => {
     if (!toastText) return;
-    const timer = setTimeout(() => setToastText(null), 2600);
+    const timer = setTimeout(() => setToastText(null), TOAST_MS);
     return () => clearTimeout(timer);
   }, [toastText]);
 

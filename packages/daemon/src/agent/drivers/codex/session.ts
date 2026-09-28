@@ -1,7 +1,9 @@
 import type {
   ContextUsage,
   EffortLevel,
+  PlanPeriod,
   PlanUsage,
+  PlanWindow,
   SessionCommand,
   SessionModelInfo,
 } from "@colo-design/protocol";
@@ -39,25 +41,73 @@ function bypassSandboxPolicy(): Wire {
   return { type: "dangerFullAccess" };
 }
 
+/** The handshake every app-server connection opens with — a session's and the probe's alike. */
+const INITIALIZE_PARAMS = {
+  clientInfo: { name: "colo-design", title: null, version: "0" },
+  capabilities: {
+    // steer, item/* approvals and skills/list live behind this flag.
+    experimentalApi: true,
+    requestAttestation: false,
+  },
+};
+
+/** Minutes in a day — the rate-limit windows name their length in minutes. */
+const DAY_MINS = 1440;
+
 /**
- * The `account/rateLimits/read` answer as the protocol's plan reading. Codex
- * names its own windows, so the buckets are classified by duration: ≤12h is
- * the short window, longer is weekly, and every extra metered limit lands in
- * modelWeekly under its own name — or, when the server names nothing, under
- * the period the window actually runs on ("이번 달" for the free plan's
- * monthly budget). Pure, and exported for the mapper test — this
- * classification is the only bridge between the app-server's answer and the
- * chip's rows, so it is tested without an app-server in the way.
+ * How long a window runs, in the periods the chip spells: up to 12h is the
+ * short window, six to eight days is the week, 28 days and up the month
+ * (the free plan's budget). Anything between is none of them — its row
+ * spells the length in days instead of borrowing a period it does not run on.
+ */
+function codexPeriod(mins: number): PlanPeriod | null {
+  if (mins > 0 && mins <= 720) return "fiveHour";
+  if (mins >= 6 * DAY_MINS && mins <= 8 * DAY_MINS) return "week";
+  if (mins >= 28 * DAY_MINS) return "month";
+  return null;
+}
+
+/** The fully spelled fallback label — what a reader without `name` · `period` shows. */
+function codexLabel(name: string | null, period: PlanPeriod | null, mins: number): string {
+  const span =
+    period === "fiveHour"
+      ? "5시간"
+      : period === "week"
+        ? "주간"
+        : period === "month"
+          ? "이번 달"
+          : mins > 0
+            ? `${Math.round(mins / DAY_MINS)}일`
+            : null;
+  if (name === null) return span ?? "한도";
+  return span === null ? name : `${name} ${span}`;
+}
+
+/**
+ * The `account/rateLimits/read` answer as the protocol's plan reading. The
+ * main snapshot (`rateLimits`, the `codex` limit) is the plan's own budget:
+ * its short and weekly windows fill the two named slots, and any other
+ * window it has — the free plan's monthly one — becomes an unnamed row.
+ * Every other snapshot in `rateLimitsByLimitId` is a metered extra (a model
+ * with its own pool, e.g. Spark) and all of its windows become rows under
+ * its own name, each with its own period — the extra's 5-hour and weekly
+ * windows are two different budgets and must not read as one name twice,
+ * nor fill the plan's own slots when the plan has no short window of its
+ * own. Pure, and exported for the mapper test — this classification is the
+ * only bridge between the app-server's answer and the chip's rows, so it is
+ * tested without an app-server in the way.
  */
 export function toPlanUsage(result: Wire): PlanUsage {
-  const snapshots: Wire[] = [];
-  if (result?.rateLimits) snapshots.push(result.rateLimits as Wire);
-  const byId = result?.rateLimitsByLimitId as Wire | null | undefined;
-  if (byId) {
-    for (const [key, snapshot] of Object.entries(byId)) {
-      if (key !== (result.rateLimits as Wire)?.limitId) snapshots.push(snapshot as Wire);
-    }
-  }
+  const byId = (result?.rateLimitsByLimitId ?? {}) as Record<string, Wire>;
+  const main = ((result?.rateLimits as Wire | null | undefined) ??
+    byId.codex ??
+    null) as Wire | null;
+  const snapshots: Wire[] = [
+    ...(main ? [main] : []),
+    ...Object.entries(byId)
+      .filter(([key, snapshot]) => snapshot !== main && key !== main?.limitId)
+      .map(([, snapshot]) => snapshot),
+  ];
   const plan: PlanUsage = {
     provider: "codex",
     subscriptionType: null,
@@ -66,21 +116,18 @@ export function toPlanUsage(result: Wire): PlanUsage {
     modelWeekly: [],
   };
   for (const snapshot of snapshots) {
-    // The first snapshot is the plan's own budget row; the rest are metered
-    // extras that may carry their own names.
-    const isPrimary = snapshot === result?.rateLimits;
     if (typeof snapshot?.planType === "string" && !plan.subscriptionType) {
       plan.subscriptionType = snapshot.planType;
     }
-    const windows: Array<{ window: Wire; label: string | null }> = [];
-    if (snapshot?.primary) {
-      windows.push({ window: snapshot.primary as Wire, label: null });
-    }
-    if (snapshot?.secondary) {
-      windows.push({ window: snapshot.secondary as Wire, label: null });
-    }
-    for (const { window } of windows) {
-      const mapped = {
+    const isMain = snapshot === main;
+    // The main snapshot's limitId is the provider's own id ("codex"), which
+    // the popover already says; an extra with no display name falls back to
+    // its id rather than to no name at all.
+    const rawName = isMain ? snapshot?.limitName : (snapshot?.limitName ?? snapshot?.limitId);
+    const name = rawName == null ? null : String(rawName);
+    for (const window of [snapshot?.primary, snapshot?.secondary] as Array<Wire | null>) {
+      if (!window) continue;
+      const mapped: PlanWindow = {
         utilization: typeof window.usedPercent === "number" ? window.usedPercent : null,
         resetsAt:
           typeof window.resetsAt === "number"
@@ -88,32 +135,56 @@ export function toPlanUsage(result: Wire): PlanUsage {
             : null,
       };
       const mins = Number(window.windowDurationMins ?? 0);
-      if (mins > 0 && mins <= 720 && !plan.fiveHour) {
+      const period = codexPeriod(mins);
+      if (isMain && period === "fiveHour" && !plan.fiveHour) {
         plan.fiveHour = mapped;
-      } else if (mins > 0 && mins <= 11000 && !plan.sevenDay) {
+      } else if (isMain && period === "week" && !plan.sevenDay) {
         plan.sevenDay = mapped;
       } else {
-        // The server names metered extras itself; an unnamed long window is
-        // the plan's own budget, so the row spells its period — "이번 달" for
-        // the free plan's monthly window, not the weekly word the chip used
-        // to append to every row. The primary snapshot's limitId is the
-        // provider's own id ("codex"), which the account line already says.
-        const named = isPrimary ? snapshot?.limitName : (snapshot?.limitName ?? snapshot?.limitId);
-        plan.modelWeekly.push({
-          ...mapped,
-          label:
-            named != null
-              ? String(named)
-              : mins >= 28 * 1440
-                ? "이번 달"
-                : mins > 0
-                  ? `${Math.round(mins / 1440)}일`
-                  : "limit",
-        });
+        plan.modelWeekly.push({ ...mapped, label: codexLabel(name, period, mins), name, period });
       }
     }
   }
   return plan;
+}
+
+/**
+ * The account's limits with no thread in the way — what Claude's probe
+ * query is for Claude. A bare `app-server` answers `account/rateLimits/read`
+ * after the handshake alone (probed live on 0.150), so the chip can read the
+ * codex budget before any codex thread exists: one process for about a
+ * second, no thread, no tokens. Bounded by its own call timeouts and by the
+ * caller's signal (the daemon's shutdown); any failure is no reading, and
+ * the tracker's next window asks again.
+ */
+export async function probeCodexUsage(options: {
+  executable: string | null;
+  cwd: string;
+  signal?: AbortSignal;
+}): Promise<PlanUsage | null> {
+  if (!options.executable || options.signal?.aborted) return null;
+  const transport = new JsonRpcTransport(options.executable, ["app-server"], options.cwd, {
+    // No thread, no tools — nothing a bare app-server could ask is ours to grant.
+    onRequest: async () => {
+      throw new Error("usage probe answers no requests");
+    },
+    onNotify: () => undefined,
+    onEnd: () => undefined,
+  });
+  const abandon = () => transport.close();
+  options.signal?.addEventListener("abort", abandon, { once: true });
+  try {
+    await transport.request("initialize", INITIALIZE_PARAMS, 15_000);
+    transport.notify("initialized");
+    return toPlanUsage(
+      (await transport.request("account/rateLimits/read", undefined, 10_000)) as Wire,
+    );
+  } catch {
+    return null;
+  } finally {
+    options.signal?.removeEventListener("abort", abandon);
+    transport.close();
+  }
 }
 
 /**
@@ -205,18 +276,7 @@ export class CodexAgentSession implements AgentSession {
   // -------------------------------------------------------------------------
 
   private async handshake(): Promise<void> {
-    await this.transport.request(
-      "initialize",
-      {
-        clientInfo: { name: "colo-design", title: null, version: "0" },
-        capabilities: {
-          // steer, item/* approvals and skills/list live behind this flag.
-          experimentalApi: true,
-          requestAttestation: false,
-        },
-      },
-      15_000,
-    );
+    await this.transport.request("initialize", INITIALIZE_PARAMS, 15_000);
     this.transport.notify("initialized");
 
     const resumeId = typeof this.launch.resume === "string" ? this.launch.resume : null;

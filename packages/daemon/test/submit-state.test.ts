@@ -90,6 +90,7 @@ test("advanceSubmitTrail — 막힘은 들어설 때 한 번, 풀림과 성공�
     AT,
   );
   assert.equal(step.blocked, "developer-notified");
+  assert.equal(step.trail.blockedAt, AT, "막힘에 들어선 순간이 줄의 신원이다");
   // 막힌 채 이유만 바뀌어도(인증) 다시 울리지 않는다.
   const again = advanceSubmitTrail(
     step.trail,
@@ -102,11 +103,40 @@ test("advanceSubmitTrail — 막힘은 들어설 때 한 번, 풀림과 성공�
   assert.equal(step.blocked, null);
   trail = advanceSubmitTrail(step.trail, { phase: "idle", attempts: 0 }, AT, true).trail;
   assert.equal(trail.phase, "idle");
+  assert.equal(trail.blockedAt, AT, "막힘의 흔적은 기록에 남는다");
   // 최근 셋만 남는다 — 가장 오래된 `다시 제출하는 중` 이 밀려난다.
   assert.deepEqual(
     trail.log.map((l) => l.text),
     [SUBMIT_LOG_TEXT.blocked, SUBMIT_LOG_TEXT.unblocked, SUBMIT_LOG_TEXT.succeeded],
   );
+});
+
+test("advanceSubmitTrail — 풀렸다 다시 막히면 새 신원(blockedAt)으로 선다", () => {
+  const first = advanceSubmitTrail(
+    undefined,
+    { phase: "blocked", attempts: 3, blockedBy: "developer-notified" },
+    AT,
+  ).trail;
+  assert.equal(first.blockedAt, AT);
+  // 같은 막힘이 계속돼도 신원은 처음 시각 그대로다.
+  const still = advanceSubmitTrail(
+    first,
+    { phase: "blocked", attempts: 6, blockedBy: "developer-notified" },
+    "2026-09-25T02:00:00.000Z",
+  );
+  assert.equal(still.changed, false);
+  // 풀렸다가 다시 막힌 것은 새 문제다 — 신원이 갱신되어 닫은 줄도 다시 선다.
+  const retrying = advanceSubmitTrail(
+    still.trail,
+    { phase: "retrying", attempts: 7 },
+    "2026-09-25T03:00:00.000Z",
+  ).trail;
+  const reblocked = advanceSubmitTrail(
+    retrying,
+    { phase: "blocked", attempts: 8, blockedBy: "developer-notified" },
+    "2026-09-25T04:00:00.000Z",
+  ).trail;
+  assert.equal(reblocked.blockedAt, "2026-09-25T04:00:00.000Z");
 });
 
 test("advanceSubmitTrail — 성공 없이 idle 로 돌아가면(보낼 것이 없음) 줄이 없다", () => {

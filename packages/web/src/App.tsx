@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConnectScreen } from "./ConnectScreen";
+import { crashStore, markAppMounted } from "./lib/crash";
 import { useDaemon } from "./lib/daemon-client";
 import { normalizeNotificationSettings, useSettings } from "./lib/settings";
 import { NextShell } from "./next/NextShell";
@@ -37,6 +38,8 @@ export default function App() {
   // 먼저 받아 설정에 맞추고 그 뒤 사용자의 변경만 되밀어 넣는다.
   const [notifyPrefsReady, setNotifyPrefsReady] = useState(false);
   useEffect(() => {
+    // 부팅 성공 신호(3.A 층 1-2) — 와치독의 타이머를 끊고 낡은 미러를 비운다.
+    markAppMounted(crashStore());
     const bridge = window.coloDesignDesktop;
     if (!bridge?.getNotificationPrefs) {
       setNotifyPrefsReady(true);

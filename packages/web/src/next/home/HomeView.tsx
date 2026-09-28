@@ -32,6 +32,7 @@ export function HomeView({
           active={active}
           onSwitch={nav.switchProject}
           onOpened={nav.showThread}
+          onToast={nav.toast}
         />
         <div className="nx-home-hint">{L.home.hint}</div>
         <HomeInbox daemon={daemon} onOpenThread={nav.openThread} onSwitch={nav.switchProject} />

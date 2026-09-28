@@ -21,6 +21,7 @@ import { ProblemLine } from "./status/ProblemLine";
 import { StatusLine } from "./status/StatusLine";
 import { useWorkLedger } from "./status/use-work-ledger";
 import { MenuIcon, PanelIcon } from "./ui/icons";
+import { Toast } from "./ui/Toast";
 
 /** 대화 칸의 폭(U1) — 360~420px, 처음은 목업의 400. */
 const CHAT_BOUNDS = { min: 360, max: 420 } as const;
@@ -316,11 +317,7 @@ export function Workspace({
             </div>
           </div>
         </main>
-        {toast && (
-          <div className="nx-toast" role="status">
-            {toast}
-          </div>
-        )}
+        <Toast text={toast} />
         {settingsOpen && (
           <SettingsDialog
             daemon={daemon}
