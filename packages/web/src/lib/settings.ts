@@ -499,6 +499,22 @@ function resolveTheme(choice: ThemeChoice): ThemeId {
 }
 
 /**
+ * 테마를 어떻게 갈아 입을지의 판정 — 순수 판정이라 시험이 직접 읽는다.
+ * - `view`: `startViewTransition` 으로 두 팔레트의 200ms 교차 페이드.
+ * - `skip`: 화면이 바뀌지 않는 50ms (전환을 잠시 끊어 밝은 글자가 어두운 바탕에
+ *   한 프레임 보이는 것을 막는 옛 길).
+ * - `plain`: 첫 그림(비교할 팔레트가 없다) 또는 움직임을 끈 창 — 바로 칠한다.
+ */
+export function themeSwapMode(
+  firstPaint: boolean,
+  reducedMotion: boolean,
+  hasViewTransition: boolean,
+): "view" | "skip" | "plain" {
+  if (firstPaint || reducedMotion) return "plain";
+  return hasViewTransition ? "view" : "skip";
+}
+
+/**
  * Paint the stored theme before React mounts. Without this a client set to
  * light renders one dark frame on every load, because the attribute would
  * otherwise land in an effect after the first paint.
@@ -582,13 +598,26 @@ export function useSettings(): {
   // comes along with it so form controls and scrollbars match.
   useEffect(() => {
     const root = document.documentElement;
-    // Surfaces have a 120ms transition. Fading between two palettes leaves
-    // inputs dark-text-on-dark for those frames, so a swap skips animation.
-    const swapping = root.dataset.theme !== undefined && root.dataset.theme !== theme;
-    if (swapping) root.classList.add("theme-swap");
-    root.dataset.theme = theme;
-    syncThemeColor();
-    if (!swapping) return;
+    const doc = document as Document & {
+      startViewTransition?: (update: () => void) => unknown;
+    };
+    const mode = themeSwapMode(
+      root.dataset.theme === undefined,
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true,
+      typeof doc.startViewTransition === "function",
+    );
+    const paint = () => {
+      root.dataset.theme = theme;
+      syncThemeColor();
+    };
+    if (mode === "view") {
+      doc.startViewTransition?.(paint);
+      return;
+    }
+    // 낡은 길 — 두 팔레트 사이의 어긋난 프레임을 50ms 동안 건너뛴다.
+    if (mode === "skip") root.classList.add("theme-swap");
+    paint();
+    if (mode !== "skip") return;
     const timer = setTimeout(() => root.classList.remove("theme-swap"), 50);
     return () => clearTimeout(timer);
   }, [theme]);

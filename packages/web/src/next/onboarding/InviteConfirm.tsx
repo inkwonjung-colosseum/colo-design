@@ -5,6 +5,7 @@ import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
 import { inviteRowsCopy } from "../lib/invite-rows";
 import { AlertIcon, CloseIcon } from "./icons";
+import { inviteProgress, modalCloseMs } from "./motion";
 import "./onboarding.css";
 
 /**
@@ -35,12 +36,34 @@ export function InviteConfirm({
 }) {
   const [authorDraft, setAuthorDraft] = useState("");
   const [discardState, setDiscardState] = useState<"idle" | "done" | "failed">("idle");
+  // 닫히는 중 — 역방향 pop 이 끝나는 뒤에 물러난다(움직임을 끈 창은 곧바로).
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    },
+    [],
+  );
+  const requestClose = () => {
+    if (closing || state.phase === "applying" || closeTimer.current !== null) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+    if (modalCloseMs(reduced) === 0) {
+      onClose();
+      return;
+    }
+    setClosing(true);
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null;
+      onClose();
+    }, modalCloseMs(reduced));
+  };
   const panel = useRef<HTMLDivElement>(null);
   const live = state.phase !== "idle";
   // 초점의 가두기와 되돌림 — 닫힐 때 열던 곳으로 돌려 놓는 것까지 맡는다.
-  useModalFocus(panel, live);
+  useModalFocus(panel, live && !closing);
   // Esc 는 맨 위 층만 답한다 — 적용이 도는 동안은 물러서지 않는다.
-  useModalEscape(panel, onClose, live && state.phase !== "applying");
+  useModalEscape(panel, requestClose, live && !closing && state.phase !== "applying");
 
   // 새 확인판이 열리면 지난 판의 흔적을 지운다.
   useEffect(() => {
@@ -55,7 +78,7 @@ export function InviteConfirm({
 
   return (
     <div className="nx nx-modal-host">
-      <div className="nx-modal-back" role="presentation">
+      <div className={`nx-modal-back${closing ? " nx-modal-back--out" : ""}`} role="presentation">
         <div
           ref={panel}
           className="nx-modal"
@@ -70,7 +93,7 @@ export function InviteConfirm({
                 type="button"
                 className="nx-ibtn"
                 aria-label={L.onboarding.close}
-                onClick={onClose}
+                onClick={requestClose}
               >
                 <CloseIcon />
               </button>
@@ -91,7 +114,7 @@ export function InviteConfirm({
                   <button type="button" className="nx-btn" onClick={onOpenPicker}>
                     {L.invite.otherFile}
                   </button>
-                  <button type="button" className="nx-btn nx-btn--ghost" onClick={onClose}>
+                  <button type="button" className="nx-btn nx-btn--ghost" onClick={requestClose}>
                     {L.onboarding.close}
                   </button>
                 </div>
@@ -106,7 +129,7 @@ export function InviteConfirm({
                 discardState={discardState}
                 onAuthorDraft={setAuthorDraft}
                 onApply={onApply}
-                onClose={onClose}
+                onClose={requestClose}
                 onDiscard={(path) => {
                   void window.coloDesignDesktop?.invite?.discard(path).then(
                     () => {
@@ -121,8 +144,16 @@ export function InviteConfirm({
 
             {state.phase === "applying" && (
               <>
-                <div className="nx-bar" aria-hidden="true">
-                  <i />
+                {/* 끝없는 막대가 아니라 진행기가 아는 만큼만 채운다. */}
+                <div
+                  className="nx-fill"
+                  role="progressbar"
+                  aria-label={L.invite.title}
+                  aria-valuemin={0}
+                  aria-valuemax={state.rows.length}
+                  aria-valuenow={state.done}
+                >
+                  <i style={{ width: `${inviteProgress(state.done, state.rows.length)}%` }} />
                 </div>
                 <p className="nx-snote" role="status">
                   {L.invite.progressing(state.done, state.rows.length)}
@@ -131,7 +162,7 @@ export function InviteConfirm({
             )}
 
             {state.phase === "done" && (
-              <DoneBody daemon={daemon} state={state} onRetry={onRetry} onClose={onClose} />
+              <DoneBody daemon={daemon} state={state} onRetry={onRetry} onClose={requestClose} />
             )}
           </div>
         </div>

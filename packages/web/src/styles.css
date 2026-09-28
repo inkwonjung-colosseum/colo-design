@@ -2232,7 +2232,14 @@ select {
   }
 }
 
-/* the frame the palette changes on; see useSettings */
+/* the frame the palette changes on; see useSettings
+   새 길은 startViewTransition — 두 팔레트의 교차 페이드를 200ms 로 늘인다.
+   startViewTransition 이 없는 낡은 창은 theme-swap 50ms 로 어긋난 프레임을 건너뛴다. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+}
+
 :root.theme-swap *,
 :root.theme-swap *::before,
 :root.theme-swap *::after {

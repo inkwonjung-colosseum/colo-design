@@ -4,17 +4,33 @@
 .nx-set-back {
   position: fixed;
   inset: 0;
-  background: rgba(24, 22, 19, 0.3);
+  background: var(--scrim);
   display: grid;
   place-items: center;
   z-index: 70;
   animation: nx-fade 0.15s;
 }
 
+/* 닫히는 동안의 설정 — 열림의 거꾸로. 닫는 중 상태가 끝나면 창이 언마운트된다. */
+.nx-set-back--out {
+  animation: nx-fade 0.12s reverse both;
+}
+
+.nx-set-back--out .nx-set {
+  animation: nx-set-out 0.12s var(--drift) both;
+}
+
+@keyframes nx-set-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
 .nx-set {
   background: var(--card);
   border-radius: 16px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--pop);
   width: min(620px, calc(100% - 40px));
   max-height: calc(100% - 60px);
   overflow: auto;
@@ -379,4 +395,72 @@
   padding: 0 10px;
   font-size: 12.5px;
   border-radius: var(--r-sm);
+}
+
+/* 테마 고르기 — AI 카드와 같은 라디오 카드 둘씩. */
+.nx-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.nx-theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 8px;
+}
+
+.nx-theme-card .nx-rt b {
+  font-size: 12.5px;
+}
+
+/* 카드 안의 작은 미리보기 — data-theme 를 입은 진짜 팔레트의 조각이다.
+   바탕 위에 패널 조각 · 글자 줄 하나 · 강조 점 하나. */
+.nx-theme-peek {
+  display: flex;
+  height: 38px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+
+.nx-peek-fill {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  align-content: center;
+  gap: 3px 6px;
+  padding: 0 8px;
+  background: var(--bg);
+}
+
+.nx-peek-panel {
+  height: 10px;
+  border-radius: 3px;
+  background: var(--panel-2);
+}
+
+.nx-peek-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.nx-peek-line {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 40%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-set-back--out,
+  .nx-set-back--out .nx-set {
+    animation: none;
+    opacity: 0;
+  }
 }

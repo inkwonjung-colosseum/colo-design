@@ -63,6 +63,18 @@
   pointer-events: none;
 }
 
+/* 홈에서 대화로 넘어올 때의 한 번 — 자리를 드러내며 nx-chat-rise 로 뜬다.
+   offstage 가 다시 입혀지면 걸음이 풀려, 다음 넘어옴에 한 번 더 산다. */
+.nx-work:not(.nx-offstage) {
+  animation: nx-chat-rise 0.22s var(--drift);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-work:not(.nx-offstage) {
+    animation: none;
+  }
+}
+
 .nx-homebar {
   height: 52px;
   flex: none;
