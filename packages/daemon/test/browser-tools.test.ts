@@ -2,7 +2,7 @@
 // `../dist` 임포트인 이유: node --test 는 src 의 `.js` 지정자를 못 읽는다.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { browserTools, submitNoteOf } from "../dist/browser-tools.js";
+import { BROWSER_TOOLS, browserTools, submitNoteOf } from "../dist/browser-tools.js";
 
 test("browserTools — submit_for_review 는 판정이 켜진 세션에만 실린다", () => {
   const full = browserTools(true);
@@ -34,4 +34,17 @@ test("submitNoteOf — 공백을 걷고 200자에서 자르며 빈 문자열은 
   );
   assert.equal(submitNoteOf({ note: "가".repeat(201) }).length, 200, "200자에서 자른다");
   assert.equal(submitNoteOf({ note: "가".repeat(200) }).length, 200, "정확히 200자는 그대로다");
+});
+
+test("BROWSER_TOOLS — 배열 인자는 모두 items 를 선언한다", () => {
+  for (const tool of BROWSER_TOOLS) {
+    for (const [name, property] of Object.entries(tool.properties)) {
+      if (property.type !== "array") continue;
+      assert.equal(
+        property.items?.type,
+        "string",
+        `${tool.name}.${name} — items 없는 배열은 OpenAI·Gemini 계열이 도구 정째를 거절한다`,
+      );
+    }
+  }
 });
