@@ -8,7 +8,7 @@ import { TrashIcon } from "./icons";
 /** `nx:pins:send` — 말풍선의 ⌘↵. 입력창(단계 2)이 지금의 글과 핀을 보낸다. */
 export const PINS_SEND_EVENT = "nx:pins:send";
 
-/** 핀 하나의 이름 — 컴포넌트 · testid · 글자 · 태그, 영역이면 `영역`. */
+/** 핀 하나의 이름 — 컴포넌트 · testid · 접근성 이름 · 글자, 영역이면 `영역`. 끝까지 못 짚으면 `찍은 곳`. */
 export function pinName(pin: PinAttachment): string {
   const element = pin.element;
   if (element.kind === "region") return L.pin.area;
@@ -19,7 +19,7 @@ export function pinName(pin: PinAttachment): string {
     element.attrs?.testId ||
     element.a11y?.name ||
     (text ? (text.length > 18 ? `${text.slice(0, 18)}…` : text) : "") ||
-    element.component
+    L.pin.point
   );
 }
 

@@ -108,10 +108,10 @@ interface Editor {
 
 const EMPTY: Editor = { text: "", attachments: [] };
 
-/** 핀 칩의 이름 — 요소의 글자, 없으면 컴포넌트 이름, 영역이면 `영역`. */
+/** 핀 칩의 이름 — 요소의 글자, 영역이면 `영역`, 끝까지 못 짚으면 `찍은 곳`. */
 function pinLabel(pin: PinAttachment): string {
   if (pin.element.kind === "region") return L.pin.area;
-  return pin.element.text || pin.element.component || pin.screen;
+  return pin.element.text || L.pin.point;
 }
 
 export interface ComposerHandle {
