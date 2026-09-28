@@ -193,7 +193,8 @@ export const L = {
   },
   model: {
     ai: "AI",
-    openConvNote: "열린 대화는 처음 고른 AI 그대로예요. 바꾸면 다음 새 대화부터 써요.",
+    aiNext: "보내면 이 AI 로 대화가 열려요",
+    aiFixed: "이 대화의 AI 예요 · 다른 AI 는 새 대화에서 골라요",
     fastMissing: "이 모델은 빠르게를 받지 않아요 — 번개 칩은 받는 모델의 대화에만 섰어요.",
     model: "모델",
     filter: "모델 고르기",

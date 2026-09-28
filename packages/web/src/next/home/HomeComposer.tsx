@@ -97,6 +97,7 @@ export function HomeComposer({
       daemon={daemon}
       sessions={sessions}
       variant="home"
+      subject="next"
       draftKey={`home:${active?.slug ?? "none"}`}
       placeholder={L.home.placeholder}
       leading={projectChip}
