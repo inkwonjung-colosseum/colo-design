@@ -65,6 +65,7 @@
   border-color: var(--line2);
 }
 
+/* 화면 이름은 key 로 산다 — 이름이 바뀌면 들어오는 쪽에서 미끄러져 들어온다. */
 .nx-addr b {
   flex: 1;
   min-width: 0;
@@ -75,6 +76,29 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  animation: nx-namein 0.18s ease-out;
+}
+
+/* 답이 끝나 도착한 알림 — 1.2초 강조색으로 물들었다가 제 색으로 돌아온다. */
+.nx .nx-addr--tint {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transition:
+    background-color 0.3s,
+    border-color 0.3s,
+    color 0.3s;
+}
+
+.nx .nx-addr--tint b {
+  color: var(--accent);
+}
+
+@keyframes nx-namein {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
 }
 
 .nx .nx-seg {
@@ -253,6 +277,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 기기 틀이 바뀌는 동안 내용이 잠깐 흐려진다 — 틀이 닿으면 제 농도로. */
+.nx-pvdevice > * {
+  transition: opacity 0.18s ease;
+}
+
+.nx-pvdevice--swap > * {
+  opacity: 0.4;
+}
 .nx .nx-mseg button.nx-mseg--on {
   background: var(--card);
   color: var(--ink);
@@ -278,7 +310,12 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  transition: width 0.25s;
+  transition:
+    width 0.28s ease,
+    height 0.28s ease,
+    border-radius 0.28s ease,
+    border-width 0.28s ease,
+    box-shadow 0.28s ease;
 }
 
 .nx-pvstage[data-device="tablet"],
@@ -337,6 +374,71 @@
   white-space: nowrap;
 }
 
+/* ---------- 무대의 순간들 — 찍기 고리 · 흐르는 선 · 빛줄기 ---------- */
+/* 찍기가 켜진 동안 무대 둘레에 서는 안쪽 고리 — 화면을 가리지 않는 옅은 물들임. */
+.nx-pvring {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  animation: nx-fade 0.15s;
+}
+
+/* 150ms 을 넘긴 이동 — 무대의 맨 가장자리에 흐르는 선이 답한다. */
+.nx-pvbusy {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 5;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nx-pvbusy::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: frameprogress 1.1s linear infinite;
+}
+
+/* 답이 끝나 도착한 화면 위로 빛줄기가 한 번 지난다 — 신호마다 다시. */
+.nx-pvsweep {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nx-pvsweep::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -45%;
+  width: 45%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    color-mix(in srgb, var(--accent) 10%, transparent),
+    transparent
+  );
+  animation: nx-sweep 0.7s ease-out forwards;
+}
+
+@keyframes nx-sweep {
+  to {
+    left: 105%;
+  }
+}
 /* ---------- 덮개 — 준비 · 다시 켜는 중 · 고치는 중 ---------- */
 .nx-over {
   position: absolute;
@@ -346,6 +448,17 @@
   place-items: center;
   background: var(--panel);
   animation: nx-fade 0.2s;
+}
+
+/* 준비가 끝난 뒤의 걷힘 — 살아 있는 화면 위로 흐려지며 사라진다. */
+.nx-over--out {
+  animation: nx-overout 0.4s ease forwards;
+}
+
+@keyframes nx-overout {
+  to {
+    opacity: 0;
+  }
 }
 
 .nx-pv-placeholder {
@@ -386,6 +499,13 @@
   gap: 10px;
   width: 250px;
   text-align: left;
+}
+
+@keyframes nx-checkin {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
 }
 
 .nx-prep-step {
@@ -436,6 +556,18 @@
   border: 1.5px dashed var(--line2);
 }
 
+/* 걸음의 체크는 켜질 때마다 튀어 오른다 — 마지막 셋째도 같은 손맛으로. */
+.nx-prep-step--ok .nx-sic {
+  animation: nx-checkin 0.22s ease-out;
+}
+
+/* 마무리 장의 큰 표시 — 돌던 깃발을 내리고 완료의 체크가 선다. */
+.nx-sic--finale {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto;
+}
+
 .nx-prep-bar {
   height: 6px;
   border-radius: 3px;
@@ -449,6 +581,11 @@
   background: var(--accent);
   border-radius: 3px;
   transition: width 0.35s;
+}
+
+/* 마무리 장의 막대 — 초록으로 100% 에 차오른다. */
+.nx-prep-bar--done > i {
+  background: var(--green);
 }
 
 .nx-prep-card .nx-prep-hint {
@@ -559,13 +696,19 @@
   border-top: 1px solid var(--line2);
   transform: rotate(45deg);
   top: -6px;
-  left: 18px;
+  /* 화살표는 요소의 가운데를 가리킨다 — 말풍선이 묶여 밀려도 좇는다. */
+  left: var(--pv-arrow, 18px);
 }
 
 .nx-pinbub--up::before {
   top: auto;
   bottom: -6px;
   transform: rotate(225deg);
+}
+
+/* 위로 여는 말풍선은 아래에서 올라온다 — 아래로 여는 것과 대칭의 손맛. */
+.nx-pinbub--up {
+  animation: nx-pop-up 0.14s ease-out;
 }
 
 .nx-pinbub-h {

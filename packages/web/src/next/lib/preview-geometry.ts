@@ -14,6 +14,8 @@ interface Rect {
  * 핀 말풍선의 자리 — 오버레이가 보고한 요소의 `rect`(게스트 뷰포트의 CSS px)를
  * 게스트 요소의 화면 위치(`frame`, 칸 기준)와 배율로 옮긴다. 요소 바로 아래에
  * 서고, 칸의 바닥을 넘으면 요소 위로 올라간다(`up`). 가로는 칸 안으로 묶는다.
+ * `arrowLeft` 는 말풍선 안 화살표의 자리 — 요소의 가운데를 가리키되 말풍선
+ * 안으로 묶는다(CSS 변수 `--pv-arrow` 로 흘러간다).
  */
 export function bubblePlacement(input: {
   rect: Rect;
@@ -24,7 +26,7 @@ export function bubblePlacement(input: {
   box: { width: number; height: number };
   bubble: { width: number; height: number };
   gap?: number;
-}): { left: number; top: number; up: boolean } {
+}): { left: number; top: number; up: boolean; arrowLeft: number } {
   const { rect, frame, box, bubble } = input;
   const zoom = input.zoom > 0 ? input.zoom : 1;
   const gap = input.gap ?? 10;
@@ -46,7 +48,11 @@ export function bubblePlacement(input: {
   }
   const maxLeft = Math.max(margin, box.width - bubble.width - margin);
   const left = Math.min(maxLeft, Math.max(margin, elLeft - 14));
-  return { left: Math.round(left), top: Math.round(top), up };
+  // 화살표는 요소의 가운데를 가리킨다 — 말풍선이 묶여 밀려도 화살표가
+  // 요소를 좇게, 자리는 말풍선 폭 안으로 다시 묶는다.
+  const elCenter = elLeft + (rect.width * zoom) / 2;
+  const arrowLeft = Math.round(Math.min(bubble.width - 20, Math.max(10, elCenter - left)));
+  return { left: Math.round(left), top: Math.round(top), up, arrowLeft };
 }
 
 /**
@@ -110,4 +116,29 @@ export function prepProgress(phase: string, elapsedMs: number): number {
 export function elapsedParts(ms: number): { minutes: number; seconds: number } {
   const total = Math.max(0, Math.floor(ms / 1000));
   return { minutes: Math.floor(total / 60), seconds: total % 60 };
+}
+
+/**
+ * 답이 끝났을 때 미리보기의 한 번의 신호 — 「옮겨 감」과 「이미 거기서
+ * 바뀜」을 한 곳에서 판정한다. 턴이 끝나지 않았거나(흐르는 중 · 다른
+ * 대화), 사람이 일부러 밖으로 나가 있거나, 이번 턴이 화면을 말하지
+ * 않았으면 신호가 없다(null). 신호가 있으면 첫 화면의 주소와 이미 그
+ * 화면에 있는지를 돌려준다 — 칸은 이 값을 하나로 받아 이동과 옅은
+ * 빛줄기를 함께 일으킨다.
+ */
+export function arriveOnTurnEnd(input: {
+  /** 이번 턴이 끝났는가 — 같은 대화의 턴이 살아 있다가 끝난 순간만 true. */
+  ended: boolean;
+  /** 사람이 일부러 밖(예. 링크)을 보고 있는가 — 그때는 칸이 움직이지 않는다. */
+  external: boolean;
+  /** 이번 턴이 말한 화면들 — `path` 는 주소, `key` 는 화면의 같음 잣대. */
+  screens: { path: string; key: string }[];
+  /** 지금 보고 있는 화면의 같음 잣대. */
+  hereKey: string;
+}): { path: string; already: boolean } | null {
+  if (!input.ended || input.external) return null;
+  const first = input.screens[0];
+  if (!first) return null;
+  const already = input.screens.some((screen) => screen.key === input.hereKey);
+  return { path: first.path, already };
 }

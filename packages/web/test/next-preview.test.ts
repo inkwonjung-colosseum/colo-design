@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import {
+  arriveOnTurnEnd,
   bubblePlacement,
   bubbleRect,
   elapsedParts,
@@ -21,7 +22,7 @@ test("말풍선 — 요소 바로 아래, 게스트의 화면 위치만큼 옮�
     box: BOX,
     bubble: BUBBLE,
   });
-  assert.deepEqual(place, { left: 106, top: 138, up: false });
+  assert.deepEqual(place, { left: 106, top: 138, up: false, arrowLeft: 54 });
 });
 
 test("말풍선 — 배율을 곱한다", () => {
@@ -74,6 +75,61 @@ test("말풍선 — 가로는 칸 안에 묶인다, 칸보다 큰 요소는 칸 
   });
   assert.equal(huge.top, 600 - 8 - 110);
   assert.equal(huge.up, false);
+});
+
+test("말풍선 화살표 — 요소의 가운데를 가리키되 말풍선 안으로 묶인다", () => {
+  // 가운데가 말풍선 안에 있으면 그대로 가리킨다: elLeft=120, 폭 80 → 160.
+  const on = bubblePlacement({
+    rect: { x: 120, y: 50, width: 80, height: 30 },
+    frame: { left: 0, top: 0 },
+    zoom: 1,
+    box: BOX,
+    bubble: BUBBLE,
+  });
+  assert.equal(on.arrowLeft, 160 - on.left);
+  // 오른쪽 끝의 요소 — 말풍선은 안으로 밀리고, 화살표는 오른쪽 한계(280)에 붙는다.
+  const right = bubblePlacement({
+    rect: { x: 790, y: 10, width: 20, height: 20 },
+    frame: { left: 0, top: 0 },
+    zoom: 1,
+    box: BOX,
+    bubble: BUBBLE,
+  });
+  assert.equal(right.left, 800 - 300 - 8);
+  assert.equal(right.arrowLeft, 280);
+  // 왼쪽 벽에 붙은 요소 — 화살표는 왼쪽 한계(10)에 붙는다.
+  const left = bubblePlacement({
+    rect: { x: 0, y: 10, width: 8, height: 8 },
+    frame: { left: 0, top: 0 },
+    zoom: 1,
+    box: BOX,
+    bubble: BUBBLE,
+  });
+  assert.equal(left.left, 8);
+  assert.equal(left.arrowLeft, 10);
+});
+
+test("도착 판정 — 답이 끝났을 때 한 번, 옮겨 감과 이미 거기서 바뀜을 가른다", () => {
+  const screens = [
+    { path: "/member/list", key: "member/list" },
+    { path: "/member/detail", key: "member/detail" },
+  ];
+  // 턴이 살아 있거나 다른 대화이면 신호가 없다.
+  assert.equal(arriveOnTurnEnd({ ended: false, external: false, screens, hereKey: "" }), null);
+  // 사람이 일부러 밖을 보고 있으면 칸이 움직이지 않는다.
+  assert.equal(arriveOnTurnEnd({ ended: true, external: true, screens, hereKey: "" }), null);
+  // 이번 턴이 화면을 말하지 않았으면 신호가 없다.
+  assert.equal(arriveOnTurnEnd({ ended: true, external: false, screens: [], hereKey: "x" }), null);
+  // 다른 화면을 보고 있었으면 첫 화면으로 옮겨 간다.
+  assert.deepEqual(arriveOnTurnEnd({ ended: true, external: false, screens, hereKey: "home" }), {
+    path: "/member/list",
+    already: false,
+  });
+  // 이미 그 화면이면 옮기지 않고 도착만 알린다.
+  assert.deepEqual(
+    arriveOnTurnEnd({ ended: true, external: false, screens, hereKey: "member/detail" }),
+    { path: "/member/list", already: true },
+  );
 });
 
 test("준비의 걸음 — 내려받기 · 설치하기 · 미리보기 켜기", () => {
