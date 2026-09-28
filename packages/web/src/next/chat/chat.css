@@ -228,6 +228,89 @@
   animation: nx-fade 0.8s infinite alternate;
 }
 
+/* ---------- 진행 문장의 타임라인(A) ---------- */
+
+/* 답이 되지 못한 말은 13px 의 연한 글자로 왼쪽 세로선에 매달린다. 세로선과
+   점은 얼굴이 서는 자리(0–32px)를 쓴다 — 활동 막대도 그 자리를 비우므로 줄이
+   이어 보인다. 점의 배경 테두리가 선을 끊어 점으로 읽힌다(활동 막대와 같은 셈). */
+.nx-m-step {
+  position: relative;
+  margin: 0 0 6px 32px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink2);
+  word-break: keep-all;
+}
+
+.nx-m-step::before {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--ink3);
+  box-shadow: 0 0 0 3px var(--bg);
+}
+
+.nx-m-step::after {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: -7px;
+  bottom: -7px;
+  width: 1px;
+  background: var(--line);
+}
+
+/* 도는 동안의 마지막 줄 — 한 줄만 강조한다. */
+.nx-m-step--now {
+  color: var(--ink);
+}
+
+.nx-m-step--now::before {
+  background: var(--accent);
+}
+
+/* 마크다운의 본문 규칙(.md)은 답의 몫이다 — 과정은 줄 간격과 강조를 눌러
+   연한 몸값을 유지한다. */
+.nx-m-step .md {
+  line-height: 1.55;
+}
+
+.nx-m-step .md strong {
+  color: inherit;
+}
+
+/* 접힌 과정의 머리 줄 — 답이 끝난 뒤 과정은 이 한 줄로 접힌다. */
+.nx-m-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 6px 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink3);
+  cursor: pointer;
+}
+
+.nx .nx-m-fold:hover {
+  color: var(--ink2);
+}
+
+.nx-m-fold .nx-i {
+  transition: transform 0.15s;
+}
+
+.nx-m-fold--on .nx-i {
+  transform: rotate(90deg);
+}
+
 /* 옛 대화록의 부품(활동 · 생각 · 도구 · 할 일)은 AI 답의 줄에 맞춰 들여 선다. */
 .nx-m-work {
   margin: 0 0 10px 32px;

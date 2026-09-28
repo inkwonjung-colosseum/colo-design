@@ -227,6 +227,8 @@ export const L = {
     revived: "AI 프로그램이 멈춰 다시 일으켰어요 · 하던 일을 그대로 이어서 해요",
     seconds: (s: number) => `${s}초`,
     minutesSeconds: (m: number, s: number) => `${m}분 ${s}초`,
+    /** 접힌 진행 문장의 머리 — 답이 끝난 뒤 과정은 이 한 줄로 접힌다. */
+    steps: (n: number) => `작업 과정 ${n}단계`,
   },
   cards: {
     gateFixed: "AI가 고쳤어요",
