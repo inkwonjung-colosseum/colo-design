@@ -138,6 +138,9 @@ function withoutComments(source: string): string {
 const WHOLE_GROUP: Record<string, string> = {
   update: "lib/update-row.ts",
   daemonNotice: "*",
+  // `L.fast` 는 thread.ts 의 FastWords 모양을 통째로 채워 넘긴다(§5.4) — 칸은
+  // 그 파일의 `words.<이름>` 으로 읽힌다. 통째로 빼면 죽은 문장을 못 잡는다.
+  fast: "lib/thread.ts",
 };
 
 /**
