@@ -17,6 +17,13 @@ const MAX_ROWS = 500;
 /** 한 핀이 관찰로 받는 후보 수 — huntPinFiles 의 MAX_CANDIDATES 와 같은 결. */
 const MAX_OBSERVED = 3;
 
+/**
+ * 이 기계의 미리보기 호스트 — cycle-screens 의 screenPathOf 가 origin 없이
+ * 부를 때 쓰는 LOOPBACK 과 같은 집합이다. 임포트하면 cycle-screens →
+ * screen-map 의 임포트가 돌므로 같은 판정을 이곳에 둔다.
+ */
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
 export interface ScreenMapRow {
   at: string;
   sha: string;
@@ -60,8 +67,39 @@ export async function appendScreenMap(projectRoot: string, row: ScreenMapRow): P
 }
 
 /**
+ * 화면 주소를 한 모양으로 — 지도 행의 `routes` 는 `notePinned` 이 남긴 것
+ * 그대로다: navigate·screen_check 의 전체 주소(origin 불문 — 외부 이동도
+ * 적힌다)와 핀의 화면 id(`member/list`, 루트는 `index`), 그리고 `screens` 의
+ * 정규 경로(`/member/list`)가 섞인다. cycle-screens 의 screenPathOf 와 같은
+ * 판정이지만, 여기서 임포트하면 cycle-screens → screen-map 의 임포트가 돌게
+ * 되므로 모양과 루프백 집합만 이곳에 둔다. 절대 주소는 이 기계의 미리보기
+ * (루프백)일 때만 경로로 편다 — 외부 주소까지 경로로 펴면 그 턴이 고친 파일이
+ * 같은 경로의 미리보기 화면 후보로 둔갑한다.
+ */
+function normalizeRoute(raw: string): string {
+  const noHash = raw.split("#")[0] ?? "";
+  const [path = "", query] = noHash.split("?");
+  let body = path;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) {
+    try {
+      const url = new URL(path);
+      if (!LOOPBACK.has(url.hostname)) return "";
+      body = url.pathname;
+    } catch {
+      return "";
+    }
+  }
+  const trimmed = body.replace(/\/+$/, "");
+  const base =
+    trimmed === "" || trimmed === "index" ? "/" : trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return query ? `${base}?${query}` : base;
+}
+
+/**
  * 화면 하나를 고친 파일들 — 최근 커밋부터, 아직 클론에 있는 것만. 후보는
  * 상한 3개: 관찰은 힌트지 답이 아니다. 파일은 레포 루트 상대 경로다.
+ * route 는 위의 세 모양을 모두 받는다 — 양쪽을 같은 모양으로 폈을 때 만나면
+ * 같은 화면이다.
  */
 export async function observedFilesFor(
   projectRoot: string,
@@ -69,9 +107,13 @@ export async function observedFilesFor(
   route: string,
 ): Promise<string[]> {
   const rows = await readRows(join(projectRoot, "screen-map.jsonl")).catch(() => []);
+  const target = normalizeRoute(route);
   const out: string[] = [];
   for (const row of rows.reverse()) {
-    if (!row.routes.includes(route)) continue;
+    const hit =
+      (row.screens?.some((screen) => screen.route === target) ?? false) ||
+      row.routes.some((raw) => normalizeRoute(raw) === target);
+    if (!hit) continue;
     for (const file of row.files) {
       if (out.includes(file)) continue;
       // 없는 파일은 후보가 아니다 — 지도가 옛 모습을 기억해도 클론은 앞으로 산다.

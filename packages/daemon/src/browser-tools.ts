@@ -49,12 +49,13 @@ export interface BrowserRelay {
 }
 
 /**
- * 계약의 18개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
+ * 계약의 20개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
  * op `type`으로, `browser_wait`가 op `waitFor`로, `browser_console`이 op
  * `consoleLines`로 걸리는 것만 이름 차이다. `browser_find`는 op 가 아니라
  * 스냅샷의 거름이다(PLAN-MCP §3.C). `screen_check`는 op `screenCheck`로
- * 게이트와 같은 판정을 턴 안에서 앞당겨 본다. pane 은 프로젝트당 페이지
- * 하나라 탭 주소는 없다 — 모든 도구는 화면의 페이지를 겨눈다.
+ * 게이트와 같은 판정을 턴 안에서 앞당겨 본다. pane 이 필요한 도구는 화면의
+ * 페이지를 겨누고(pane 은 프로젝트당 페이지 하나라 탭 주소는 없다),
+ * `screen_files` · `notify_developer` 는 pane 없이 데몬만으로 답한다.
  */
 export const BROWSER_TOOLS: ToolDef[] = [
   {
@@ -262,6 +263,39 @@ export const BROWSER_TOOLS: ToolDef[] = [
       },
     },
   },
+  {
+    name: "screen_files",
+    op: "screenFiles",
+    description:
+      "화면을 고친 파일 후보를 찾는다 — 그 화면을 고친 커밋이 건드린 파일의 관찰 " +
+      "지도와, 화면 제목이 코드에 적힌 자리에서. 미리보기를 띄우지 않아도 돈다. " +
+      "화면을 고치기 전에 파일을 찾을 때 먼저 부른다.",
+    properties: {
+      route: {
+        type: "string",
+        description: "화면의 경로 — 예: /member/list · member/list (루트는 index).",
+      },
+      title: {
+        type: "string",
+        description: "화면 제목(선택) — 후보를 더 찾는 글자 힌트.",
+      },
+    },
+    required: ["route"],
+  },
+  {
+    name: "notify_developer",
+    op: "notifyDeveloper",
+    description:
+      "개발자에게 쪽지를 보낸다 — AI 도 고칠 수 없는 문제(권한 · 인증 · 저장소 " +
+      "상태)를 묻는 길이다. 사용자에게 묻지 말고 이 도구로 개발자에게 묻는다. " +
+      "하루 3통이고, 결과는 곧바로 온다.",
+    properties: {
+      title: { type: "string", description: "문제의 한 줄 제목." },
+      what: { type: "string", description: "무엇이 막혔는지." },
+      ask: { type: "string", description: "개발자에게 무엇을 부탁하는지." },
+    },
+    required: ["title", "what", "ask"],
+  },
 ];
 
 /**
@@ -289,6 +323,90 @@ export function submitNoteOf(params: Record<string, unknown>): string | undefine
   if (typeof params.note !== "string") return undefined;
   const trimmed = params.note.trim().slice(0, SUBMIT_NOTE_MAX_CHARS);
   return trimmed === "" ? undefined : trimmed;
+}
+
+/** screen_files 의 후보 수 상한 — 후보는 힌트지 답이 아니다(관찰 지도의 결과 같이). */
+export const SCREEN_FILES_MAX = 6;
+
+/**
+ * screen_files 의 판정 (PLAN-MCP §3.E) — 관찰 지도의 파일을 먼저, 제목 글자의
+ * 적중을 그 뒤에. 겹치는 파일은 관찰 쪽에 한 번만 남고, 합이 상한을 넘으면
+ * 관찰이 먼저다. 출처 표식이 순위를 말한다: `(관찰)` 은 그 화면을 고친 커밋이
+ * 건드린 파일이고, `(글자 "…")` 은 화면 제목이 코드에 적힌 자리다. 빈손은
+ * 오류가 아니다 — 화면을 고친 기록이 아직 없을 뿐이다.
+ */
+export function screenFilesAnswer(observed: string[], hunted: string[], title: string): string {
+  const seen = new Set<string>();
+  const observedOnly: string[] = [];
+  for (const file of observed) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    observedOnly.push(file);
+  }
+  const huntedOnly: string[] = [];
+  for (const file of hunted) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    huntedOnly.push(file);
+  }
+  const observedCapped = observedOnly.slice(0, SCREEN_FILES_MAX);
+  const huntedCapped = huntedOnly.slice(0, Math.max(0, SCREEN_FILES_MAX - observedCapped.length));
+  const lines: string[] = [];
+  if (observedCapped.length > 0) {
+    lines.push(`파일 후보: ${observedCapped.join(" · ")} (관찰)`);
+  }
+  if (huntedCapped.length > 0) {
+    lines.push(`파일 후보: ${huntedCapped.join(" · ")} (글자 "${title}")`);
+  }
+  if (lines.length === 0) return "이 화면을 고친 기록이 아직 없습니다";
+  return lines.join("\n");
+}
+
+/** notify_developer 인자의 상한 — 쪽지는 알림 본문의 네 줄에 실리는 몫이다. */
+export const NOTIFY_TITLE_MAX = 80;
+export const NOTIFY_WHAT_MAX = 600;
+export const NOTIFY_ASK_MAX = 300;
+
+/**
+ * notify_developer 의 인자 정규화 (PLAN-MCP §3.E) — 앞뒤 공백을 걷고 각각의
+ * 상한에서 자른다. 셋 중 하나라도 비면 null — 쪽지의 네 줄이 다 채워져야
+ * 개발자가 무엇을 부탁받는지 안다.
+ */
+export function normalizeNotifyArgs(
+  params: Record<string, unknown>,
+): { title: string; what: string; ask: string } | null {
+  const cut = (value: unknown, max: number): string =>
+    typeof value === "string" ? value.trim().slice(0, max) : "";
+  const title = cut(params.title, NOTIFY_TITLE_MAX);
+  const what = cut(params.what, NOTIFY_WHAT_MAX);
+  const ask = cut(params.ask, NOTIFY_ASK_MAX);
+  if (title === "" || what === "" || ask === "") return null;
+  return { title, what, ask };
+}
+
+/**
+ * 제목의 짧은 해시 — 알림 키의 뒷부분. 같은 제목의 쪽지는 같은 키로 서서
+ * DeveloperNotice 의 다시 쓰기 창이 겹치는 쓰기를 막고, 제목이 다르면 다른
+ * 문제로 갈라진다. FNV-1a 의 32비트를 여덟 글자 16진수로.
+ */
+export function shortHash(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * notify_developer 의 결과 문장 (PLAN-MCP §3.E) — via 가 어느 길로든 닿으면
+ * 알린 것이고, none 은 어느 채널도 닿지 못한 것이다. 둘 다 답변에 이유를
+ * 적게 하는 문으로 끝난다 — 사용자가 결과를 알아야 하기 때문이다.
+ */
+export function notifyDeveloperAnswer(via: "pr" | "issue" | "slack" | "none"): string {
+  return via === "none"
+    ? "개발자에게 닿지 못했어요 — 답변에 이유를 적어 두십시오"
+    : "개발자에게 알렸어요";
 }
 
 /**

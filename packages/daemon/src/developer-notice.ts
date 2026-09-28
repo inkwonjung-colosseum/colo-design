@@ -221,6 +221,18 @@ export const SCREEN_QUIET_KEYS: Record<string, true> = {
   "github:expiring": true,
 };
 
+/**
+ * 대화의 개발자 쪽지(notify_developer, PLAN-MCP §3.E)의 키 접두 — 제목 해시가
+ * 뒤에 붙으므로 표의 한 칸이 아니라 접두로 본다. 쪽지는 도구가 스스로 발견한
+ * 문제의 자리인 문제 문장에 서면 안 된다: 결과는 대화의 답변으로만 말한다.
+ */
+export const AGENT_NOTICE_KEY_PREFIX = "agent:";
+
+/** 이 키가 화면 주의에 서지 않는가 — attentionParts 가 같은 판정을 본다. */
+export function isScreenQuietKey(key: string): boolean {
+  return SCREEN_QUIET_KEYS[key] === true || key.startsWith(AGENT_NOTICE_KEY_PREFIX);
+}
+
 /** 이슈 목록의 한 줄에서 이 문제의 표식을 찾는다 — 없으면 null. */
 export function findIssueMarker(body: unknown): string | null {
   if (typeof body !== "string") return null;
