@@ -1,4 +1,4 @@
-import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
+import type { ProjectSummary, ThreadSummary } from "@nova-design/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Tip } from "../../components/Tip";
 import type { Sessions } from "../../hooks/useSessions";

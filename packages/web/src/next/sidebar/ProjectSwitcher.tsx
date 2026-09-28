@@ -1,4 +1,4 @@
-import type { ProjectSummary } from "@colo-design/protocol";
+import type { ProjectSummary } from "@nova-design/protocol";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { composing } from "../../lib/ime";

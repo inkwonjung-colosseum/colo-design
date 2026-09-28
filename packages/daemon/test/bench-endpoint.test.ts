@@ -9,22 +9,22 @@ const { benchEndpointBody, benchEndpointPath, benchEndpointPid } = await import(
 
 test("벤치 접속 파일 — 패키징된 앱은 env 가 있어도 절대 쓰지 않는다", () => {
   assert.equal(
-    benchEndpointPath({ COLO_DESIGN_BENCH_ENDPOINT: "/tmp/colo-bench.json" }, true),
+    benchEndpointPath({ NOVA_DESIGN_BENCH_ENDPOINT: "/tmp/nova-bench.json" }, true),
     null,
   );
 });
 
 test("벤치 접속 파일 — env 가 없거나 빈 값이면 쓰지 않는다", () => {
   assert.equal(benchEndpointPath({}, false), null);
-  assert.equal(benchEndpointPath({ COLO_DESIGN_BENCH_ENDPOINT: "" }, false), null);
-  assert.equal(benchEndpointPath({ COLO_DESIGN_BENCH_ENDPOINT: "   " }, false), null);
-  assert.equal(benchEndpointPath({ COLO_DESIGN_BENCH_ENDPOINT: undefined }, false), null);
+  assert.equal(benchEndpointPath({ NOVA_DESIGN_BENCH_ENDPOINT: "" }, false), null);
+  assert.equal(benchEndpointPath({ NOVA_DESIGN_BENCH_ENDPOINT: "   " }, false), null);
+  assert.equal(benchEndpointPath({ NOVA_DESIGN_BENCH_ENDPOINT: undefined }, false), null);
 });
 
 test("벤치 접속 파일 — 값이 있으면 그 경로를 그대로 준다", () => {
   assert.equal(
-    benchEndpointPath({ COLO_DESIGN_BENCH_ENDPOINT: "/tmp/colo-bench.json" }, false),
-    "/tmp/colo-bench.json",
+    benchEndpointPath({ NOVA_DESIGN_BENCH_ENDPOINT: "/tmp/nova-bench.json" }, false),
+    "/tmp/nova-bench.json",
   );
 });
 

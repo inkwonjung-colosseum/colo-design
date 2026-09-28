@@ -26,7 +26,7 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.263
         version: 0.3.263(@anthropic-ai/sdk@0.124.0(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.5.4))(zod@4.5.4)
-      '@colo-design/protocol':
+      '@nova-design/protocol':
         specifier: workspace:*
         version: link:../protocol
       ws:
@@ -45,10 +45,10 @@ importers:
 
   packages/desktop:
     dependencies:
-      '@colo-design/daemon':
+      '@nova-design/daemon':
         specifier: workspace:*
         version: link:../daemon
-      '@colo-design/protocol':
+      '@nova-design/protocol':
         specifier: workspace:*
         version: link:../protocol
     devDependencies:
@@ -70,7 +70,7 @@ importers:
 
   packages/web:
     dependencies:
-      '@colo-design/protocol':
+      '@nova-design/protocol':
         specifier: workspace:*
         version: link:../protocol
       '@streamdown/cjk':

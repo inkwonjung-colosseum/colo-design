@@ -1,5 +1,5 @@
 // 치워둔 작업의 자동 꺼내기: 치워두기·꺼내기 단추는 v0.3.11 에서 사라졌지만
-// v0.3.8~v0.3.10 에 그 단추로 치워 둔 작업이 슬롯(refs/colo-design/shelf)에
+// v0.3.8~v0.3.10 에 그 단추로 치워 둔 작업이 슬롯(refs/nova-design/shelf)에
 // 남아 있을 수 있다 — 꺼낼 길이 없는 채로. 시작 쓸기(recoverParkedWork 옆)가
 // 그것을 조용히 되살린다.
 import { randomUUID } from "node:crypto";
@@ -28,10 +28,18 @@ export async function recoverShelfPatch(
   run: GitRun,
   root: string,
 ): Promise<"none" | "restored" | "kept"> {
+  // read-legacy — v0.3.8~0.3.10 이 채운 슬롯은 옛 이름(refs/colo-design/shelf)에
+  // 있다. 새 슬롯이 없을 때만 옛 것을 본다.
+  let shelfRef = SHELF_REF;
   try {
-    await run(["rev-parse", "-q", "--verify", SHELF_REF]);
+    await run(["rev-parse", "-q", "--verify", shelfRef]);
   } catch {
-    return "none";
+    try {
+      await run(["rev-parse", "-q", "--verify", "refs/colo-design/shelf"]); // read-legacy
+      shelfRef = "refs/colo-design/shelf"; // read-legacy
+    } catch {
+      return "none";
+    }
   }
   // 내려앉을 자리의 확인 — 클론이 없는 경우는 호출자(ShelfStore)가 이미
   // 걸렀고, 여기는 병합 · 충돌 · 더러운 작업 폴더를 본다.
@@ -49,22 +57,22 @@ export async function recoverShelfPatch(
   // 패치는 `.git/` 아래 파일로 — 슬롯 스스로가 untracked 화면이 되지 않게(옛
   // unshelve 와 같은 자리). `--full-index` 는 정확한 적용의 재료를,
   // `--binary` 는 화면 변경이 실고 온 그림을 싣는다.
-  const patchFile = join(root, ".git", `colo-design-shelf-recover-${randomUUID()}.patch`);
+  const patchFile = join(root, ".git", `nova-design-shelf-recover-${randomUUID()}.patch`);
   try {
     const patch = await run([
       "diff",
       "--no-renames",
       "--full-index",
       "--binary",
-      `${SHELF_REF}^`,
-      SHELF_REF,
+      `${shelfRef}^`,
+      shelfRef,
     ]);
     writeFileSync(patchFile, patch);
     // --check 는 3way 없이: `--3way` 는 충돌을 병합 표식으로 "성공"시키는
     // 시도지 판정이 아니다. 깨끗하게 얹히는 문맥인지 이 한 번이 말한다.
     await run(["apply", "--check", patchFile]);
     await run(["apply", patchFile]);
-    await run(["update-ref", "-d", SHELF_REF]);
+    await run(["update-ref", "-d", shelfRef]);
     return "restored";
   } catch {
     // --check 를 통과한 뒤의 실패는 디스크 수준의 세계 — 슬롯은 그대로 두고

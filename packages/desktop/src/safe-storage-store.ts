@@ -1,4 +1,4 @@
-import type { CredentialStore } from "@colo-design/daemon/credentials";
+import type { CredentialStore } from "@nova-design/daemon/credentials";
 
 /**
  * safeStorage 기반 자격 증명 저장소(Keychain/DPAPI). Electron 의
@@ -36,6 +36,23 @@ export class SafeStorageCredentialStore implements CredentialStore {
     }
   }
 
+  /**
+   * 암호문은 있는데 풀 수 없은가(RENAME-NOVA-PLAN §5) — 개명(productName)으로
+   * safeStorage 의 키가 달라진 기계에서, "토큰이 없다"와 "토큰이 있지만 열쇠가
+   * 바뀌었다"를 갈라 알린다. 후자는 만료로 이어져 `다시 연결이 필요해요` 가
+   * 선다(load 가 null 을 돌려준 뒤 GitHubBridge 가 이것을 본다).
+   */
+  undecryptable(item: string): boolean {
+    const blob = this.read()[item];
+    if (!blob) return false;
+    try {
+      this.safeStorage.decryptString(Buffer.from(blob, "base64"));
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
   async delete(item: string): Promise<void> {
     const entries = this.read();
     delete entries[item];
@@ -62,7 +79,7 @@ export class SafeStorageCredentialStore implements CredentialStore {
 
   private write(entries: Record<string, string>): void {
     mkdirSync(dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.colo-design-${process.pid}`;
+    const temporary = `${this.file}.nova-design-${process.pid}`;
     writeFileSync(temporary, `${JSON.stringify(entries, null, 2)}\n`, {
       mode: 0o600,
     });

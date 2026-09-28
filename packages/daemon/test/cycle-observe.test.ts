@@ -9,13 +9,13 @@ import { nextCycleAction } from "../dist/cycle-reconcile.js";
 import { STASH_MESSAGE } from "../dist/repo-core.js";
 import { type HandoffLike, makeScene, type Scene } from "./helpers/cycle-harness.ts";
 
-const BRANCH = "colo-design/20260924-1";
+const BRANCH = "nova-design/20260924-1";
 
 /** 레지스트리가 기억하는 넘긴 요청의 시험용 모양. */
 function handoff(number: number): HandoffLike {
   return {
     number,
-    url: `https://github.test/colo-design/harness/pull/${number}`,
+    url: `https://github.test/nova-design/harness/pull/${number}`,
     title: "화면 작업",
     state: "open",
     branch: BRANCH,
@@ -333,7 +333,7 @@ test("새 코멘트 — newReviews · pendingReviews, 원장의 known 에 있는
     const a = scene.github.addComment(number, { kind: "issue", login: "dev1", body: "버튼 위치" });
     const b = scene.github.addComment(number, { kind: "pull", login: "dev1", body: "여백" });
     // 도구 자신의 코멘트와 본문 없는 리뷰는 새 코멘트가 아니다.
-    scene.github.addComment(number, { kind: "issue", login: "colo-planner", body: "제 코멘트" });
+    scene.github.addComment(number, { kind: "issue", login: "nova-planner", body: "제 코멘트" });
     scene.github.addComment(number, { kind: "review", login: "dev1", body: "" });
     const snap = await scene.observe({});
     assert.deepEqual(

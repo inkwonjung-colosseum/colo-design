@@ -1,4 +1,4 @@
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 import type { Block } from "./daemon-client";
 
 /**

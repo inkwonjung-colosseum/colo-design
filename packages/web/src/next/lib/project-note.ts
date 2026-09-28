@@ -1,4 +1,4 @@
-import type { ProjectSummary, RepoPhase } from "@colo-design/protocol";
+import type { ProjectSummary, RepoPhase } from "@nova-design/protocol";
 import type { L } from "../labels";
 
 /**

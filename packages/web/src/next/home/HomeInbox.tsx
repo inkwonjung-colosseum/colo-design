@@ -1,4 +1,4 @@
-import type { ProjectSummary } from "@colo-design/protocol";
+import type { ProjectSummary } from "@nova-design/protocol";
 import { useMemo, useState } from "react";
 import { toolHeadline } from "../../components/transcript/shared";
 import type { Daemon } from "../../lib/daemon-client";

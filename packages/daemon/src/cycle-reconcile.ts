@@ -18,7 +18,7 @@
  * 기록(pendingRejection)을 함께 지우는 것으로 한 번이다(14b행).
  */
 
-import type { DeveloperReview } from "@colo-design/protocol";
+import type { DeveloperReview } from "@nova-design/protocol";
 import { BUDGETS, markEscalated, spend } from "./budgets.js";
 import { type CycleLedger, type CyclePendingOp, notePushBehind } from "./cycle-ledger.js";
 

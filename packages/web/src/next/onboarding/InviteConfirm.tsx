@@ -131,7 +131,7 @@ export function InviteConfirm({
                 onApply={onApply}
                 onClose={requestClose}
                 onDiscard={(path) => {
-                  void window.coloDesignDesktop?.invite?.discard(path).then(
+                  void window.novaDesignDesktop?.invite?.discard(path).then(
                     () => {
                       setDiscardState("done");
                       onDiscarded();
@@ -200,7 +200,7 @@ function ConfirmBody({
   const reconnected = attention?.kind === "reconnect" && attention.what === "github";
   const savedAuthor = daemon.status?.authorName ?? null;
   const askAuthor = !state.invite.authorName && !savedAuthor;
-  const discardable = Boolean(state.path && window.coloDesignDesktop?.invite?.discard);
+  const discardable = Boolean(state.path && window.novaDesignDesktop?.invite?.discard);
 
   return (
     <>

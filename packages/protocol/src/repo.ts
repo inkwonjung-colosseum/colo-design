@@ -96,7 +96,7 @@ export interface HandoffStatus {
  * One screen capture riding a 넘기기 (PLAN D56). The daemon's server opens
  * each pinned screen·state in the preview driver — a desktop host injects
  * one; the browser dev path has none — and hands the captures to the
- * workspace, which commits them under `.colo-design/shots/` and links them
+ * workspace, which commits them under `.nova-design/shots/` and links them
  * from the pull request body's `### 화면 미리보기` section.
  */
 export interface HandoffShot {
@@ -168,7 +168,7 @@ export interface RepoStatus {
   /** Configured remote url, without any embedded credentials. */
   url: string | null;
   /**
-   * The `colo-design/…` branch this cycle's work lives on, or `null` before the
+   * The `nova-design/…` branch this cycle's work lives on, or `null` before the
    * first 저장 of a cycle. The base branch is never checked out for writing.
    */
   branch: string | null;
@@ -379,7 +379,7 @@ export interface RepoHandoffDraft {
  * blank (비개발자 넘기기) — the daemon's fallback, shared so the dialog's
  * preview shows the same sentence the developer will read.
  */
-export const DEFAULT_HANDOFF_BODY = "Colo Design에서 만든 화면입니다. 로직만 붙이면 됩니다.";
+export const DEFAULT_HANDOFF_BODY = "Nova Design에서 만든 화면입니다. 로직만 붙이면 됩니다.";
 
 /** One saved point in `repo.history` (PLAN D53). */
 export interface RepoHistoryEntry {

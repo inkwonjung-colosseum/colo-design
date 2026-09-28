@@ -81,7 +81,7 @@ test("실패 분류: 회사 PC 정책 — 안내 문장과 복사용 한 줄이 
   );
   assert.equal(ps.reason, "policy");
   assert.ok(ps.detail.includes("IT 담당자에게 보내 주세요"));
-  assert.ok(ps.detail.includes("Colo Design 이 Claude Code 를 사용자 폴더에"));
+  assert.ok(ps.detail.includes("Nova Design 이 Claude Code 를 사용자 폴더에"));
   const denied = classifyInstallFailure(
     "cp: /Users/x/.local/bin/claude: Access is denied",
     1,
@@ -147,7 +147,7 @@ test("진행 방송: ANSI 제거 · PATH 문단 버림 · 같은 줄 반복 억�
   // 줄마다 끊어 출력 — 실제 설치 스크립트처럼 한 청크가 한 줄이다. 간격 0 을
   // 주어 스로틀을 끄고 거름·억제만 본다(스로틀은 아래 테스트의 몫).
   const result = await runInstall({
-    env: { ...process.env, COLO_DESIGN_CLAUDE_INSTALL_CMD: emitSteps() },
+    env: { ...process.env, NOVA_DESIGN_CLAUDE_INSTALL_CMD: emitSteps() },
     resolveClaude: async () => "/usr/local/bin/claude",
     progressIntervalMs: 0,
   });
@@ -161,7 +161,7 @@ test("진행 방송: ANSI 제거 · PATH 문단 버림 · 같은 줄 반복 억�
 
 test("진행 방송: 기본 간격(1초)에서는 1초에 한 번 이하 — 끝의 flush 가 마지막 줄을 내보낸다", async () => {
   const result = await runInstall({
-    env: { ...process.env, COLO_DESIGN_CLAUDE_INSTALL_CMD: emitSteps() },
+    env: { ...process.env, NOVA_DESIGN_CLAUDE_INSTALL_CMD: emitSteps() },
     resolveClaude: async () => "/usr/local/bin/claude",
   });
   // 6 줄이 0.05 초 간격으로 흐르면 즉시 나가는 것은 첫 줄뿐이고, 나머지는
@@ -237,7 +237,7 @@ test("digest 검증: sha256 접두사를 떼고 비교, 없으면 거짓", () =>
 
 test("성공 판정: exit 0 + 실행 파일 있음 → ok", async () => {
   const result = await runInstall({
-    env: { ...process.env, COLO_DESIGN_CLAUDE_INSTALL_CMD: "exit 0" },
+    env: { ...process.env, NOVA_DESIGN_CLAUDE_INSTALL_CMD: "exit 0" },
     resolveClaude: async () => "/opt/homebrew/bin/claude",
   });
   assert.equal(result.ok, true);
@@ -246,7 +246,7 @@ test("성공 판정: exit 0 + 실행 파일 있음 → ok", async () => {
 
 test("성공 판정: exit 0 인데 실행 파일이 없으면 실패 문장", async () => {
   const result = await runInstall({
-    env: { ...process.env, COLO_DESIGN_CLAUDE_INSTALL_CMD: "exit 0" },
+    env: { ...process.env, NOVA_DESIGN_CLAUDE_INSTALL_CMD: "exit 0" },
     resolveClaude: async () => null,
   });
   assert.equal(result.ok, false);
@@ -257,7 +257,7 @@ test("성공 판정: exit 7 은 네트워크 실패로 분류된다", async () =
   const result = await runInstall({
     env: {
       ...process.env,
-      COLO_DESIGN_CLAUDE_INSTALL_CMD: "echo 'curl: (7) Failed to connect' >&2; exit 7",
+      NOVA_DESIGN_CLAUDE_INSTALL_CMD: "echo 'curl: (7) Failed to connect' >&2; exit 7",
     },
     resolveClaude: async () => "/opt/homebrew/bin/claude",
   });
@@ -267,7 +267,7 @@ test("성공 판정: exit 7 은 네트워크 실패로 분류된다", async () =
 
 test("시간 상한: 넘으면 자식을 끊고 실패 문장으로 끝난다", async () => {
   const result = await runInstall({
-    env: { ...process.env, COLO_DESIGN_CLAUDE_INSTALL_CMD: "sleep 5" },
+    env: { ...process.env, NOVA_DESIGN_CLAUDE_INSTALL_CMD: "sleep 5" },
     resolveClaude: async () => "/opt/homebrew/bin/claude",
     timeoutMs: 400,
   });
@@ -280,7 +280,7 @@ test("시간 상한: 넘으면 자식을 끊고 실패 문장으로 끝난다", 
 
 test("종류마다 하나씩: 도는 중의 두 번째 시작은 거절된다", () => {
   const installer = new AgentInstall({
-    env: { ...process.env, COLO_DESIGN_CLAUDE_INSTALL_CMD: "sleep 5" },
+    env: { ...process.env, NOVA_DESIGN_CLAUDE_INSTALL_CMD: "sleep 5" },
     timeoutMs: 5_000,
   });
   const first = installer.start("install-claude", { onProgress: () => {}, onDone: () => {} });
@@ -292,12 +292,12 @@ test("종류마다 하나씩: 도는 중의 두 번째 시작은 거절된다", 
 });
 
 test("실행 파일 자리는 주입된 해석 함수가 정한다 — 임시 폴더로", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-agent-install-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-agent-install-test-"));
   try {
     const fake = join(dir, "claude");
     writeFileSync(fake, "#!/bin/sh\n", { mode: 0o755 });
     const result = await runInstall({
-      env: { ...process.env, COLO_DESIGN_CLAUDE_INSTALL_CMD: "exit 0" },
+      env: { ...process.env, NOVA_DESIGN_CLAUDE_INSTALL_CMD: "exit 0" },
       resolveClaude: async () => fake,
     });
     assert.equal(result.ok, true);
@@ -307,7 +307,7 @@ test("실행 파일 자리는 주입된 해석 함수가 정한다 — 임시 �
 });
 
 test("설치 성공 뒤 loginCommand 가 살아난다 — 처음엔 없음, 성공 판정의 경로가 데몬의 자리를 갈아끼운다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-agent-install-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-agent-install-test-"));
   try {
     const fake = join(dir, "claude");
     writeFileSync(fake, "#!/bin/sh\n", { mode: 0o755 });
@@ -316,7 +316,7 @@ test("설치 성공 뒤 loginCommand 가 살아난다 — 처음엔 없음, 성�
     const driver = new ClaudeDriver(() => resolved);
     assert.equal(driver.loginCommand(), null);
     const result = await runInstall({
-      env: { ...process.env, COLO_DESIGN_CLAUDE_INSTALL_CMD: "exit 0" },
+      env: { ...process.env, NOVA_DESIGN_CLAUDE_INSTALL_CMD: "exit 0" },
       resolveClaude: async () => fake,
     });
     assert.equal(result.ok, true);
@@ -341,7 +341,7 @@ test("update-claude: 스크립트에 latest 를 건네고, 자식은 자기 업�
     env: {
       ...process.env,
       DISABLE_AUTOUPDATER: "",
-      COLO_DESIGN_CLAUDE_INSTALL_CMD:
+      NOVA_DESIGN_CLAUDE_INSTALL_CMD:
         'test "$1" = latest || exit 3; test "$DISABLE_AUTOUPDATER" = 1 || exit 4; echo "target $1"',
     },
     resolveClaude: async () => "/home/u/.local/share/claude/versions/2.2.0",
@@ -370,7 +370,7 @@ test("install-claude: 설치는 대상을 건네지 않는다 — 스크립트�
   const result = await runInstall({
     env: {
       ...process.env,
-      COLO_DESIGN_CLAUDE_INSTALL_CMD: 'test -z "$1" || exit 3; test "$DISABLE_AUTOUPDATER" = 1',
+      NOVA_DESIGN_CLAUDE_INSTALL_CMD: 'test -z "$1" || exit 3; test "$DISABLE_AUTOUPDATER" = 1',
     },
     resolveClaude: async () => "/usr/local/bin/claude",
   });
@@ -382,7 +382,7 @@ test("update-codex: 로컬 릴리스 서버의 자산을 받아 확인하고 too
   const { createServer } = await import("node:http");
   const { execFileSync } = await import("node:child_process");
   const { readFileSync } = await import("node:fs");
-  const dir = mkdtempSync(join(tmpdir(), "colo-codex-update-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-codex-update-test-"));
   const assetName = "codex-aarch64-apple-darwin.tar.gz";
   writeFileSync(join(dir, "codex-aarch64-apple-darwin"), "#!/bin/sh\necho codex-cli 0.46.0\n");
   execFileSync("tar", ["-czf", join(dir, assetName), "-C", dir, "codex-aarch64-apple-darwin"]);
@@ -415,7 +415,7 @@ test("update-codex: 로컬 릴리스 서버의 자산을 받아 확인하고 too
     const toolsBinDir = join(dir, "tools", "bin");
     const result = await runInstall(
       {
-        env: { ...process.env, COLO_DESIGN_CODEX_RELEASE_API: `http://127.0.0.1:${port}/release` },
+        env: { ...process.env, NOVA_DESIGN_CODEX_RELEASE_API: `http://127.0.0.1:${port}/release` },
         platform: "darwin",
         arch: "arm64",
         toolsBinDir,

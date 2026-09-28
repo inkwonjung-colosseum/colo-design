@@ -7,7 +7,7 @@
  *        [--name "회원 관리"] [--base main] [--author "김기획"] \
  *        [--reviewer dev1 --reviewer dev2] [--out 파일.colo-invite]
  *
- * 초대 파일은 비밀(연결 코드)을 담는다 — 그래서 링크(colo-design://…?token=…)가
+ * 초대 파일은 비밀(연결 코드)을 담는다 — 그래서 링크(nova-design://…?token=…)가
  * 아니라 파일이다: 경로만 argv 와 OS 로그에 남고 비밀은 파일 안에 있다. 파일은
  * 슬랙 DM 등 사용자만 보는 경로로 보내고, 가져오기가 끝나면 지우라고 안내한다.
  * 이 스크립트는 화면에 토큰을 다시 출력하지 않는다.
@@ -116,7 +116,7 @@ async function defaultBranch(url) {
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "colo-design-invite",
+        "User-Agent": "nova-design-invite",
       },
     });
     if (!reply.ok) throw new Error(`HTTP ${reply.status}`);
@@ -144,7 +144,7 @@ async function warnTokenExpiry() {
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "colo-design-invite",
+        "User-Agent": "nova-design-invite",
       },
     });
     const raw = reply.headers.get("github-authentication-token-expiration");

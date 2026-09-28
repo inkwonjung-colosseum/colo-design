@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { SessionModelInfo } from "@colo-design/protocol";
+import type { SessionModelInfo } from "@nova-design/protocol";
 import type {
   AgentDriver,
   AgentSession,
@@ -66,7 +66,7 @@ function ompCandidates(home: string): string[] {
 }
 
 function resolveOmpExecutable(): string | null {
-  const override = process.env.COLO_DESIGN_OMP_BIN;
+  const override = process.env.NOVA_DESIGN_OMP_BIN;
   if (override && existsSync(override)) return override;
   for (const candidate of ompCandidates(homedir())) {
     if (existsSync(candidate)) return candidate;

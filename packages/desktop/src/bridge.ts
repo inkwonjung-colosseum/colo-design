@@ -2,7 +2,7 @@
 // notification prefs the settings dialog edits. 자격 증명·토큰은 결코
 // 건너가지 않는다 — 이 파일이 노출하는 전부가 preload 의 표면이다.
 import { lstatSync, mkdirSync } from "node:fs";
-import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
+import { NOVA_DESIGN_DATA_DIR } from "@nova-design/daemon/environment";
 import { ipcMain, shell } from "electron";
 import type { PlannerNotices } from "./app-notify.js";
 import type { SelfUpdates } from "./app-updates.js";
@@ -17,7 +17,7 @@ export interface BridgeDeps {
   focusMain(): void;
   /** Windows 토스트의 AUMID / mac 알림 설정 딥링크가 가리키는 번들 아이디. */
   bundleId: string;
-  /** `~/.colo-design/logs` — 폴더 열기의 두 번째 대상. */
+  /** `~/.nova-design/logs` — 폴더 열기의 두 번째 대상. */
   logsDir: string;
   /** 알림 설정이 영속되는 desktop-settings.json 의 자리. */
   settingsPath(): string;
@@ -31,7 +31,7 @@ export function registerDesktopBridge(deps: BridgeDeps): void {
   ipcMain.handle("desktop:update-check", () => updates.check());
   ipcMain.handle("desktop:self-update", () => updates.install());
 
-  // `폴더 열기`(PLAN D2[폴더 열기]): 숨긴 `~/.colo-design` 을 사용자가
+  // `폴더 열기`(PLAN D2[폴더 열기]): 숨긴 `~/.nova-design` 을 사용자가
   // 찾아 헤매지 않게 앱이 열어 준다.
   ipcMain.handle("desktop:open-home", async (_event, target?: "logs") => {
     // 로그 폴더는 첫 줄이 나가기 전엔 없을 수 있다 — 열어 주기 전에 만든다.
@@ -40,8 +40,8 @@ export function registerDesktopBridge(deps: BridgeDeps): void {
       await shell.openPath(deps.logsDir);
       return { opened: deps.logsDir };
     }
-    await shell.openPath(COLO_DESIGN_DIR);
-    return { opened: COLO_DESIGN_DIR };
+    await shell.openPath(NOVA_DESIGN_DATA_DIR);
+    return { opened: NOVA_DESIGN_DATA_DIR };
   });
 
   // 초대 파일 지우기(PLAN-UI U11) — 연결 코드가 든 파일을 가져온 뒤 앱이 대신

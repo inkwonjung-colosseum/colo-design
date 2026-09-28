@@ -20,7 +20,7 @@ export function ConnectScreen({
   return (
     <div className="connect">
       <h1>
-        <span className="brand-name">Colo Design</span>
+        <span className="brand-name">Nova Design</span>
       </h1>
       <p>
         이 컴퓨터에서 데몬을 켠 다음, 데몬이 출력한 주소를 붙여 넣어 주세요. 데몬은 이미 로그인해 둔

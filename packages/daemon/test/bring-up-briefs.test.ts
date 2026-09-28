@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { RepoStatus } from "@colo-design/protocol";
+import type { RepoStatus } from "@nova-design/protocol";
 import { type BringUpEpisode, nextBringUpBrief } from "../src/bring-up-briefs.ts";
 
 type Status = Pick<RepoStatus, "phase" | "errorKind" | "detail">;

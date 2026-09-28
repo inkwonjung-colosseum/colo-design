@@ -17,7 +17,7 @@ const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /* ---------- 테마 — 앱의 네 팔레트를 그대로 ---------- */
-const THEME_KEY = "colo-site-theme";
+const THEME_KEY = "nova-site-theme";
 const THEME_META = { dark: "#0d0d0f", light: "#ffffff", claude: "#faf9f5", github: "#0d1117" };
 const themeChips = [...document.querySelectorAll("[data-site-theme]")];
 
@@ -33,12 +33,21 @@ function applyTheme(name) {
     chip.setAttribute("aria-pressed", on ? "true" : "false");
   }
   // hero3d 의 파티클 색이 따라 오는 고리.
-  dispatchEvent(new CustomEvent("colo-theme", { detail: name }));
+  dispatchEvent(new CustomEvent("nova-theme", { detail: name }));
 }
 
 let savedTheme = null;
 try {
   savedTheme = localStorage.getItem(THEME_KEY);
+  if (savedTheme === null) {
+    // 개명 이행 — 옛 키에 값이 있고 새 키가 비었으면 한 번 복사해 온다. 방문자의
+    // 테마가 초기화되지 않게 하는 것이 전부다(옛 키는 지우지 않는다).
+    const legacyTheme = localStorage.getItem("colo-site-theme"); // read-legacy
+    if (legacyTheme !== null) {
+      savedTheme = legacyTheme;
+      localStorage.setItem(THEME_KEY, legacyTheme);
+    }
+  }
 } catch {
   // file:// 나 저장 금지 환경 — 기본 팔레트로 만족한다.
 }

@@ -18,7 +18,7 @@ import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { OnboardingFix, OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
+import type { OnboardingFix, OnboardingStep, OnboardingStepId } from "@nova-design/protocol";
 import type { AgentDriver } from "./agent/driver.js";
 import { withoutSelfUpdate } from "./agent-env.js";
 import { extraPathPrefix } from "./claude-trust.js";
@@ -208,7 +208,7 @@ const MIN_NODE_MAJOR = 22;
 
 /**
  * The runtime gate (PLAN D5[런타임 게이트]). It reads the same PATH the repo's install ·
- * preview · build children get — `COLO_DESIGN_EXTRA_PATH`, the desktop app's
+ * preview · build children get — `NOVA_DESIGN_EXTRA_PATH`, the desktop app's
  * bundled runtime, first — because that is the node that will actually run,
  * and a pass here names it ("앱에 포함됨"). pnpm resolves through the same
  * conventions `repo.ts` will use at install time.
@@ -357,7 +357,7 @@ export async function runPnpmInstall(
   const command = platform === "win32" ? "corepack.cmd" : "corepack";
   try {
     const { stdout } = await runLike(command, ["enable"], {
-      env: { ...env, PATH: extraPathPrefix(env.COLO_DESIGN_EXTRA_PATH, env) },
+      env: { ...env, PATH: extraPathPrefix(env.NOVA_DESIGN_EXTRA_PATH, env) },
       shell: platform === "win32",
       timeout: 60_000,
     });

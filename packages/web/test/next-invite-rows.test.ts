@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { InviteRow, InviteRowTarget } from "@colo-design/protocol";
+import type { InviteRow, InviteRowTarget } from "@nova-design/protocol";
 // 순수 모듈 — src 에서 곧장 읽는다(next-labels.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
 import { inviteRowsCopy, inviteUpdateChanges } from "../src/next/lib/invite-rows.ts";

@@ -52,7 +52,7 @@ export class MachineSetting {
     if (value === null || value === "") delete this.value[key];
     else this.value[key] = value;
     mkdirSync(dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.colo-design-${process.pid}`;
+    const temporary = `${this.file}.nova-design-${process.pid}`;
     const fd = openSync(temporary, "w");
     try {
       writeSync(fd, `${JSON.stringify(this.value)}\n`);

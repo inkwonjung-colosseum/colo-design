@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 import { TurnStats } from "../dist/turn-stats.js";
 
 /**
@@ -49,10 +49,10 @@ function stats(dir: string): TurnStats {
 }
 
 test("핀 턴은 payload 크기와 TTFT 를 기록한다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
-    const marker = '<!-- colo-design:comments {"pins":[],"items":[{},{}]} -->\n화면을 고쳐 주세요.';
+    const marker = '<!-- nova-design:comments {"pins":[],"items":[{},{}]} -->\n화면을 고쳐 주세요.';
     stats_.observe("s1", { kind: "user.echo", text: marker, images: 0 } as ChatEvent);
     stats_.observe("s1", {
       kind: "text.delta",
@@ -94,7 +94,7 @@ test("핀 턴은 payload 크기와 TTFT 를 기록한다", async () => {
 });
 
 test("실패한 턴은 단계가 새겨지고, 성공 턴은 null 이다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     stats_.observe("s1", { kind: "user.echo", text: "고쳐 줘", images: 0 } as ChatEvent);
@@ -129,7 +129,7 @@ test("실패한 턴은 단계가 새겨지고, 성공 턴은 null 이다", async
 });
 
 test("첫 delta 가 없던 턴의 firstDeltaMs 는 null 이다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     stats_.observe("s1", { kind: "user.echo", text: "조용한 턴", images: 0 } as ChatEvent);
@@ -152,13 +152,13 @@ test("첫 delta 가 없던 턴의 firstDeltaMs 는 null 이다", async () => {
 });
 
 test("omp 의 도구 이름도 읽기·편집·실행으로 센다 — 첫 편집과 핀 적중이 성립한다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     // 보내기 문이 핀 후보를 물려준다 — 후보는 클론 루트 기준 절대경로.
     stats_.noteScan("s1", 12, { cwd: "/repo", candidates: ["/repo/src/a.tsx"] });
     const marker =
-      '<!-- colo-design:comments {"pins":[],"items":[{}]} -->\n버튼 글자를 고쳐 주세요.';
+      '<!-- nova-design:comments {"pins":[],"items":[{}]} -->\n버튼 글자를 고쳐 주세요.';
     stats_.observe("s1", { kind: "user.echo", text: marker, images: 0 } as ChatEvent);
     stats_.observe("s1", {
       kind: "tool.start",
@@ -211,11 +211,11 @@ test("omp 의 도구 이름도 읽기·편집·실행으로 센다 — 첫 편�
 });
 
 test("Codex 의 item 이름도 같은 묶음이다 — fileChange 의 changes[] 로 핀 적중을 본다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     stats_.noteScan("s1", 5, { cwd: "/repo", candidates: ["/repo/src/b.tsx"] });
-    const marker = '<!-- colo-design:comments {"pins":[],"items":[{}]} -->\n칩을 바꿔 주세요.';
+    const marker = '<!-- nova-design:comments {"pins":[],"items":[{}]} -->\n칩을 바꿔 주세요.';
     stats_.observe("s1", { kind: "user.echo", text: marker, images: 0 } as ChatEvent);
     stats_.observe("s1", {
       kind: "tool.start",
@@ -250,14 +250,14 @@ test("Codex 의 item 이름도 같은 묶음이다 — fileChange 의 changes[] 
 });
 
 test("브라우저 도구는 세 이름 형태 모두 browser 묶음으로 센다 (PLAN-MCP M-7)", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     stats_.observe("s1", { kind: "user.echo", text: "고쳐 줘", images: 0 } as ChatEvent);
     for (const [id, name] of [
       ["t1", "screen_check"],
-      ["t2", "mcp__colo-browser__screen_check"],
-      ["t3", "colo-browser/browser_snapshot"],
+      ["t2", "mcp__nova-browser__screen_check"],
+      ["t3", "nova-browser/browser_snapshot"],
     ] as const) {
       stats_.observe("s1", {
         kind: "tool.start",
@@ -299,7 +299,7 @@ test("브라우저 도구는 세 이름 형태 모두 browser 묶음으로 센�
 });
 
 test("browserMs — 사건만 흘린 턴은 null 이고 중계(noteBrowserOp)만 더한다 (PLAN-MCP M-8)", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     stats_.observe("s1", { kind: "user.echo", text: "고쳐 줘", images: 0 } as ChatEvent);
@@ -364,7 +364,7 @@ test("browserMs — 사건만 흘린 턴은 null 이고 중계(noteBrowserOp)만
 });
 
 test("noteBrowserOp — op 시간을 더하고 실패 종류는 0이 아닌 것만 칸에 남는다 (PLAN-MCP M-8)", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     stats_.observe("s1", { kind: "user.echo", text: "고쳐 줘", images: 0 } as ChatEvent);
@@ -403,7 +403,7 @@ test("noteBrowserOp — op 시간을 더하고 실패 종류는 0이 아닌 것�
 });
 
 test("noteGateCheck — fallback 칸은 되짚은 수를 싣고 0이면 싣지 않는다 (PLAN-HARNESS §3.B B-4)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false, fallback: 3 });
@@ -421,7 +421,7 @@ test("noteGateCheck — fallback 칸은 되짚은 수를 싣고 0이면 싣지 �
 });
 
 test("noteGateCheck — 타입 검사를 돌렸으면 오류 0 도 싣는다 (PLAN-HARNESS §3.D D-5)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {
     const stats_ = stats(dir);
     stats_.noteGateCheck("s1", {

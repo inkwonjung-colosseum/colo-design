@@ -1,4 +1,4 @@
-import type { ColoDesignCommentTarget, ColoDesignPinsSync } from "@colo-design/protocol";
+import type { NovaDesignCommentTarget, NovaDesignPinsSync } from "@nova-design/protocol";
 import { contextBridge, ipcRenderer } from "electron";
 
 /**
@@ -8,23 +8,23 @@ import { contextBridge, ipcRenderer } from "electron";
  * 같은 순수 조각도 빌드가 이 파일에 끼워 넣는다(아래 declare 참조).
  *
  * 네 몫:
- * 1. 레포 브리지의 문 (D68): `window.coloDesign.post` — 핀 봉투가 나가는
- *    유일한 통로다(예전의 `colo-overlay:navigate` 역방향 문은 브리지의
+ * 1. 레포 브리지의 문 (D68): `window.novaDesign.post` — 핀 봉투가 나가는
+ *    유일한 통로다(예전의 `nova-overlay:navigate` 역방향 문은 브리지의
  *    screens 계약이 폐지되며 함께 닫혔다).
  * 2. 핀 피커 오버레이 (재설계 C1·C9): 클릭은 요소 핀, 6px 넘는 드래그는
  *    영역 핀 — 봉투 하나씩이다. 초안·전송·영수증은 여기 없다(재설계 C3),
  *    크롬은 뷰가 찍는 순간에 채운다(재설계 C4). 핀 상태의 진실은 웹이 쥐고,
- *    웹의 전체 동기화(`colo-overlay:pins`)를 번호 배지로 투영한다 — 영역 핀은
+ *    웹의 전체 동기화(`nova-overlay:pins`)를 번호 배지로 투영한다 — 영역 핀은
  *    배지와 점선 테두리를 좌표(rect)로 다시 앵커한다. 봉투는 요소의
  *    HTML·스타일·a11y·속성 을 옵션으로 싣고, 클릭
- *    요소의 `data-colo-pick` 스탬프로 뷰가 main world 에서 React owner
+ *    요소의 `data-nova-pick` 스탬프로 뷰가 main world 에서 React owner
  *    이름을 읽는다(fiber 는 이 isolated world 에서 보이지 않는다).
  */
 
 // ---------------------------------------------------------------------------
 // Element identity — the isolated world cannot see the page's
 // React fiber expandos, so the component name is the tag,
-// and the owner chain is the view's job (the `data-colo-pick` stamp + the
+// and the owner chain is the view's job (the `data-nova-pick` stamp + the
 // main-world script). Everything else (own text, CSS path from the body,
 // rect, html, styles, a11y, attrs) is plain DOM — and it all lives in
 // element-identity.ts now, spliced into this file at build time (§3.E-1).
@@ -47,7 +47,7 @@ function ownText(element: Element): string {
  * 호버 라벨이 쓰는 작은 복사다 — 봉투의 text 칸은 저 함수 몸의 같은 판정이
  * 낸다.
  */
-declare function describeElementInPage(this: unknown, el?: unknown): ColoDesignCommentTarget | null;
+declare function describeElementInPage(this: unknown, el?: unknown): NovaDesignCommentTarget | null;
 
 /**
  * The screen the page is showing right now — the context every envelope
@@ -64,15 +64,22 @@ function pageContext(): { screen: string } {
 // 1. The repo bridge's door (D68)
 // ---------------------------------------------------------------------------
 
+contextBridge.exposeInMainWorld("novaDesign", {
+  post: (envelope: unknown) => ipcRenderer.send("nova-overlay:post", envelope),
+});
+// read-legacy — 옛 이름의 문이다(RENAME-NOVA-PLAN §1.2). 연결 레포의 코드가
+// 게스트 페이지에서 부를 수 있는 유일한 통로이므로 같은 객체를 별칭으로 남긴다.
+// read-legacy
 contextBridge.exposeInMainWorld("coloDesign", {
-  post: (envelope: unknown) => ipcRenderer.send("colo-overlay:post", envelope),
+  // read-legacy
+  post: (envelope: unknown) => ipcRenderer.send("nova-overlay:post", envelope),
 });
 
 // ---------------------------------------------------------------------------
 // 2. The pin picker overlay (재설계 C1). All styling inline — the repo's
 // classes are the repo's; pointer-events none on the root so the page stays
 // live. The overlay owns NOTHING: a click posts one envelope and draws an
-// optimistic badge, and the web's whole-list sync (`colo-overlay:pins`)
+// optimistic badge, and the web's whole-list sync (`nova-overlay:pins`)
 // redraws badges from the truth — another screen's pin draws none (재설계
 // C5), sending and receipts live in the composer (재설계 C3).
 //
@@ -125,7 +132,7 @@ function accentAlpha(alpha: number): string {
 
 const Z = "2147483000";
 const root = document.createElement("div");
-root.setAttribute("data-colo-design-overlay", "");
+root.setAttribute("data-nova-design-overlay", "");
 root.style.cssText = `position:fixed;inset:0;pointer-events:none;z-index:${Z};font-family:system-ui,-apple-system,sans-serif;`;
 
 /**
@@ -141,7 +148,7 @@ root.appendChild(toasts);
 
 let mode = false;
 /**
- * 도구가 화면에 손을 대는 동안만 참이 되는 깃발(`colo-overlay:agent`) —
+ * 도구가 화면에 손을 대는 동안만 참이 되는 깃발(`nova-overlay:agent`) —
  * pickingNow 의 맨 앞 관문이다. 브라우저 도구의 클릭은 화면을 확인하려는
  * 손길이지 사용자의 가리킴이 아니므로, 핀 모드가 켜져 있어도 그 클릭이
  * 핀으로 기록되거나 링크를 삼켜서는 안 된다 (베타 테스트 #2).
@@ -237,7 +244,7 @@ let layoutTimer: number | null = null;
 /** The one flash stopper — the ring and its timers clean themselves up. */
 let flashStop: (() => void) | null = null;
 /** Where the page remembers that the ⌥+클릭 hint has been said once. */
-const HINT_SEEN = "colo-design.pin-hint";
+const HINT_SEEN = "nova-design.pin-hint";
 
 function isOverlayUi(target: EventTarget | null): boolean {
   return target instanceof Node && root.contains(target);
@@ -250,7 +257,7 @@ function setPickCursor(on: boolean): void {
   if (on) {
     cursorStyle = document.createElement("style");
     cursorStyle.textContent =
-      "body,body *:not([data-colo-design-overlay] *){cursor:crosshair!important}";
+      "body,body *:not([data-nova-design-overlay] *){cursor:crosshair!important}";
     document.documentElement.appendChild(cursorStyle);
   } else {
     cursorStyle?.remove();
@@ -402,7 +409,7 @@ document.addEventListener(
     }
     if (!hover) {
       hover = document.createElement("div");
-      hover.setAttribute("data-colo-hover", "");
+      hover.setAttribute("data-nova-hover", "");
       hover.style.cssText = `position:fixed;outline:2px solid ${accent};outline-offset:1px;pointer-events:none;`;
       // The tag says what the pin would be called — the bubble's own name
       // words on the accent tab, and 이름 없음 under it when an interactive
@@ -473,13 +480,13 @@ document.addEventListener(
     // The view reads the React owner chain off this stamp in the main
     // world (fibers are invisible from this isolated world) and removes it —
     // the timer below is only this side's safety net.
-    element.setAttribute("data-colo-pick", pin.id);
+    element.setAttribute("data-nova-pick", pin.id);
     window.setTimeout(() => {
-      if (element.getAttribute("data-colo-pick") === pin.id) {
-        element.removeAttribute("data-colo-pick");
+      if (element.getAttribute("data-nova-pick") === pin.id) {
+        element.removeAttribute("data-nova-pick");
       }
     }, 3000);
-    ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin", pin });
+    ipcRenderer.send("nova-overlay:post", { type: "nova-design.pin", pin });
     freshPins.add(pin.id);
     badges = [...badges, { id: pin.id, anchor: element, number: badges.length + 1, tone: "live" }];
     renderOverlay();
@@ -597,7 +604,7 @@ document.addEventListener(
         rectView,
       },
     };
-    ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin", pin });
+    ipcRenderer.send("nova-overlay:post", { type: "nova-design.pin", pin });
     // The optimistic badge draws the region the moment the press lifts — the
     // web's sync (the truth, and the numbering) lands a beat later.
     freshPins.add(pin.id);
@@ -713,7 +720,7 @@ function makeBadgeCircle(badge: Badge): HTMLButtonElement {
   circle.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin-focus", id: badge.id });
+    ipcRenderer.send("nova-overlay:post", { type: "nova-design.pin-focus", id: badge.id });
   });
   return circle;
 }
@@ -848,7 +855,7 @@ function renderOverlay(): void {
 
 /** A sync pin's rect is an anchor only when it is four finite numbers. */
 function readRect(
-  value: ColoDesignPinsSync["pins"][number]["rect"],
+  value: NovaDesignPinsSync["pins"][number]["rect"],
 ): { x: number; y: number; width: number; height: number } | null {
   if (!value) return null;
   const { x, y, width, height } = value;
@@ -864,12 +871,12 @@ function readRect(
  * registry's `n` when the web sends one, else the row's place in the list.
  *
  * 도착은 두 갈래로 듣는다: ipcRenderer 채널과, main이 게스트 안에서
- * 발사하는 CustomEvent("colo-pins-sync"). 한 핀을 찍고 나면(실측, Electron
+ * 발사하는 CustomEvent("nova-pins-sync"). 한 핀을 찍고 나면(실측, Electron
  * 44 webview) 그 문서의 main→게스트 ipcRenderer 전달이 조용히 죽는다 —
  * CustomEvent 갈래가 그 뒤를 잇는다(main→게스트 executeJavaScript 는
  * 살아 있다).
  */
-function applyPinsSync(sync: ColoDesignPinsSync | undefined | null): void {
+function applyPinsSync(sync: NovaDesignPinsSync | undefined | null): void {
   const here = pageContext();
   const rows = Array.isArray(sync?.pins) ? sync.pins : [];
   badges = rows.flatMap((pin, index): Badge[] => {
@@ -920,7 +927,7 @@ function applyPinsSync(sync: ColoDesignPinsSync | undefined | null): void {
   armPinsPoll();
 }
 
-ipcRenderer.on("colo-overlay:pins", (_event, sync: ColoDesignPinsSync) => applyPinsSync(sync));
+ipcRenderer.on("nova-overlay:pins", (_event, sync: NovaDesignPinsSync) => applyPinsSync(sync));
 
 /**
  * 스윕의 폴백(ⓒ): 핀을 찍고 난 뒤(실측, Electron 44 webview) 그 문서의
@@ -936,9 +943,9 @@ function armPinsPoll(): void {
     pinsPollTimer = null;
     if (badges.length === 0) return;
     void ipcRenderer
-      .invoke("colo-overlay:pins-poll")
+      .invoke("nova-overlay:pins-poll")
       .then((sync) => {
-        applyPinsSync(sync as ColoDesignPinsSync);
+        applyPinsSync(sync as NovaDesignPinsSync);
       })
       .catch(() => undefined);
     window.setTimeout(armPinsPoll, 600);
@@ -1024,7 +1031,7 @@ function flashPin(id: string, options: { scroll: boolean }): void {
   window.setTimeout(stop, smooth ? beat * 2 + 40 : 600);
 }
 
-ipcRenderer.on("colo-overlay:flash", (_event, payload: { id?: unknown }) => {
+ipcRenderer.on("nova-overlay:flash", (_event, payload: { id?: unknown }) => {
   if (typeof payload?.id !== "string") return;
   flashPin(payload.id, { scroll: true });
 });
@@ -1047,7 +1054,7 @@ function toast(text: string, options?: { hold?: boolean }): HTMLElement {
 // ---------------------------------------------------------------------------
 
 ipcRenderer.on(
-  "colo-overlay:mode",
+  "nova-overlay:mode",
   (_event, payload: { on?: boolean; skin?: { accent?: unknown; words?: unknown } }) => {
     const skin = payload?.skin;
     // The app's words and accent — the preload cannot read the web's labels,
@@ -1079,7 +1086,7 @@ ipcRenderer.on(
 
 // 도구의 손길 깃발 — 보내기(main)와 그 다음 입력 dispatch 사이의 순서를
 // 보장하는 것이 임무의 전부라, 답(ack)만 하면 끝난다.
-ipcRenderer.on("colo-overlay:agent", (_event, payload: { on?: boolean }) => {
+ipcRenderer.on("nova-overlay:agent", (_event, payload: { on?: boolean }) => {
   const on = Boolean(payload?.on);
   agentDriving = on;
   if (on) {
@@ -1090,17 +1097,17 @@ ipcRenderer.on("colo-overlay:agent", (_event, payload: { on?: boolean }) => {
     hoverTarget = null;
     stopHoverLoop();
   }
-  ipcRenderer.send("colo-overlay:agent-ack");
+  ipcRenderer.send("nova-overlay:agent-ack");
 });
 
-ipcRenderer.on("colo-overlay:capture", (_event, payload: { on?: boolean }) => {
+ipcRenderer.on("nova-overlay:capture", (_event, payload: { on?: boolean }) => {
   const on = Boolean(payload?.on);
   const boot = () => {
     // Hidden FIRST, then two frames: the same tick would shoot the pins in
     // (틀리기 쉬운 자리 — the capture waits for the paint).
     root.style.visibility = on ? "hidden" : "";
     requestAnimationFrame(() =>
-      requestAnimationFrame(() => ipcRenderer.send("colo-overlay:capture-done")),
+      requestAnimationFrame(() => ipcRenderer.send("nova-overlay:capture-done")),
     );
   };
   if (document.readyState === "loading")
@@ -1120,7 +1127,11 @@ function maybeHint(): void {
   // once per repo, by the page's own storage; a machine that cannot store it
   // simply hears it again.
   try {
-    if (!window.localStorage.getItem(HINT_SEEN)) {
+    // read-legacy — 옛 앱이 이미 말한 적이 있는 페이지는 다시 말하지 않는다.
+    const said =
+      // read-legacy
+      window.localStorage.getItem(HINT_SEEN) ?? window.localStorage.getItem("colo-design.pin-hint");
+    if (!said) {
       window.localStorage.setItem(HINT_SEEN, "1");
       const note = toast(words.hint, { hold: true });
       setTimeout(() => note.remove(), 6000);

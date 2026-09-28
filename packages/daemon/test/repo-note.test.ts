@@ -5,12 +5,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { makeSupervisedScene } from "./helpers/cycle-harness.ts";
 
-const BRANCH = "colo-design/20260924-1";
+const BRANCH = "nova-design/20260924-1";
 
 /** 레지스트리가 기억하는 열린 요청 — HandoffStatus 와 같은 모양. */
 const OPEN_PR = {
   number: 7,
-  url: "https://github.test/colo-design/harness/pull/7",
+  url: "https://github.test/nova-design/harness/pull/7",
   title: "회원 목록 화면",
   state: "open" as const,
   branch: BRANCH,
@@ -24,7 +24,7 @@ test("한마디 더 — 열린 요청에 `> 한마디:` 줄과 대리 표기가 
     const sent = scene.github.commentsFor(7).at(-1);
     assert.ok(sent, "요청에 코멘트가 달렸다");
     assert.equal(sent.body.split("\n\n")[0], "> 한마디: 검색창 위치는 기획 의도예요");
-    assert.match(sent.body, /— Colo Design 이 김기획 님 대신 남김/);
+    assert.match(sent.body, /— Nova Design 이 김기획 님 대신 남김/);
     // 성공의 흔적 — 제출 기록의 마지막 한 줄(`이번 작업` 이 읽는 값).
     const log = scene.supervisor.submitView().log;
     assert.equal(log.at(-1)?.text, "개발자에게 한마디를 더 보냈어요");

@@ -35,7 +35,7 @@ function registryOf(claude: FakeDiagnostic, codex: FakeDiagnostic): DriverRegist
   return registry;
 }
 
-const CWD = "/tmp/colo-auto-thread/repo";
+const CWD = "/tmp/nova-auto-thread/repo";
 
 interface FakeLive {
   id: string;

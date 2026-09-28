@@ -4,11 +4,11 @@
 // `url` — macOS keeps the app alive with no window, so both are nullable.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DaemonServer } from "@colo-design/daemon/server";
+import type { DaemonServer } from "@nova-design/daemon/server";
 import { app, BrowserWindow, dialog, screen, shell } from "electron";
 
-const OPEN_SESSION_CHANNEL = "colodesign:open-session";
-const OPEN_PROJECT_CHANNEL = "colodesign:open-project";
+const OPEN_SESSION_CHANNEL = "novadesign:open-session";
+const OPEN_PROJECT_CHANNEL = "novadesign:open-project";
 
 /** 렌더러 사망의 자동 재열기 상한(PLAN-CRASH-PROCESS 3.A 층 3 · P-4) — 10분 창에 2회. */
 const RENDER_CRASH_WINDOW_MS = 10 * 60 * 1000;
@@ -73,7 +73,7 @@ export function daemonUrl(server: DaemonServer, token: string): string {
  * 창이 다른 origin 을 여는 문은 개발에만 존재한다.
  */
 export function windowUrl(daemon: string): string {
-  const devServer = app.isPackaged ? undefined : process.env.COLO_DESIGN_DEV_SERVER;
+  const devServer = app.isPackaged ? undefined : process.env.NOVA_DESIGN_DEV_SERVER;
   if (!devServer) return daemon;
   const source = new URL(daemon);
   const target = new URL(devServer);
@@ -184,7 +184,7 @@ export class MainWindowHost {
   /**
    * The one window recipe, shared by boot and reopen: a window made without it
    * (the notification-click reopen used to build its own) has no preload, so
-   * `coloDesignDesktop` never exists in it — the update bridge, 폴더 열기, the
+   * `novaDesignDesktop` never exists in it — the update bridge, 폴더 열기, the
    * native preview (pins, PiP, bounds) and open-session all die quietly, and
    * the title goes with them.
    */
@@ -199,7 +199,7 @@ export class MainWindowHost {
       ...workArea,
       minWidth: Math.min(760, workArea.width),
       minHeight: Math.min(560, workArea.height),
-      title: "Colo Design",
+      title: "Nova Design",
       autoHideMenuBar: true,
       webPreferences: {
         // 업데이트 확인 다리 — 이 preload 가 렌더러에 노출하는 전부다.

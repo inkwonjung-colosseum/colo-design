@@ -177,7 +177,7 @@ export function useShellNav({
   const latest = useRef({ nav, daemon });
   latest.current = { nav, daemon };
   useEffect(() => {
-    const bridge = window.coloDesignDesktop;
+    const bridge = window.novaDesignDesktop;
     if (!bridge?.onOpenSession) return;
     return bridge.onOpenSession((sessionId) => {
       const { daemon: now } = latest.current;

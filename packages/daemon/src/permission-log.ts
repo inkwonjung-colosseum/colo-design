@@ -9,7 +9,7 @@
  *
  * 읽는 법(반복 왕관부터):
  *   jq -r 'select(.kind=="ask" and .repeat==true) | .signature' \
- *     ~/.colo-design/config/permission-repeat.jsonl | sort | uniq -c | sort -rn
+ *     ~/.nova-design/config/permission-repeat.jsonl | sort | uniq -c | sort -rn
  *
  * 기록하는 것은 카드의 사실뿐이다(도구·서명·프로젝트 경로·반복 여부) —
  * 입력 전문은 기록하지 않는다. 서명은 permissionSignature 의 축약형으로,
@@ -42,9 +42,9 @@ export interface PermissionAskEvent {
   repeat?: boolean;
 }
 
-/** `COLO_DESIGN_PERMISSION_LOG` 가 테스트를 일회용 파일로 가리키게 한다. */
+/** `NOVA_DESIGN_PERMISSION_LOG` 가 테스트를 일회용 파일로 가리키게 한다. */
 function permissionLogFile(env: NodeJS.ProcessEnv = process.env): string {
-  return env.COLO_DESIGN_PERMISSION_LOG ?? join(CONFIG_DIR, "permission-repeat.jsonl");
+  return env.NOVA_DESIGN_PERMISSION_LOG ?? join(CONFIG_DIR, "permission-repeat.jsonl");
 }
 
 export class PermissionRepeatLog {
@@ -94,7 +94,7 @@ export class PermissionRepeatLog {
   private trim(): void {
     this.lines = this.lines.slice(Math.floor(MAX_LINES / 2));
     // 통째로 다시 쓰는 순간에도 찢어짐은 없게 — tmp+rename 으로 원자적으로.
-    const temporary = `${this.file}.colo-design-${process.pid}`;
+    const temporary = `${this.file}.nova-design-${process.pid}`;
     writeFileSync(temporary, `${this.lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
     renameSync(temporary, this.file);
     this.always.clear();

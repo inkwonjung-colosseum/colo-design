@@ -86,9 +86,9 @@ test("pickHandoffTitle — 커밋 제목마저 없으면 기본 제목", () => {
       draftTitle: null,
       projectName: "쇼핑몰 관리자",
       firstCommitSubject: null,
-      fallback: "Colo Design 화면 전달",
+      fallback: "Nova Design 화면 전달",
     }),
-    "Colo Design 화면 전달",
+    "Nova Design 화면 전달",
   );
 });
 

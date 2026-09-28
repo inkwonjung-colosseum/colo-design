@@ -11,7 +11,7 @@
  * 전부 몸 안에 들어 있다. 바깥 참조를 끌어들이면 그 자리에서 도구가 깨지므로
  * import 는 type 만.
  */
-import type { ColoDesignCommentTarget } from "@colo-design/protocol";
+import type { NovaDesignCommentTarget } from "@nova-design/protocol";
 
 /**
  * 요소 하나의 정체 — 핀 봉투의 element 칸과 같은 모양(재설계 C9 판정 그대로).
@@ -19,7 +19,7 @@ import type { ColoDesignCommentTarget } from "@colo-design/protocol";
  * 넘겨 부른다. 접근성 노드가 텍스트 노드를 가리킬 때는 그 부모 요소가 정체의
  * 주인이다(select 가 RECT_OF_SELF 에서 그렇게 하는 것과 같은 정규화다).
  */
-export function describeElementInPage(this: unknown, el?: unknown): ColoDesignCommentTarget | null {
+export function describeElementInPage(this: unknown, el?: unknown): NovaDesignCommentTarget | null {
   /** 요소의 직접 텍스트 노드만 — 공백을 누르고 80자에서 자른다. */
   const ownText = (element: Element): string => {
     let text = "";
@@ -64,7 +64,7 @@ export function describeElementInPage(this: unknown, el?: unknown): ColoDesignCo
       const clone = element.cloneNode(true);
       if (!(clone instanceof Element)) return undefined;
       for (const node of Array.from(
-        clone.querySelectorAll("[data-colo-pick],[data-colo-design-overlay]"),
+        clone.querySelectorAll("[data-nova-pick],[data-nova-design-overlay]"),
       )) {
         node.remove();
       }
@@ -110,7 +110,7 @@ export function describeElementInPage(this: unknown, el?: unknown): ColoDesignCo
 
   /** 페이지가 선언한 접근성 정체 — role 속성만(암시적 역할은 태그의 일)과
    *  처음으로 걸리는 이름. 연결된 label 까지는 손이 안 닿는다. */
-  const describeA11y = (element: Element): ColoDesignCommentTarget["a11y"] | undefined => {
+  const describeA11y = (element: Element): NovaDesignCommentTarget["a11y"] | undefined => {
     try {
       const role = element.getAttribute("role") ?? undefined;
       const name =
@@ -129,7 +129,7 @@ export function describeElementInPage(this: unknown, el?: unknown): ColoDesignCo
   };
 
   /** 레포가 시험에 남긴 고리 — id · test id 하나 · 클래스 다섯 개까지. */
-  const describeAttrs = (element: Element): ColoDesignCommentTarget["attrs"] | undefined => {
+  const describeAttrs = (element: Element): NovaDesignCommentTarget["attrs"] | undefined => {
     try {
       const id = element.id || undefined;
       const testId =
@@ -149,7 +149,7 @@ export function describeElementInPage(this: unknown, el?: unknown): ColoDesignCo
   const node = el !== undefined && el !== null ? el : this;
   const element = node instanceof Element ? node : node instanceof Node ? node.parentElement : null;
   if (!element) return null;
-  const target: ColoDesignCommentTarget = {
+  const target: NovaDesignCommentTarget = {
     component: element.tagName.toLowerCase(),
     text: ownText(element),
     path: cssPath(element),

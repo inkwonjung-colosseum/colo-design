@@ -17,7 +17,7 @@
 
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 
 /** One tape line: the event plus where in the conversation it happened. */
 export interface TapeRow {
@@ -79,7 +79,7 @@ export function dropTape(projectRoot: string, sessionId: string): void {
   } catch {
     return;
   }
-  const temporary = `${file}.colo-design-${process.pid}`;
+  const temporary = `${file}.nova-design-${process.pid}`;
   writeFileSync(temporary, kept.length > 0 ? `${kept.join("\n")}\n` : "", { mode: 0o600 });
   renameSync(temporary, file);
 }

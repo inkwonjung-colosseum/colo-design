@@ -56,7 +56,7 @@ export function buildSwapScript(input: {
     reason: "설치 프로그램을 실행하지 못했습니다",
     logPath,
   });
-  return `# Colo Design 자가 교체(Windows) — 종료 대기 → 무인 설치 → 재실행.
+  return `# Nova Design 자가 교체(Windows) — 종료 대기 → 무인 설치 → 재실행.
 # 오류 하나가 스크립트를 끊으면 결과 파일이 비어 다음 실행이 아무 말도 못 한다.
 $ErrorActionPreference = 'Continue'
 $logPath = ${ps(logPath)}
@@ -95,9 +95,11 @@ if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) {
   exit 1
 }
 # NSIS 무인 설치. -Wait 없이는 이 스크립트가 설치 도중에 끝나 결과를 알 수 없다.
+# --force-run — 무인 설치(/S)는 스스로 앱을 띄우지 않으므로 설치 프로그램에게
+# 맡긴다(installSection 의 doStartApp). 아래의 재실행은 그 실패의 예비책이다.
 $process = $null
 try {
-  $process = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+  $process = Start-Process -FilePath $installer -ArgumentList '/S','--force-run' -Wait -PassThru
 } catch {
   Write-SwapLog "설치 프로그램을 실행하지 못했습니다 — $($_.Exception.Message)"
   Write-SwapResult ${ps(launchFailedResult)}

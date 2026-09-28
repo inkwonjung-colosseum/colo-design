@@ -1,4 +1,4 @@
-import type { ProjectSummary, RepoStatus } from "@colo-design/protocol";
+import type { ProjectSummary, RepoStatus } from "@nova-design/protocol";
 import type { RefObject } from "react";
 import { useState } from "react";
 import { openLink } from "../../lib/open-link";

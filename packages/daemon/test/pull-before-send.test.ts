@@ -49,13 +49,13 @@ test("게이트 문제 해결 대화는 fleet 의 자동 대화 길로 연다 �
   // 최소 deps(claudeExecutable 없음)에서 무너진다.
   const codexSession = {
     id: "codex-s1",
-    cwd: "/tmp/colo-repo",
+    cwd: "/tmp/nova-repo",
     state: "idle",
     title: "제출 문제 해결",
   };
   const opened: string[] = [];
   const fleet = {
-    workspaceCwd: () => "/tmp/colo-repo",
+    workspaceCwd: () => "/tmp/nova-repo",
     requireActive: () => ({}),
     autoFixThreadFor: async (_workspaces: unknown, title: string) => {
       opened.push(title);

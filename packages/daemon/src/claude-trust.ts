@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { RepoSettingsWarning } from "@colo-design/protocol";
+import type { RepoSettingsWarning } from "@nova-design/protocol";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { CONFIG_DIR, currentPlatform } from "./environment.js";
 
@@ -262,10 +262,10 @@ function readQuarantine(root: string, configDir: string): QuarantineRecord | nul
 export function sanitizeRepoAgentSettings(root: string, configDir: string = CONFIG_DIR): boolean {
   // 기본은 연결 레포 설정을 신뢰하는 것(사내 전용):
   // 파일을 건드리지도, 경고를 내지도 않는다. 절단은 명시히 켜야 한다
-  // (COLO_DESIGN_ENFORCE_REPO_SETTINGS=1 — 외부 레포를 받는 배포가 생길 때).
+  // (NOVA_DESIGN_ENFORCE_REPO_SETTINGS=1 — 외부 레포를 받는 배포가 생길 때).
   if (
-    process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "1" &&
-    process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "true"
+    process.env.NOVA_DESIGN_ENFORCE_REPO_SETTINGS !== "1" &&
+    process.env.NOVA_DESIGN_ENFORCE_REPO_SETTINGS !== "true"
   ) {
     return false;
   }
@@ -285,7 +285,7 @@ export function sanitizeRepoAgentSettings(root: string, configDir: string = CONF
     if (!cut) continue;
     // temp+rename — a crash never leaves half a settings file behind.
     const file = join(root, settings.rel);
-    const temporary = `${file}.colo-design-${process.pid}`;
+    const temporary = `${file}.nova-design-${process.pid}`;
     writeFileSync(temporary, serializeSettings(cut.next, settings.format), { mode: 0o644 });
     renameSync(temporary, file);
     const fresh = { file: settings.rel, removed: cut.removed, originalRaw: raw };
@@ -304,7 +304,7 @@ export function sanitizeRepoAgentSettings(root: string, configDir: string = CONF
   const id = createHash("sha256").update(root).digest("hex");
   const target = join(configDir, "settings-quarantine", `${id}.json`);
   mkdirSync(dirname(target), { recursive: true });
-  const temporary = `${target}.colo-design-${process.pid}`;
+  const temporary = `${target}.nova-design-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   renameSync(temporary, target);
   return true;
@@ -324,8 +324,8 @@ export function repoSettingsWarning(
   // 절단이 켜져 있을 때만 경고가 존재한다 — 기본(신뢰)에선 건드린 것도 없으면서
   // 유령 경고를 내지 않는다.
   if (
-    process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "1" &&
-    process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "true"
+    process.env.NOVA_DESIGN_ENFORCE_REPO_SETTINGS !== "1" &&
+    process.env.NOVA_DESIGN_ENFORCE_REPO_SETTINGS !== "true"
   ) {
     return null;
   }
@@ -342,7 +342,7 @@ export function repoSettingsWarning(
   };
 }
 
-/** PATH with COLO_DESIGN_EXTRA_PATH prepended when the desktop app sets it. */
+/** PATH with NOVA_DESIGN_EXTRA_PATH prepended when the desktop app sets it. */
 export function extraPathPrefix(
   extra: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -424,7 +424,7 @@ export function trustWorkspace(root: string, home = homedir()): void {
 
   // The CLI rewrites this file whenever a session ends, so replace it in one
   // step rather than leaving a window where it is half written.
-  const temporary = `${configFile}.colo-design-${process.pid}`;
+  const temporary = `${configFile}.nova-design-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
     mode: 0o600,
   });

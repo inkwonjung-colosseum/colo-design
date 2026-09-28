@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { reviewToTurn } from "@colo-design/protocol";
+import { reviewToTurn } from "@nova-design/protocol";
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-supervisor.test.ts 와 같은 길).
 import { extractDeveloperReplies, replyFooter } from "../dist/developer-replies.js";
@@ -56,8 +56,8 @@ test("머리의 콜론은 붙여 쓰기도 한다 — 모델의 쓰는 법을 �
 });
 
 test("대리 표기 — 이름이 없으면 '사용자'", () => {
-  assert.equal(replyFooter("김기획"), "— Colo Design 이 김기획 님 대신 남김");
-  assert.equal(replyFooter(null), "— Colo Design 이 사용자 님 대신 남김");
+  assert.equal(replyFooter("김기획"), "— Nova Design 이 김기획 님 대신 남김");
+  assert.equal(replyFooter(null), "— Nova Design 이 사용자 님 대신 남김");
 });
 
 test("봇 판정 — user.type 이 Bot 이거나 로그인이 [bot] 으로 끝난다", () => {

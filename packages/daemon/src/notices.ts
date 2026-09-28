@@ -1,4 +1,4 @@
-import type { SessionState } from "@colo-design/protocol";
+import type { SessionState } from "@nova-design/protocol";
 
 /**
  * The daemon's one opinion about when a planner should be called back. The

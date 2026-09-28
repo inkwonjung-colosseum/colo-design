@@ -30,7 +30,7 @@ export function loadDesktopSettings(path: string): DesktopSettings {
 /** 읽기-수정-쓰기 — 통째로 덮어쓰면 다른 키(포트)가 알림 갱신마다 지워진다. */
 export function saveDesktopSettings(path: string, patch: Partial<DesktopSettings>): void {
   try {
-    const temporary = `${path}.colo-design-${process.pid}`;
+    const temporary = `${path}.nova-design-${process.pid}`;
     writeFileSync(temporary, JSON.stringify({ ...loadDesktopSettings(path), ...patch }, null, 2), {
       mode: 0o600,
     });

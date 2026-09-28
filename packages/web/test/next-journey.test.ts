@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { HandoffStatus, RepoStatus } from "@colo-design/protocol";
+import type { HandoffStatus, RepoStatus } from "@nova-design/protocol";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
 import { deriveJourney, type JourneyInput } from "../src/next/lib/journey.ts";
@@ -25,7 +25,7 @@ const handoff = (state: HandoffStatus["state"]): HandoffStatus => ({
   url: "https://github.com/o/r/pull/7",
   title: "t",
   state,
-  branch: "colo-design/20260925-1",
+  branch: "nova-design/20260925-1",
   reviewers: ["dev1"],
 });
 
@@ -48,7 +48,7 @@ const run = (repo: Partial<RepoStatus>, rest: Partial<JourneyInput> = {}) => {
 
 test("제출 전 — 첫 점이 지금 점이고 화면 수를 말한다", () => {
   const j = run({
-    branch: "colo-design/20260925-1",
+    branch: "nova-design/20260925-1",
     cycleScreens: [screen("회원 목록", "2026-09-25T01:00:00Z"), screen("", "2026-09-25T01:01:00Z")],
   });
   assert.equal(j.cycle, "draft");
@@ -75,7 +75,7 @@ test("만든 것이 없으면 제출은 잠기고 이유를 말한다", () => {
 });
 
 test("화면 목록을 모르는 데몬이어도 작업이 있으면 제출은 열린다", () => {
-  const j = run({ branch: "colo-design/20260925-1" });
+  const j = run({ branch: "nova-design/20260925-1" });
   assert.equal(j.points[0].label, L.journey.before);
   assert.equal(j.submit.enabled, true);
   assert.equal(j.submit.reason, L.shell.submitReadyAny);
@@ -130,7 +130,7 @@ test("반영됨 — 셋째 점, 제출은 다음 작업까지 잠긴다", () => 
 });
 
 test("반영 뒤에 쌓인 작업은 새 사이클의 제출 전이다", () => {
-  const j = run({ handoff: handoff("merged"), branch: "colo-design/20260926-1" });
+  const j = run({ handoff: handoff("merged"), branch: "nova-design/20260926-1" });
   assert.equal(j.cycle, "draft");
   assert.equal(j.submit.enabled, true);
   assert.equal(j.submit.more, false);

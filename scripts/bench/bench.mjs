@@ -4,8 +4,8 @@
  * 새 의존성 없음(Node 22 의 전역 WebSocket · node:child_process 만).
  *
  *   node scripts/bench/bench.mjs run \
- *     --endpoint /tmp/colo-bench.json   # 또는 --url ws://127.0.0.1:7823/?token=…
- *     --project colo-beta-fixture \
+ *     --endpoint /tmp/nova-bench.json   # 또는 --url ws://127.0.0.1:7823/?token=…
+ *     --project nova-beta-fixture \
  *     --scenarios scripts/bench/scenarios/fixture.json \
  *     [--provider omp --model devin/swe-2 --effort high] \
  *     [--label before] [--only search,form] [--repeat 3] [--yes]
@@ -36,10 +36,10 @@ const execFileP = promisify(execFile);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const PROJECTS_DIR =
-  process.env.COLO_DESIGN_PROJECTS_DIR ?? join(homedir(), ".colo-design", "projects");
-const LOG_DIR = process.env.COLO_DESIGN_LOG_DIR ?? join(homedir(), ".colo-design", "logs");
+  process.env.NOVA_DESIGN_PROJECTS_DIR ?? join(homedir(), ".nova-design", "projects");
+const LOG_DIR = process.env.NOVA_DESIGN_LOG_DIR ?? join(homedir(), ".nova-design", "logs");
 const RESULTS_DIR = join(process.cwd(), "bench-results");
-const FIXTURE_PROJECT = "colo-beta-fixture";
+const FIXTURE_PROJECT = "nova-beta-fixture";
 const POLL_MS = 2_000;
 const TURN_TIMEOUT_MS = 15 * 60_000;
 const AUTOSAVE_MS = 20_000;
@@ -51,7 +51,7 @@ const USAGE = `재생 벤치 — 데몬에 붙어 시나리오를 돌리고 결�
   node scripts/bench/bench.mjs compare <결과 A> <결과 B>
 
 run 의 인자:
-  --endpoint <파일>    dev:desktop 이 적어 둔 접속 파일 (COLO_DESIGN_BENCH_ENDPOINT)
+  --endpoint <파일>    dev:desktop 이 적어 둔 접속 파일 (NOVA_DESIGN_BENCH_ENDPOINT)
   --url <ws 주소>      endpoint 대신 직접 겨누기 (pnpm dev:daemon 의 client url)
   --project <slug>     프로젝트 — 필수
   --scenarios <파일>   시나리오 JSON — 필수

@@ -7,7 +7,7 @@ import {
   getSessionMessages,
   listSessions,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { PlanUsage, SessionModelInfo } from "@colo-design/protocol";
+import type { PlanUsage, SessionModelInfo } from "@nova-design/protocol";
 import { readAuthStatus, readClaudeVersion } from "../../../environment.js";
 import type {
   AgentDriver,
@@ -24,7 +24,7 @@ import { ClaudeAgentSession, type ClaudeLaunch, probeModels, probePlanUsage } fr
 
 /**
  * A transcript's summary can be the conversation's own first line — and the
- * tool's machine-authored turns open with the `<!-- colo-design:… -->` marker
+ * tool's machine-authored turns open with the `<!-- nova-design:… -->` marker
  * (protocol turn-marker), so without this the raw marker leaks into the tree
  * and the palette as a conversation name. Marker lines are dropped, the first
  * human line wins, and whatever survives is collapsed to one clean line.

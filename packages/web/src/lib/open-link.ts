@@ -2,7 +2,7 @@
  * settings.ts 의 KEY 와 같은 자리 — 이 모듈은 node --test 가 그대로 읽을
  * 수 있게(import 없는 leaf) 둔다. 키를 바꾸면 함께 바꾼다.
  */
-const SETTINGS_KEY = "colo-design.settings";
+const SETTINGS_KEY = "nova-design.settings";
 
 /**
  * 링크 클릭이 묻는 즉시의 값 — React state 는 렌더를 거쳐야 최신이 되므로
@@ -42,7 +42,7 @@ function isGithubPage(url: string): boolean {
  * 연다. GitHub 페이지는 칸이 로그인을 모르므로 언제나 OS 브라우저로 보낸다.
  */
 export function openLink(url: string): void {
-  const preview = window.coloDesignDesktop?.preview;
+  const preview = window.novaDesignDesktop?.preview;
   if (!isGithubPage(url) && prefersInAppLinks() && preview?.openExternal) {
     void preview.openExternal(url);
     return;
@@ -63,7 +63,7 @@ export function linkClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   const href = event.currentTarget.getAttribute("href") ?? "";
   if (!/^https?:\/\//i.test(href)) return;
   if (!prefersInAppLinks() || isGithubPage(href)) return;
-  const openExternal = window.coloDesignDesktop?.preview?.openExternal;
+  const openExternal = window.novaDesignDesktop?.preview?.openExternal;
   if (!openExternal) return;
   event.preventDefault();
   void openExternal(href);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { DeveloperReview, RepoHistoryEntry } from "@colo-design/protocol";
+import type { DeveloperReview, RepoHistoryEntry } from "@nova-design/protocol";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
 import {

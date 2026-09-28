@@ -241,7 +241,7 @@ test("isGitWrite — 데몬이 부르는 동사의 표", () => {
   const writes: string[][] = [
     ["add", "--", "src/a.ts"],
     ["commit", "-m", "보관"],
-    ["checkout", "-b", "colo-design/20260924-1"],
+    ["checkout", "-b", "nova-design/20260924-1"],
     ["checkout", "main"],
     ["switch", "main"],
     ["reset", "--hard", "origin/main"],
@@ -268,7 +268,7 @@ test("isGitWrite — 데몬이 부르는 동사의 표", () => {
     ["tag", "v1"],
     ["tag", "-a", "v1"],
     ["tag", "-d", "v1"],
-    ["branch", "colo-design/x"],
+    ["branch", "nova-design/x"],
     ["branch", "-D", "x"],
     ["branch", "-m", "a", "b"],
     ["stash"], // 맨 stash 는 push 다
@@ -304,7 +304,7 @@ test("isGitWrite — 데몬이 부르는 동사의 표", () => {
     ["diff-tree", "--numstat", "-r", "HEAD"],
     ["log", "-1", "--pretty=%s"],
     ["log", "--reverse", "--format=%cI", "a..b"],
-    ["show", "main:.colo-design/shots/a.png"],
+    ["show", "main:.nova-design/shots/a.png"],
     ["rev-parse", "--verify", "HEAD"],
     ["rev-parse", "-q", "--verify", "MERGE_HEAD"],
     ["rev-list", "--left-right", "--count", "a...b"],
@@ -313,7 +313,7 @@ test("isGitWrite — 데몬이 부르는 동사의 표", () => {
     ["ls-tree", "-r", "--name-only", "stash@{0}^3"],
     ["merge-base", "a", "b"],
     ["cat-file", "-p", "sha"],
-    ["for-each-ref", "refs/colo-design"],
+    ["for-each-ref", "refs/nova-design"],
     ["symbolic-ref", "--short", "-q", "HEAD"],
     ["describe", "--tags"],
     ["blame", "a.ts"],
@@ -352,10 +352,10 @@ test("isGitWrite — 데몬이 부르는 동사의 표", () => {
     assert.equal(isGitWrite(args), false, `읽기여야 한다: ${args.join(" ")}`);
 });
 
-test("COLO_DESIGN_LANE_STRICT=1 — 차선 밖 쓰기는 던지고 차선 안은 지난다", async () => {
-  const root = mkdtempSync(join(tmpdir(), "colo-lane-strict-"));
-  const previous = process.env.COLO_DESIGN_LANE_STRICT;
-  process.env.COLO_DESIGN_LANE_STRICT = "1";
+test("NOVA_DESIGN_LANE_STRICT=1 — 차선 밖 쓰기는 던지고 차선 안은 지난다", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nova-lane-strict-"));
+  const previous = process.env.NOVA_DESIGN_LANE_STRICT;
+  process.env.NOVA_DESIGN_LANE_STRICT = "1";
   try {
     const core = new RepoCore({ root, url: null, onStatus: () => {} });
     // 위반 판정은 실행 앞에서 일어난다 — git 이 없어도 같은 결과다.
@@ -365,8 +365,8 @@ test("COLO_DESIGN_LANE_STRICT=1 — 차선 밖 쓰기는 던지고 차선 안은
     // 차선 안의 쓰기는 지난다 — 실제 git 으로 클론을 만든다.
     await core.lane.run("hygiene", () => core.git(["init", "-b", "main"]));
   } finally {
-    if (previous === undefined) delete process.env.COLO_DESIGN_LANE_STRICT;
-    else process.env.COLO_DESIGN_LANE_STRICT = previous;
+    if (previous === undefined) delete process.env.NOVA_DESIGN_LANE_STRICT;
+    else process.env.NOVA_DESIGN_LANE_STRICT = previous;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -378,13 +378,13 @@ test("COLO_DESIGN_LANE_STRICT=1 — 차선 밖 쓰기는 던지고 차선 안은
 /** 빈 bare 원격과 그 클론 — 넘기기 시험(fixture 원격)과 같은 재료. */
 async function makeWorkspace(): Promise<{ repo: RepoWorkspace; dir: string }> {
   const execAt = (cwd: string) => (args: string[]) => exec("git", args, { cwd });
-  const dir = mkdtempSync(join(tmpdir(), "colo-git-lane-save-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-git-lane-save-"));
   const remote = join(dir, "remote.git");
   const root = join(dir, "repo");
   await execAt(dir)(["init", "--bare", "-b", "main", remote]);
   const git = execAt(root);
   await exec("git", ["clone", remote, root], { cwd: dir });
-  await git(["config", "user.email", "test@colo-design"]);
+  await git(["config", "user.email", "test@nova-design"]);
   await git(["config", "user.name", "테스트"]);
   writeFileSync(join(root, "screen.txt"), "첫 줄\n");
   await git(["add", "-A"]);

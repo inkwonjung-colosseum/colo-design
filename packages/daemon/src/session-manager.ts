@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import type { ChatEvent, SessionSummary, ThreadSummary } from "@colo-design/protocol";
+import type { ChatEvent, SessionSummary, ThreadSummary } from "@nova-design/protocol";
 import type { AgentDriver, ImportableSession } from "./agent/driver.js";
 import type { DriverRegistry } from "./agent/registry.js";
 import type { BrowserMcpEntry } from "./browser-launch.js";

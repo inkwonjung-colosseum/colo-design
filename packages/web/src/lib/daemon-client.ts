@@ -33,8 +33,8 @@ import type {
   SessionSelectors,
   SessionState,
   SessionSummary,
-} from "@colo-design/protocol";
-import { PROTOCOL_VERSION } from "@colo-design/protocol";
+} from "@nova-design/protocol";
+import { PROTOCOL_VERSION } from "@nova-design/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorWords } from "./error-words";
 import { attachProgress, type ToolProgress } from "./progress";
@@ -733,7 +733,7 @@ interface DaemonApi {
   diff: () => Promise<DiffFile[]>;
   /**
    * 저장: run the gates, then commit and push onto this cycle's own
-   * `colo-design/…` branch. Progress arrives as `diff.status`.
+   * `nova-design/…` branch. Progress arrives as `diff.status`.
    */
   save: (message?: string, sessionId?: string | null) => Promise<DiffStatus>;
   /**
@@ -952,14 +952,14 @@ export interface Daemon {
 // ---------------------------------------------------------------------------
 
 /** Asked once, after the planner's first send — never again. */
-const NOTIFICATION_ASKED_KEY = "colo-design.notification-asked";
+const NOTIFICATION_ASKED_KEY = "nova-design.notification-asked";
 
 /**
  * The desktop asks nothing and notifies from its own main process (this is
  * the BROWSER path); a second voice would ring twice.
  */
 function requestNotificationPermissionOnce(): void {
-  if (typeof Notification === "undefined" || window.coloDesignDesktop) return;
+  if (typeof Notification === "undefined" || window.novaDesignDesktop) return;
   try {
     if (localStorage.getItem(NOTIFICATION_ASKED_KEY)) return;
     localStorage.setItem(NOTIFICATION_ASKED_KEY, "1");
@@ -1026,7 +1026,7 @@ async function notifyBackgroundThread(
   state: SessionState,
   turnDurationMs?: number,
 ): Promise<void> {
-  if (typeof Notification === "undefined" || window.coloDesignDesktop) return;
+  if (typeof Notification === "undefined" || window.novaDesignDesktop) return;
   if (Notification.permission !== "granted") return;
   // 알림 시점 정책: 완료만 3상태를 탄다. 확인 요청·중단은
   // 언제나 온다. 걸린 시간을 모르는 완료는 "오래 걸린" 쪽으로 묶는다.
@@ -1050,7 +1050,7 @@ async function notifyBackgroundThread(
  *  already passed every gate reloads into the wizard while the fresh check
  *  spawns real commands. The check still runs on every connect and
  *  overwrites this — a gate that broke since is caught a beat later. */
-const ONBOARDING_CACHE_KEY = "colo-design.onboarding";
+const ONBOARDING_CACHE_KEY = "nova-design.onboarding";
 
 interface OnboardingCache {
   provider: string | null;

@@ -103,7 +103,7 @@ test("시작 브리프 — 2시간 안의 inflight 는 brief 표식의 턴 한 �
     assert.equal(created[0]?.resume, "thread1");
     assert.equal(created[0]?.heldBack, 1, "살아 남은 대기 말을 방에 돌려놓는다");
     const brief = created[0]?.sent[0] ?? "";
-    assert.ok(brief.startsWith("<!-- colo-design:brief "), "brief 표식의 턴이다");
+    assert.ok(brief.startsWith("<!-- nova-design:brief "), "brief 표식의 턴이다");
     assert.ok(
       brief.includes("직전 요청이 중단됐습니다: 회원 목록 화면을 고쳐 줘"),
       "원문 첫 줄이 실린다",

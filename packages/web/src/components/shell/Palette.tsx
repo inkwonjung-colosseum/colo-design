@@ -1,4 +1,4 @@
-import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
+import type { ProjectSummary, ThreadSummary } from "@nova-design/protocol";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { timeAgo } from "../../lib/format";

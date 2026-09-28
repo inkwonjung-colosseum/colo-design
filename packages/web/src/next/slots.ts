@@ -1,4 +1,4 @@
-import type { ProjectSummary } from "@colo-design/protocol";
+import type { ProjectSummary } from "@nova-design/protocol";
 import type { Pins } from "../hooks/usePins";
 import type { Sessions } from "../hooks/useSessions";
 import type { Daemon } from "../lib/daemon-client";

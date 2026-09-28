@@ -1,6 +1,6 @@
 /**
  * 턴 통계 (AI 작업 시간 측정, 2026-09-20): 한 턴이 끝날 때마다 사실 한 줄을
- * `~/.colo-design/logs/turn-stats-YYYY-MM-DD.jsonl` 에 남긴다.
+ * `~/.nova-design/logs/turn-stats-YYYY-MM-DD.jsonl` 에 남긴다.
  *
  * 무엇이 턴을 느리게 하는지는 측정이 먼저다 — 방향 잡기 tool call 수,
  * 브라우저 확인, 게이트 재시작, 컨텍스트 크기. 같은 날 네 필드가 갈라 들었다:
@@ -15,7 +15,7 @@
 
 import { appendFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 import { type BrowserFailKind, isBrowserToolName } from "./browser-tools.js";
 import { daemonLogDir } from "./log.js";
 import { STATS_EDIT_TOOLS, STATS_EXEC_TOOLS, STATS_READ_TOOLS } from "./tool-names.js";
@@ -172,11 +172,11 @@ export interface TurnStatsDeps {
 
 function freshTurn(text: string): InFlight {
   // 마커 턴의 종류 — readTurn 까지 갈 것 없이, 첫 줄의 표식 접두만 본다.
-  const kind = text.startsWith("<!-- colo-design:comments ")
+  const kind = text.startsWith("<!-- nova-design:comments ")
     ? "comments"
-    : text.startsWith("<!-- colo-design:gate ")
+    : text.startsWith("<!-- nova-design:gate ")
       ? "gate"
-      : text.startsWith("<!-- colo-design:")
+      : text.startsWith("<!-- nova-design:")
         ? "brief"
         : "user";
   return {
@@ -252,10 +252,10 @@ export class TurnStats {
       // 센다 — 본문은 읽지 않는다(사용자의 말이 거기 산다).
       const turn = freshTurn(event.text);
       const firstLine = event.text.split("\n", 1)[0] ?? "";
-      if (firstLine.startsWith("<!-- colo-design:comments ")) {
+      if (firstLine.startsWith("<!-- nova-design:comments ")) {
         try {
           const marker = JSON.parse(
-            firstLine.slice("<!-- colo-design:comments ".length, firstLine.length - " -->".length),
+            firstLine.slice("<!-- nova-design:comments ".length, firstLine.length - " -->".length),
           ) as { items?: unknown };
           turn.pins = Array.isArray(marker.items) ? marker.items.length : 0;
         } catch {

@@ -1,9 +1,9 @@
 {
-  "name": "@colo-design/desktop",
-  "productName": "Colo Design",
+  "name": "@nova-design/desktop",
+  "productName": "Nova Design",
   "version": "0.3.15",
   "private": true,
-  "description": "Colo Design 데스크톱 앱 — Electron 메인이 데몬을 in-process 로 호스팅하고 웹 UI를 함께 띄운다.",
+  "description": "Nova Design 데스크톱 앱 — Electron 메인이 데몬을 in-process 로 호스팅하고 웹 UI를 함께 띄운다.",
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
@@ -15,8 +15,8 @@
     "dist": "electron-builder"
   },
   "dependencies": {
-    "@colo-design/daemon": "workspace:*",
-    "@colo-design/protocol": "workspace:*"
+    "@nova-design/daemon": "workspace:*",
+    "@nova-design/protocol": "workspace:*"
   },
   "devDependencies": {
     "electron": "^44.2.0",

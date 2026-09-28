@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-// 컴파일된 dist 를 읽는다 — `@colo-design/protocol` 의 스키마 import 가 얽혀 있다.
+// 컴파일된 dist 를 읽는다 — `@nova-design/protocol` 의 스키마 import 가 얽혀 있다.
 import { CatalogGate } from "../dist/plan-tracker.js";
 
 const RETRY_MS = 5 * 60_000;

@@ -2,7 +2,7 @@ import {
   type OnboardingFixKind,
   RELEASES_REPO,
   type UpdateCheckResult,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useInstallStep } from "../../hooks/use-install-step";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
@@ -145,7 +145,7 @@ export function SettingsDialog({
   const [noticeTest, setNoticeTest] = useState<string | null>(null);
   const sendTestNotice = async () => {
     setNoticeTest(null);
-    const bridge = window.coloDesignDesktop;
+    const bridge = window.novaDesignDesktop;
     if (bridge?.notifyTest) {
       const result = await bridge.notifyTest();
       setNoticeTest(
@@ -191,16 +191,16 @@ export function SettingsDialog({
     L,
   );
   const bridgeOpenHome =
-    window.coloDesignDesktop && "openHome" in window.coloDesignDesktop
-      ? window.coloDesignDesktop.openHome
+    window.novaDesignDesktop && "openHome" in window.novaDesignDesktop
+      ? window.novaDesignDesktop.openHome
       : undefined;
   const bridgeOpenNotificationSettings =
-    window.coloDesignDesktop && "openNotificationSettings" in window.coloDesignDesktop
-      ? window.coloDesignDesktop.openNotificationSettings
+    window.novaDesignDesktop && "openNotificationSettings" in window.novaDesignDesktop
+      ? window.novaDesignDesktop.openNotificationSettings
       : undefined;
 
   // ── 업데이트 — 앱은 데스크톱 다리가, AI 는 데몬의 확인 · 진행기가 맡는다.
-  const desktop = window.coloDesignDesktop ?? null;
+  const desktop = window.novaDesignDesktop ?? null;
   const [appCheck, setAppCheck] = useState<UpdateCheckResult | null>(null);
   const [appPhase, setAppPhase] = useState<"idle" | "installing" | "prepared" | "deferred">("idle");
   const [appNote, setAppNote] = useState<string | null>(null);
@@ -225,7 +225,7 @@ export function SettingsDialog({
     setAppPhase("installing");
     setAppNote(null);
     try {
-      const result = await window.coloDesignDesktop?.selfUpdate();
+      const result = await window.novaDesignDesktop?.selfUpdate();
       if (result && typeof result === "object" && "error" in result && result.error) {
         throw new Error(String(result.error));
       }
@@ -766,7 +766,7 @@ export function SettingsDialog({
                         {L.settings.openFolder}
                       </button>
                     ) : (
-                      <span className="nx-snote">~/.colo-design</span>
+                      <span className="nx-snote">~/.nova-design</span>
                     )}
                   </div>
                   <div className="nx-sline">

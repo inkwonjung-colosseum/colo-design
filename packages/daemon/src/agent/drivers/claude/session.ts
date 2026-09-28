@@ -13,7 +13,7 @@ import type {
   PlanUsage,
   SessionCommand,
   SessionModelInfo,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import { withoutSelfUpdate } from "../../../agent-env.js";
 import { BROWSER_MCP_SERVER_NAME, claudeBrowserMcpServer } from "../../../browser-launch.js";
 import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";

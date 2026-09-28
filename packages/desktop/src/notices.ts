@@ -1,4 +1,4 @@
-import type { DaemonNotice } from "@colo-design/daemon/server";
+import type { DaemonNotice } from "@nova-design/daemon/server";
 
 /**
  * 알림 한 장의 문구. 사용자의 어휘만 나간다 — 도구 이름도, git 도 없다.

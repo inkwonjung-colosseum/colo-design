@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
-import type { ChatEvent, RepoPhase } from "@colo-design/protocol";
+import type { ChatEvent, RepoPhase } from "@nova-design/protocol";
 // Session 은 형제(.js 지정자)를 부르므로 dist 를 본다(turn-selfheal 과 같은 길).
 import { ProjectFleet } from "../dist/project-fleet.js";
 import { Session } from "../dist/session.js";

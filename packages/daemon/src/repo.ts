@@ -8,7 +8,7 @@ import type {
   RepoHandoffDraft,
   RepoHistory,
   RepoStatus,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 
 // 셋 다 이 모듈이 쓰면서 동시에 이 모듈의 표면이다 — 검사와 온보딩이
 // `dist/repo.js` 에서 이 이름들을 가져간다.

@@ -23,7 +23,7 @@ const RESIZABLE: Record<string, true> = {
   "image/webp": true,
 };
 /** 입력창의 초안은 옛 입력창과 같은 열쇠를 쓴다 — 두 셸이 같은 대화의 같은 초안을 본다. */
-const DRAFT_PREFIX = "colo-design.draft.";
+const DRAFT_PREFIX = "nova-design.draft.";
 
 function storedDraft(key: string): string {
   try {

@@ -177,7 +177,7 @@ export function ProblemLine({
 
   // 초대 파일 지우기 — 감싸개가 접히는 동안에도 몸통은 지울 경로를 기억한다.
   const discardable = (() => {
-    const discard = window.coloDesignDesktop?.invite?.discard;
+    const discard = window.novaDesignDesktop?.invite?.discard;
     return discard !== undefined && invitePath !== null ? { discard, path: invitePath } : null;
   })();
   return (

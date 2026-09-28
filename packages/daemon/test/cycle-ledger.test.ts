@@ -51,7 +51,7 @@ function fullLedger(): CycleLedger {
       "conflict:deadbeef": { spent: 1, firstAt: iso(T0), lastAt: iso(T0), escalated: false },
     },
     notices: { "push:behind": { via: "pr", ref: 12, raisedAt: iso(T0), count: 1 } },
-    branches: [{ name: "colo-design/20260924-1", endedAt: iso(T0), state: "merged" }],
+    branches: [{ name: "nova-design/20260924-1", endedAt: iso(T0), state: "merged" }],
     salvages: [
       {
         at: iso(T0),
@@ -73,8 +73,8 @@ function fullLedger(): CycleLedger {
       at: iso(T0),
       salvage: {
         dir: "/p/salvage/20260924T090000Z",
-        branch: "colo-design/20260924-1",
-        bundleRef: "refs/heads/colo-design/20260924-1",
+        branch: "nova-design/20260924-1",
+        bundleRef: "refs/heads/nova-design/20260924-1",
         patch: true,
       },
       movedTo: null,

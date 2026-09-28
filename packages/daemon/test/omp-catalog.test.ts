@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-// 컴파일된 dist 를 읽는다 — `@colo-design/protocol` 의 스키마 import 가 얽혀 있다.
+// 컴파일된 dist 를 읽는다 — `@nova-design/protocol` 의 스키마 import 가 얽혀 있다.
 import { fastPairs, ompModelRows } from "../dist/agent/drivers/omp/catalog.js";
 
 const devinRow = (id: string, name = id) => ({

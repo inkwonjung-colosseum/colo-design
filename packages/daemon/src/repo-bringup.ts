@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import type { RepoErrorKind, RepoStatus } from "@colo-design/protocol";
+import type { RepoErrorKind, RepoStatus } from "@nova-design/protocol";
 import { extraPathPrefix, sanitizeRepoAgentSettings, trustWorkspace } from "./claude-trust.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import {
@@ -227,9 +227,9 @@ export class BringUp {
 
   private async runCommand(command: string, label: string): Promise<void> {
     await this.requirePnpmIfReferenced(command);
-    // 다섯 분을 기다리는 검사는 검사가 아니다 — `COLO_DESIGN_COMMAND_STALL_MS`
+    // 다섯 분을 기다리는 검사는 검사가 아니다 — `NOVA_DESIGN_COMMAND_STALL_MS`
     // 가 e2e 를 초 단위로 그 문 앞에 세운다.
-    const stall = Number(process.env.COLO_DESIGN_COMMAND_STALL_MS) || COMMAND_STALL_MS;
+    const stall = Number(process.env.NOVA_DESIGN_COMMAND_STALL_MS) || COMMAND_STALL_MS;
     const result = await this.core.capture(command, this.spawnOptions(), [], stall);
     if (result.code === 0) return;
     if (result.stalled) {
@@ -255,7 +255,7 @@ export class BringUp {
     );
   }
 
-  /** A colo-design command may or may not need pnpm; only demand it when it does. */
+  /** A nova-design command may or may not need pnpm; only demand it when it does. */
   private async requirePnpmIfReferenced(command: string): Promise<void> {
     if (!/\bpnpm\b/.test(command)) return;
     if (!(await resolvePnpmExecutable())) throw new Error(PNPM_MISSING_DETAIL);
@@ -286,7 +286,7 @@ export class BringUp {
     // 더럽히지 않는다. 동기 쓰기: 스폰 직후의 hard-die 도 기록을 남기게.
     if (child.pid) {
       try {
-        writeFileSync(join(this.core.root, ".git", "colo-design-preview.pid"), String(child.pid));
+        writeFileSync(join(this.core.root, ".git", "nova-design-preview.pid"), String(child.pid));
       } catch {
         // 기록에 실패해도 서버는 뜬다 — 좀비 정리만 다음 기회로 넘어간다.
       }
@@ -451,7 +451,13 @@ export class BringUp {
    */
   private async reclaimStalePreview(): Promise<void> {
     if (currentPlatform() === "win32") return;
-    const pidFile = join(this.core.root, ".git", "colo-design-preview.pid");
+    // read-legacy — 0.3.x 가 남긴 pid 기록은 옛 이름의 파일에 있다.
+    const pidFile = [
+      join(this.core.root, ".git", "nova-design-preview.pid"),
+      // read-legacy
+      join(this.core.root, ".git", "colo-design-preview.pid"),
+    ].find((path) => existsSync(path));
+    if (!pidFile) return;
     let recorded = 0;
     try {
       recorded = Number(readFileSync(pidFile, "utf8").trim());
@@ -576,7 +582,7 @@ export function repoCommandEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     // The desktop app bundles portable Node/pnpm (and MinGit on Windows)
     // in its resources; those binaries win over whatever the planner's
     // machine happens to have — or not have — on PATH.
-    PATH: extraPathPrefix(base.COLO_DESIGN_EXTRA_PATH, base),
+    PATH: extraPathPrefix(base.NOVA_DESIGN_EXTRA_PATH, base),
     // 콜드 리뷰 N1 (2026-09-25, PLAN-UI 9.3 D1): pnpm 11 은 run 앞에서
     // 스스로 설치를 돌린다(기본값 verify-deps-before-run: "install") —
     // 락파일 없는 레포에서 `pnpm dev` 하나로 pnpm-lock.yaml · node_modules/
@@ -692,8 +698,16 @@ function installedTreeExists(root: string): boolean {
 
 /** `.git/` 안의 설치 표식 — 첫 줄이 해시, 둘째 줄이 트리 없음 표시(선택). */
 function readInstallMarker(root: string): { hash: string; noTree: boolean } | null {
+  // read-legacy — 0.3.x 의 클론은 옛 이름의 표식을 갖고 있다. 없으면 한 번 더 본다.
+  const marker = [
+    join(root, ".git", INSTALL_MARKER),
+    // read-legacy
+    join(root, ".git", "colo-design-install-hash"),
+  ] // read-legacy
+    .find((path) => existsSync(path));
+  if (!marker) return null;
   try {
-    const [hash = "", flag = ""] = readFileSync(join(root, ".git", INSTALL_MARKER), "utf8")
+    const [hash = "", flag = ""] = readFileSync(marker, "utf8")
       .split(/\r?\n/)
       .map((line) => line.trim());
     return { hash, noTree: flag === NO_TREE_FLAG };

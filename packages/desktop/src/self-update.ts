@@ -79,17 +79,17 @@ export function planSelfUpdate(input: {
   target?: string;
 }): SelfUpdatePlan {
   if (input.platform === "darwin") {
-    const filename = `colo-design-${input.version}.zip`;
+    const filename = `nova-design-${input.version}.zip`;
     return {
       assetUrl: input.url,
       expectedSha256: input.sha256,
       downloadPath: join(input.downloadsDir, filename),
-      target: input.target ?? "/Applications/Colo Design.app",
+      target: input.target ?? "/Applications/Nova Design.app",
       steps: [
         `${filename} 내려받기`,
         "sha256 검증",
         "앱 종료",
-        "/Applications/Colo Design.app 교체",
+        "/Applications/Nova Design.app 교체",
         "다시 실행",
       ],
     };
@@ -100,7 +100,7 @@ export function planSelfUpdate(input: {
     if (!input.target) {
       throw new Error("Windows 자가 교체에는 교체 대상 실행 파일의 경로가 필요합니다");
     }
-    const filename = `colo-design-Setup-${input.version}.exe`;
+    const filename = `nova-design-Setup-${input.version}.exe`;
     return {
       assetUrl: input.url,
       expectedSha256: input.sha256,

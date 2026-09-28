@@ -182,11 +182,11 @@ class McpChild {
 
 test("browser-mcp 악수 — initialize → tools/list → 모르는 도구와 중계 실패는 도구 결과로 온다", async () => {
   const env = { ...process.env };
-  delete env.COLO_BROWSER_SUBMIT;
+  delete env.NOVA_BROWSER_SUBMIT;
   // 닫힌 포트 — 중계 실패까지 결과로 내려오는 길을 함께 본다.
-  env.COLO_DAEMON_URL = "http://127.0.0.1:1";
-  env.COLO_BROWSER_SECRET = "test-secret";
-  env.COLO_APP_VERSION = "9.9.9";
+  env.NOVA_DAEMON_URL = "http://127.0.0.1:1";
+  env.NOVA_BROWSER_SECRET = "test-secret";
+  env.NOVA_APP_VERSION = "9.9.9";
   const child = spawn(
     process.execPath,
     [join(import.meta.dirname, "..", "dist", "browser-mcp.js")],
@@ -200,7 +200,7 @@ test("browser-mcp 악수 — initialize → tools/list → 모르는 도구와 �
     const init = await mcp.call("initialize", { protocolVersion: "2025-06-18" });
     assert.equal(init.error, undefined);
     const info = serverInfoOf(init);
-    assert.equal(info.name, "colo-browser");
+    assert.equal(info.name, "nova-browser");
     assert.equal(info.title, "콜로디자인 도구");
     assert.equal(
       info.version,
@@ -216,7 +216,7 @@ test("browser-mcp 악수 — initialize → tools/list → 모르는 도구와 �
     );
     assert.ok(
       !tools.some((tool) => tool.name === "submit_for_review"),
-      "COLO_BROWSER_SUBMIT 이 없으면 제출 도구는 빠진다",
+      "NOVA_BROWSER_SUBMIT 이 없으면 제출 도구는 빠진다",
     );
 
     const unknown = await mcp.call("tools/call", { name: "browser_teleport", arguments: {} });
@@ -243,8 +243,8 @@ test("browser-mcp 악수 — initialize → tools/list → 모르는 도구와 �
 
 test("isBrowserToolName — 세 프로바이더의 이름 형태를 모두 본다", () => {
   assert.equal(isBrowserToolName("screen_check"), true, "omp — 맨 이름");
-  assert.equal(isBrowserToolName("mcp__colo-browser__screen_check"), true, "claude — mcp__ 접두");
-  assert.equal(isBrowserToolName("colo-browser/browser_snapshot"), true, "codex — 슬래시 접두");
+  assert.equal(isBrowserToolName("mcp__nova-browser__screen_check"), true, "claude — mcp__ 접두");
+  assert.equal(isBrowserToolName("nova-browser/browser_snapshot"), true, "codex — 슬래시 접두");
   assert.equal(isBrowserToolName("browser_teleport"), false, "browser_ 접두만 같은 이름은 아니다");
   assert.equal(
     isBrowserToolName("mcp__other-server__browser_click"),
@@ -321,12 +321,12 @@ test("waitForAnswer — 참은 사실 한 줄, 거짓은 실제 예산을 말한
   );
 });
 
-test("browserMcpEntry — 앱 버전을 COLO_APP_VERSION 으로 싣는다(있을 때 · 없을 때)", () => {
+test("browserMcpEntry — 앱 버전을 NOVA_APP_VERSION 으로 싣는다(있을 때 · 없을 때)", () => {
   const withVersion = browserMcpEntry(true, "http://127.0.0.1:1", "s", false, "0.3.15");
-  assert.equal(withVersion?.env.COLO_APP_VERSION, "0.3.15", "버전을 알면 env 로 자식에 실린다");
+  assert.equal(withVersion?.env.NOVA_APP_VERSION, "0.3.15", "버전을 알면 env 로 자식에 실린다");
   const withoutVersion = browserMcpEntry(true, "http://127.0.0.1:1", "s", false);
   assert.equal(
-    withoutVersion?.env.COLO_APP_VERSION,
+    withoutVersion?.env.NOVA_APP_VERSION,
     undefined,
     "버전을 모르면 env 도 없다 — 자식은 0 으로 산다",
   );

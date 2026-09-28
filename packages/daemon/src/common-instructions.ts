@@ -1,4 +1,4 @@
-import { readTurn } from "@colo-design/protocol";
+import { readTurn } from "@nova-design/protocol";
 /**
  * 앱이 모든 세션에 늘 붙이는 공통 지침(커미티 판정 2026-09-14,
  * 계약 동기화 2026-09-19 — 게이트 입력(핀·캡처·navigate) · 락파일 설치 ·
@@ -25,7 +25,7 @@ import { readTurn } from "@colo-design/protocol";
  * 세 계층의 주인이 겹치지 않으므로 갱신·덮어쓰기 드리프트도 없다:
  * 이 상수는 앱 버전과 함께 움직인다.
  */
-export const COMMON_INSTRUCTIONS = `# Colo Design 공통 규칙
+export const COMMON_INSTRUCTIONS = `# Nova Design 공통 규칙
 
 이 규칙은 어떤 레포를 연결했는지와 무관하게 모든 대화에 함께 간다. 레포가 CLAUDE.md 로 자기 규칙을 밝히면 이 규칙과 함께 지킨다.
 
@@ -63,7 +63,14 @@ export function stripCommonInstructions(text: string): string {
   const lines = text.replace(COMMON_INSTRUCTIONS, "").split(/\r?\n/);
   let index = 0;
   while (index < lines.length && lines[index]?.trim() === "") index += 1;
-  if (lines[index]?.startsWith("# Colo Design 공통 규칙")) {
+  // read-legacy — 옛 저장본의 머리는 "Colo Design 공통 규칙"이다. 두 머리 다
+  // 걷어낸다: 옛 대화의 제목 · 커밋 제목 파생이 규칙 문구를 삼키지 않게.
+  const header = lines[index] ?? "";
+  if (
+    header.startsWith("# Nova Design 공통 규칙") ||
+    header.startsWith("# Colo Design 공통 규칙")
+  ) {
+    // read-legacy
     index += 1;
     while (index < lines.length) {
       const row = lines[index]?.trim() ?? "";

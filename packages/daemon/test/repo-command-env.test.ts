@@ -19,10 +19,10 @@ test("물려받은 참값도 덮어쓴다 — 사용자 셸의 설정이 새어 
 test("그 밖의 약속은 그대로 — 과금 키는 없고 번들 경로는 PATH 앞자리다", () => {
   const env = repoCommandEnv({
     ANTHROPIC_API_KEY: "sk-should-not-survive",
-    COLO_DESIGN_EXTRA_PATH: "/opt/colo-design/bin",
-    COLO_DESIGN_PORT: "7823",
+    NOVA_DESIGN_EXTRA_PATH: "/opt/nova-design/bin",
+    NOVA_DESIGN_PORT: "7823",
   });
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
-  assert.ok(env.PATH?.startsWith("/opt/colo-design/bin"), `PATH=${env.PATH}`);
-  assert.equal(env.COLO_DESIGN_PORT, "7823");
+  assert.ok(env.PATH?.startsWith("/opt/nova-design/bin"), `PATH=${env.PATH}`);
+  assert.equal(env.NOVA_DESIGN_PORT, "7823");
 });

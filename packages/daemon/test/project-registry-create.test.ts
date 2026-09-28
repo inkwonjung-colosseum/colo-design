@@ -8,14 +8,14 @@ import { test } from "node:test";
 // 모듈 전통과 달리 여기는 dist 를 본다.
 import { ProjectRegistry } from "../dist/projects.js";
 
-/** 임시 폴더 하나에 레지스트리를 만든다 — COLO_DESIGN_* 환경만 주면 된다. */
+/** 임시 폴더 하나에 레지스트리를 만든다 — NOVA_DESIGN_* 환경만 주면 된다. */
 function registry(): { registry: ProjectRegistry; file: string; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "project-registry-create-"));
   const file = join(dir, "projects.json");
   return {
     registry: ProjectRegistry.load({
-      COLO_DESIGN_PROJECTS_SETTINGS: file,
-      COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
+      NOVA_DESIGN_PROJECTS_SETTINGS: file,
+      NOVA_DESIGN_PROJECTS_DIR: join(dir, "projects"),
     }),
     file,
     dir,
@@ -82,8 +82,8 @@ test("초대 v4: defaults·lifecycle 이 projects.json 을 거쳐 살아남는�
     // 디스크에서 다시 읽은 레지스트리가 같은 값을 돌려준다 — 손편집이 아닌
     // 정상 왕복의 증거다.
     const reloaded = ProjectRegistry.load({
-      COLO_DESIGN_PROJECTS_SETTINGS: file,
-      COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
+      NOVA_DESIGN_PROJECTS_SETTINGS: file,
+      NOVA_DESIGN_PROJECTS_DIR: join(dir, "projects"),
     });
     const project = reloaded.list()[0];
     assert.deepEqual(project?.defaults, { provider: "claude", model: "sonnet", effort: "high" });
@@ -127,8 +127,8 @@ test("초대 v4: 손편집으로 깨진 defaults·lifecycle 은 파서가 버린
     saved.projects[0]!.lifecycle = { keepRejectedDays: 9999, autoReply: "yes" };
     writeFileSync(file, JSON.stringify(saved));
     const reloaded = ProjectRegistry.load({
-      COLO_DESIGN_PROJECTS_SETTINGS: file,
-      COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
+      NOVA_DESIGN_PROJECTS_SETTINGS: file,
+      NOVA_DESIGN_PROJECTS_DIR: join(dir, "projects"),
     });
     const reloadedProject = reloaded.get(project.slug);
     // 모르는 값은 버리고 나머지는 산다 — effort·days·autoReply 는 떨어지고

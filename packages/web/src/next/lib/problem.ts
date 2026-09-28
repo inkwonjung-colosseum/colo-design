@@ -1,4 +1,4 @@
-import type { Attention, RepoStatus } from "@colo-design/protocol";
+import type { Attention, RepoStatus } from "@nova-design/protocol";
 import type { L } from "../labels";
 
 /**
@@ -133,7 +133,7 @@ export function problemFor(
  * 있는 문제다). 신원은 `problem.dismissId`(문제가 처음 선 시각)라 같은 문제만
  * 닫히고, 풀렸다 다시 막힌 제출이나 새 알림은 다른 신원으로 다시 선다.
  */
-const PROBLEM_DISMISSED_KEY = "colo-design.problem-dismissed";
+const PROBLEM_DISMISSED_KEY = "nova-design.problem-dismissed";
 const PROBLEM_DISMISSED_MAX = 20;
 
 export function dismissedProblems(): string[] {

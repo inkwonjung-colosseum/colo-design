@@ -1,4 +1,4 @@
-import type { ColoDesignPinEnvelope, SessionState } from "@colo-design/protocol";
+import type { NovaDesignPinEnvelope, SessionState } from "@nova-design/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShortcutsSheet } from "../../components/dialogs/ShortcutsSheet";
@@ -121,7 +121,7 @@ export function PreviewColumn({
   // 데몬 쪽에서 멱등이다. 떠나도 아무것도 하지 않는다: 서버는 따뜻하게 남는다.
   useEffect(() => {
     if (connection !== "open") return;
-    void api.repoSync().catch((cause: Error) => console.error("[colo-design] repo sync", cause));
+    void api.repoSync().catch((cause: Error) => console.error("[nova-design] repo sync", cause));
   }, [connection, api]);
 
   // --- 어디를 보는가 ----------------------------------------------------
@@ -150,7 +150,7 @@ export function PreviewColumn({
   }, [native, target]);
   const walk = (delta: -1 | 1) => {
     if (native) {
-      void window.coloDesignDesktop?.preview?.history?.(delta);
+      void window.novaDesignDesktop?.preview?.history?.(delta);
       return;
     }
     const path = trail.list[trail.at + delta];
@@ -374,7 +374,7 @@ export function PreviewColumn({
     setDevice(next);
     // 기기는 몸이고 배율은 눈이다 — 기기가 바뀌면 눈은 100% 로.
     setZoom(1);
-    void window.coloDesignDesktop?.preview?.zoom?.("reset");
+    void window.novaDesignDesktop?.preview?.zoom?.("reset");
   };
 
   // --- 찍기 ---------------------------------------------------------
@@ -459,7 +459,7 @@ export function PreviewColumn({
     });
   }, []);
   const onPin = useCallback(
-    (pin: ColoDesignPinEnvelope["pin"]) => {
+    (pin: NovaDesignPinEnvelope["pin"]) => {
       pins.add(pin);
       openBubble(pin.id);
     },
@@ -523,7 +523,7 @@ export function PreviewColumn({
     }
     setLookBusy(true);
     try {
-      const snapshot = await window.coloDesignDesktop?.preview?.snapshot?.();
+      const snapshot = await window.novaDesignDesktop?.preview?.snapshot?.();
       const attachment = snapshot?.jpeg
         ? { name: L.preview.shotName(screenName), mediaType: "image/jpeg", data: snapshot.jpeg }
         : null;
@@ -555,7 +555,7 @@ export function PreviewColumn({
       lookSent.current = delivered;
       if (delivered) toast(L.preview.showAiSent);
     } catch (cause) {
-      console.error("[colo-design] look", cause);
+      console.error("[nova-design] look", cause);
     } finally {
       setLookBusy(false);
     }
@@ -683,7 +683,7 @@ export function PreviewColumn({
         onHistory={() => setHistoryOpen((open) => !open)}
         native={native}
         zoom={zoom}
-        onZoom={(kind) => void window.coloDesignDesktop?.preview?.zoom?.(kind)}
+        onZoom={(kind) => void window.novaDesignDesktop?.preview?.zoom?.(kind)}
         frozenReady={frozenReady}
         onFrozen={() => void openFrozen()}
         onShowAi={() => void showAi()}

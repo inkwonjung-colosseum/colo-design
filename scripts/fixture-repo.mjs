@@ -16,9 +16,9 @@
  * 출력하므로 데몬의 주소 감지가 그대로 돈다.
  *
  * 데몬 연결(예):
- *   COLO_DESIGN_PROJECTS_DIR=/tmp/fix1-projects \
- *   COLO_DESIGN_REPO_URL=/tmp/fix1/remote \
- *   COLO_DESIGN_CREDENTIAL_STORE=memory \
+ *   NOVA_DESIGN_PROJECTS_DIR=/tmp/fix1-projects \
+ *   NOVA_DESIGN_REPO_URL=/tmp/fix1/remote \
+ *   NOVA_DESIGN_CREDENTIAL_STORE=memory \
  *   pnpm dev:daemon
  */
 import { spawnSync } from "node:child_process";

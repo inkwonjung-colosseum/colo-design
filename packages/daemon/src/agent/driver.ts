@@ -5,7 +5,7 @@ import type {
   PlanUsage,
   SessionCommand,
   SessionModelInfo,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import type { BrowserMcpEntry } from "../browser-launch.js";
 
 /**

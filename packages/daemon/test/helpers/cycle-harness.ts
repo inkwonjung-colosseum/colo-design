@@ -23,7 +23,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { HandoffShot } from "@colo-design/protocol";
+import type { HandoffShot } from "@nova-design/protocol";
 import { type CycleLedger, emptyLedger } from "../../dist/cycle-ledger.js";
 import { type ObserveDeps, observeCycle } from "../../dist/cycle-observe.js";
 import type { CycleSnapshot } from "../../dist/cycle-reconcile.js";
@@ -54,7 +54,7 @@ export interface RemoteRepo extends TempRoot {
 }
 
 export async function makeRemote(): Promise<RemoteRepo> {
-  const root = tempRoot("colo-cycle-remote-");
+  const root = tempRoot("nova-cycle-remote-");
   const path = join(root.dir, "remote.git");
   const git = execAt(root.dir);
   await git(["init", "--bare", "-b", "main", path]);
@@ -62,7 +62,7 @@ export async function makeRemote(): Promise<RemoteRepo> {
   const seed = join(root.dir, "seed");
   await exec("git", ["clone", path, seed], { cwd: root.dir });
   const seedGit = execAt(seed);
-  await seedGit(["config", "user.email", "test@colo-design"]);
+  await seedGit(["config", "user.email", "test@nova-design"]);
   await seedGit(["config", "user.name", "테스트"]);
   writeFileSync(join(seed, "README.md"), "# 하네스\n");
   await seedGit(["add", "-A"]);
@@ -78,11 +78,11 @@ export interface ToolClone extends TempRoot {
 }
 
 export async function makeClone(remote: RemoteRepo): Promise<ToolClone> {
-  const root = tempRoot("colo-cycle-clone-");
+  const root = tempRoot("nova-cycle-clone-");
   const path = join(root.dir, "repo");
   await exec("git", ["clone", remote.path, path], { cwd: root.dir });
   const git = execAt(path);
-  await git(["config", "user.email", "test@colo-design"]);
+  await git(["config", "user.email", "test@nova-design"]);
   await git(["config", "user.name", "테스트"]);
   return { ...root, path };
 }
@@ -108,7 +108,7 @@ export interface HarnessCoreOptions {
 
 /**
  * 서버 없이 세운 RepoCore — url 은 로컬 bare 원격, onStatus 는 무동작.
- * repoSlug() 는 url 이나 COLO_DESIGN_GITHUB_SLUG 에서 읽는다(repo-core.ts) —
+ * repoSlug() 는 url 이나 NOVA_DESIGN_GITHUB_SLUG 에서 읽는다(repo-core.ts) —
  * 원격이 로컬 경로이므로 시험 슬롯인 환경변수로 고정한다. 시험 파일마다
  * 프로세스가 따로 도니 한 파일 안의 장면끼리만 겹친다.
  */
@@ -117,7 +117,7 @@ export function makeCore(
   remote: RemoteRepo,
   opts: HarnessCoreOptions = {},
 ): RepoCore {
-  process.env.COLO_DESIGN_GITHUB_SLUG ??= "colo-design/harness";
+  process.env.NOVA_DESIGN_GITHUB_SLUG ??= "nova-design/harness";
   return new RepoCore({
     root: clone.path,
     url: remote.path,
@@ -207,7 +207,7 @@ export class MemoryGitHub implements RestTransport {
 
     if (input.method === "GET" && path === "/user") {
       this.userCallCount += 1;
-      return json(200, { login: "colo-planner" });
+      return json(200, { login: "nova-planner" });
     }
     if (seg[0] === "repos" && seg.length >= 3) {
       const rest = seg.slice(3);
@@ -296,7 +296,7 @@ export class MemoryGitHub implements RestTransport {
           const id = this.nextCommentId++;
           const row: MemComment = {
             id,
-            login: "colo-planner",
+            login: "nova-planner",
             body: String(payload.body ?? ""),
             type: "User",
             at: new Date().toISOString(),
@@ -355,7 +355,7 @@ export class MemoryGitHub implements RestTransport {
             const id = this.nextCommentId++;
             const row: MemComment = {
               id,
-              login: "colo-planner",
+              login: "nova-planner",
               body: String(payload.body ?? ""),
               type: "User",
               at: new Date().toISOString(),
@@ -422,7 +422,7 @@ export class MemoryGitHub implements RestTransport {
   private pullJson(pull: MemPull) {
     return {
       number: pull.number,
-      html_url: `https://github.test/colo-design/harness/pull/${pull.number}`,
+      html_url: `https://github.test/nova-design/harness/pull/${pull.number}`,
       title: pull.title,
       // GitHub 은 빈 본문을 null 로 돌려준다 — 클라이언트의 null 판정을
       // 시험이 같은 눈으로 보게 한다.
@@ -459,7 +459,7 @@ export class MemoryGitHub implements RestTransport {
   private issueJson(issue: MemIssue) {
     return {
       number: issue.number,
-      html_url: `https://github.test/colo-design/harness/issues/${issue.number}`,
+      html_url: `https://github.test/nova-design/harness/issues/${issue.number}`,
       title: issue.title,
       body: issue.body,
       state: issue.state,
@@ -518,12 +518,12 @@ export class MemoryGitHub implements RestTransport {
   async merge(number: number, method: "merge" | "squash" = "merge"): Promise<void> {
     const pull = this.pulls.get(number);
     if (pull === undefined) throw new Error(`MemoryGitHub: PR #${number} 이 없습니다`);
-    const tmp = tempRoot("colo-cycle-merge-");
+    const tmp = tempRoot("nova-cycle-merge-");
     try {
       const work = join(tmp.dir, "m");
       await exec("git", ["clone", this.remote.path, work], { cwd: tmp.dir });
       const git = execAt(work);
-      await git(["config", "user.email", "developer@colo-design"]);
+      await git(["config", "user.email", "developer@nova-design"]);
       await git(["config", "user.name", "개발자"]);
       await git(["fetch", "origin", pull.head]);
       // 병합 순간의 PR 브랜치 끝 — 스쿼시 · 리베이스 병합에서도 랜딩의 잣대다(L4).
@@ -643,7 +643,7 @@ export interface DeveloperHands {
 }
 
 export function developer(remote: RemoteRepo): DeveloperHands {
-  const root = tempRoot("colo-cycle-dev-");
+  const root = tempRoot("nova-cycle-dev-");
   const path = join(root.dir, "dev");
   let ready: Promise<void> | null = null;
   const prepare = async () => {
@@ -651,7 +651,7 @@ export function developer(remote: RemoteRepo): DeveloperHands {
       ready = (async () => {
         await exec("git", ["clone", remote.path, path], { cwd: root.dir });
         const git = execAt(path);
-        await git(["config", "user.email", "developer@colo-design"]);
+        await git(["config", "user.email", "developer@nova-design"]);
         await git(["config", "user.name", "개발자"]);
       })();
     }
@@ -827,7 +827,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const remote = await makeRemote();
   const clone = await makeClone(remote);
   const github = new MemoryGitHub(remote);
-  process.env.COLO_DESIGN_GITHUB_SLUG ??= "colo-design/harness";
+  process.env.NOVA_DESIGN_GITHUB_SLUG ??= "nova-design/harness";
   const urlChanges: Array<string | null> = [];
   // PR 본문의 `> 작성:` 줄 — 장면의 authorName 을 워크스페이스도 읽는다.
   let authorOf: () => string | null = () => null;

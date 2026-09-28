@@ -10,15 +10,15 @@
  * 명세는 `node <browser-mcp.js>` 형태다 — MCP stdio는 실행 파일을 요구하므로
  * 스크립트 경로는 args에 실고 command는 node 바이너리를 가린다. 데스크톱 앱
  * 안에서 process.execPath는 Electron이라 node가 아니다: 레포의 다른 자식과
- * 같은 순서(COLO_DESIGN_EXTRA_PATH의 번들 node 먼저 — environment.ts의
+ * 같은 순서(NOVA_DESIGN_EXTRA_PATH의 번들 node 먼저 — environment.ts의
  * resolveNodeVersion 관례)로 가리고, 둘 다 없으면 PATH의 node에 맡긴다.
  */
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** 프로바이더에 등록할 MCP 서버 이름 — claude 도구 이름의 `mcp__colo-browser__*` 접두가 된다. */
-export const BROWSER_MCP_SERVER_NAME = "colo-browser";
+/** 프로바이더에 등록할 MCP 서버 이름 — claude 도구 이름의 `mcp__nova-browser__*` 접두가 된다. */
+export const BROWSER_MCP_SERVER_NAME = "nova-browser";
 
 /** 주입 명세 — LaunchConfig.browserMcp로 세션까지 실려 간다. */
 export interface BrowserMcpEntry {
@@ -38,7 +38,7 @@ const browserMcpScript = (() => {
 /** MCP 자식의 node 바이너리 가리기 — 배포 번들 → 실행 중인 node → PATH 순. */
 function resolveNodeBinary(): string {
   const binary = process.platform === "win32" ? "node.exe" : "node";
-  const extraDirs = (process.env.COLO_DESIGN_EXTRA_PATH ?? "")
+  const extraDirs = (process.env.NOVA_DESIGN_EXTRA_PATH ?? "")
     .split(process.platform === "win32" ? ";" : ":")
     .filter(Boolean)
     .map((dir) => join(dir, binary));
@@ -60,7 +60,7 @@ export function browserMcpEntry(
   /** 이 세션에 submit_for_review 를 실을지 (PLAN L6 · O6 — 프로젝트의
    *  lifecycle.submitFromChat). MCP 자식과 omp 가 같은 env 를 읽는다. */
   submitFromChat: boolean,
-  /** 앱 · 데몬의 버전 — 자식이 serverInfo.version 으로 말한다(COLO_APP_VERSION).
+  /** 앱 · 데몬의 버전 — 자식이 serverInfo.version 으로 말한다(NOVA_APP_VERSION).
    *  모르면 env 도 없고 자식은 "0" 으로 산다. */
   appVersion?: string,
 ): BrowserMcpEntry | null {
@@ -69,13 +69,13 @@ export function browserMcpEntry(
     command: resolveNodeBinary(),
     args: [browserMcpScript],
     env: {
-      COLO_DAEMON_URL: daemonUrl,
-      COLO_BROWSER_SECRET: secret,
+      NOVA_DAEMON_URL: daemonUrl,
+      NOVA_BROWSER_SECRET: secret,
       // execPath 폴백이 Electron 바이너리일 때 node 로 돌게 하는 스위치 —
       // 진짜 node 에게는 무해하다.
       ELECTRON_RUN_AS_NODE: "1",
-      ...(submitFromChat ? { COLO_BROWSER_SUBMIT: "1" } : {}),
-      ...(appVersion ? { COLO_APP_VERSION: appVersion } : {}),
+      ...(submitFromChat ? { NOVA_BROWSER_SUBMIT: "1" } : {}),
+      ...(appVersion ? { NOVA_APP_VERSION: appVersion } : {}),
     },
   };
 }

@@ -6,8 +6,8 @@
  *
  * Layout, one folder per project:
  *
- *   ~/.colo-design/config/projects.json
- *   ~/.colo-design/projects/<slug>/repo/   the clone
+ *   ~/.nova-design/config/projects.json
+ *   ~/.nova-design/projects/<slug>/repo/   the clone
  */
 
 import {
@@ -25,8 +25,8 @@ import {
   type ProjectLifecycle,
   parseProjectDefaults,
   parseProjectLifecycle,
-} from "@colo-design/protocol";
-import { COLO_DESIGN_DIR, CONFIG_DIR } from "./environment.js";
+} from "@nova-design/protocol";
+import { CONFIG_DIR, NOVA_DESIGN_DATA_DIR } from "./environment.js";
 
 export interface ProjectRepo {
   url: string | null;
@@ -89,7 +89,7 @@ export interface Project {
 
 /** Every path a project owns. */
 export interface ProjectPaths {
-  /** `~/.colo-design/projects/<slug>` */
+  /** `~/.nova-design/projects/<slug>` */
   root: string;
   /** The connected repo's clone. */
   repoRoot: string;
@@ -105,13 +105,13 @@ const DEFAULT_BASE_BRANCH = "main";
 /** The slug a pre-projects installation migrates into. */
 const LEGACY_SLUG = "default";
 
-/** `COLO_DESIGN_PROJECTS_SETTINGS` points a test at a throwaway registry. */
+/** `NOVA_DESIGN_PROJECTS_SETTINGS` points a test at a throwaway registry. */
 function projectsFile(env: NodeJS.ProcessEnv = process.env): string {
-  return env.COLO_DESIGN_PROJECTS_SETTINGS ?? join(CONFIG_DIR, "projects.json");
+  return env.NOVA_DESIGN_PROJECTS_SETTINGS ?? join(CONFIG_DIR, "projects.json");
 }
 
 function projectsRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return env.COLO_DESIGN_PROJECTS_DIR ?? join(COLO_DESIGN_DIR, "projects");
+  return env.NOVA_DESIGN_PROJECTS_DIR ?? join(NOVA_DESIGN_DATA_DIR, "projects");
 }
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -122,7 +122,7 @@ function projectsRoot(env: NodeJS.ProcessEnv = process.env): string {
  *
  * Only path-hostile characters are removed — the same set page filenames
  * drop — because the slug becomes a directory a human will one day stare at,
- * and `~/.colo-design/projects/결제/` is findable where `project-2` is not.
+ * and `~/.nova-design/projects/결제/` is findable where `project-2` is not.
  * Every filesystem this ships on stores UTF-8 names.
  *
  * Uniqueness is the caller's set of taken slugs.
@@ -135,7 +135,7 @@ function slugify(name: string, taken: ReadonlySet<string>): string {
       .trim()
       // 점 벗기기는 trim 뒤여야 한다 — " .. " 같은 이름을 trim 전에 벗기면
       // 문자열이 공백으로 시작해 strip 이 비고, slug 가 "." 또는 ".." 로 남아
-      // join 이 projects 부모(=~/.colo-design)를 가리키고, 삭제가 전체를
+      // join 이 projects 부모(=~/.nova-design)를 가리키고, 삭제가 전체를
       // 지우는 자리가 된다.
       .replace(/^\.+/, "")
       .replace(/\s+/g, "-")
@@ -298,7 +298,7 @@ function saveProjectsFile(file: ProjectsFile, env: NodeJS.ProcessEnv = process.e
   } catch {
     // Best effort: the atomic replace below is the real guarantee.
   }
-  const temporary = `${path}.colo-design-${process.pid}`;
+  const temporary = `${path}.nova-design-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, {
     mode: 0o600,
   });
@@ -491,7 +491,7 @@ export class ProjectRegistry {
   /**
    * Where a project's files live.
    *
-   * `COLO_DESIGN_REPO_DIR` overrides the ACTIVE project's clone root and
+   * `NOVA_DESIGN_REPO_DIR` overrides the ACTIVE project's clone root and
    * nothing else. That is how the offline suites keep driving fixture
    * remotes: they run one project, it is the active one, and the path they
    * prepared is the path it uses.
@@ -499,7 +499,7 @@ export class ProjectRegistry {
   paths(slug: string): ProjectPaths {
     const root = join(projectsRoot(this.env), slug);
     const activeOverride = slug === this.file.active;
-    const repoOverride = activeOverride ? this.env.COLO_DESIGN_REPO_DIR : undefined;
+    const repoOverride = activeOverride ? this.env.NOVA_DESIGN_REPO_DIR : undefined;
     return {
       root,
       repoRoot: repoOverride ?? join(root, "repo"),
@@ -509,7 +509,7 @@ export class ProjectRegistry {
   /**
    * The remote the active project's workspace should actually talk to.
    *
-   * `COLO_DESIGN_REPO_URL` wins over the registry for the ACTIVE project, the
+   * `NOVA_DESIGN_REPO_URL` wins over the registry for the ACTIVE project, the
    * same rule the path override follows. It is how the offline suites point a
    * project at a fixture remote — and it has to be applied HERE rather than
    * written into the registry, because the registry is what `update()`
@@ -518,7 +518,7 @@ export class ProjectRegistry {
   resolvedRepo(slug: string): ProjectRepo {
     const project = this.get(slug);
     if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${slug}`);
-    const override = slug === this.file.active ? cleanString(this.env.COLO_DESIGN_REPO_URL) : null;
+    const override = slug === this.file.active ? cleanString(this.env.NOVA_DESIGN_REPO_URL) : null;
     return override ? { ...project.repo, url: override } : project.repo;
   }
 
@@ -561,15 +561,15 @@ export class ProjectRegistry {
 /**
  * Turns a pre-projects installation into the single project it always was.
  *
- * Two shapes arrive here. A real installation has `~/.colo-design/repo`, and
+ * Two shapes arrive here. A real installation has `~/.nova-design/repo`, and
  * that folder MOVES into `projects/default/`. A test (or a dev pointing the
- * daemon at scratch dirs) has `COLO_DESIGN_REPO_DIR` set, and nothing moves at
+ * daemon at scratch dirs) has `NOVA_DESIGN_REPO_DIR` set, and nothing moves at
  * all: `paths()` keeps handing the active project exactly that directory.
  *
  * Migration reads only sources in the SAME configuration scope as the
  * registry it is filling. A run that redirected the registry
- * (`COLO_DESIGN_PROJECTS_SETTINGS`, which every offline suite sets) must not
- * inherit the developer's real `~/.colo-design` — that once produced a scratch
+ * (`NOVA_DESIGN_PROJECTS_SETTINGS`, which every offline suite sets) must not
+ * inherit the developer's real `~/.nova-design` — that once produced a scratch
  * daemon that warm-started a clone of the developer's own remote and reported
  * a project nobody in that run had created.
  *
@@ -578,9 +578,10 @@ export class ProjectRegistry {
  */
 function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null {
   const scoped =
-    env.COLO_DESIGN_PROJECTS_SETTINGS !== undefined || env.COLO_DESIGN_PROJECTS_DIR !== undefined;
-  const legacyRepo = env.COLO_DESIGN_REPO_DIR ?? (scoped ? null : join(COLO_DESIGN_DIR, "repo"));
-  const repoUrl = env.COLO_DESIGN_REPO_URL ?? legacyRepoUrl(env, scoped);
+    env.NOVA_DESIGN_PROJECTS_SETTINGS !== undefined || env.NOVA_DESIGN_PROJECTS_DIR !== undefined;
+  const legacyRepo =
+    env.NOVA_DESIGN_REPO_DIR ?? (scoped ? null : join(NOVA_DESIGN_DATA_DIR, "repo"));
+  const repoUrl = env.NOVA_DESIGN_REPO_URL ?? legacyRepoUrl(env, scoped);
 
   const hasRepo = (legacyRepo !== null && existsSync(legacyRepo)) || repoUrl !== null;
   if (!hasRepo) return null;
@@ -588,7 +589,7 @@ function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null {
   const target = join(projectsRoot(env), LEGACY_SLUG);
   // With the env override in play the legacy path IS the project's path;
   // moving it would break the very run that set it.
-  if (!env.COLO_DESIGN_REPO_DIR && legacyRepo && existsSync(legacyRepo)) {
+  if (!env.NOVA_DESIGN_REPO_DIR && legacyRepo && existsSync(legacyRepo)) {
     moveInto(legacyRepo, join(target, "repo"));
   }
 
@@ -613,7 +614,7 @@ function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null {
 
 /** The url the old single-repo settings file held, if it still exists. */
 function legacyRepoUrl(env: NodeJS.ProcessEnv, scoped: boolean): string | null {
-  const file = env.COLO_DESIGN_REPO_SETTINGS ?? (scoped ? null : join(CONFIG_DIR, "repo.json"));
+  const file = env.NOVA_DESIGN_REPO_SETTINGS ?? (scoped ? null : join(CONFIG_DIR, "repo.json"));
   if (!file) return null;
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -626,7 +627,7 @@ function legacyRepoUrl(env: NodeJS.ProcessEnv, scoped: boolean): string | null {
 /**
  * Moves a legacy folder under the project. A rename across devices fails on
  * some setups (a home directory on a different volume than a symlinked
- * `~/.colo-design`); there the migration is skipped rather than half-copied, and
+ * `~/.nova-design`); there the migration is skipped rather than half-copied, and
  * the project starts empty — a re-clone, not a loss, because the folder is
  * reproducible from its remote.
  */

@@ -1,7 +1,7 @@
 import { readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 import { meaningfulFirstLine } from "../../../common-instructions.js";
 import type { ImportableSession } from "../../driver.js";
 

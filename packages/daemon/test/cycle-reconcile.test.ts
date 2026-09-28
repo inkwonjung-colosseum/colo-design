@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { DeveloperReview } from "@colo-design/protocol";
+import type { DeveloperReview } from "@nova-design/protocol";
 // `../dist` 임포트인 이유: cycle-reconcile 는 형제(budgets)를 `.js` 지정자로
 // 부른다 — src 직접 로드는 그 지정을 못 고친다(revive-budget 와 같은 길).
 import { type CycleLedger, emptyLedger } from "../dist/cycle-ledger.js";
@@ -8,7 +8,7 @@ import { type CycleSnapshot, nextCycleAction } from "../dist/cycle-reconcile.js"
 
 const NOW = Date.parse("2026-09-24T10:00:00.000Z");
 const iso = (ms: number) => new Date(ms).toISOString();
-const BRANCH = "colo-design/20260924-1";
+const BRANCH = "nova-design/20260924-1";
 
 /** 모든 행이 조용한 중립 스냅샷 — 시험마다 필요한 필드만 바꾼다. */
 function snap(over: Partial<CycleSnapshot> = {}): CycleSnapshot {

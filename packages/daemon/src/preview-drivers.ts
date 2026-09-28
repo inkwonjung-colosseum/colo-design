@@ -1,4 +1,4 @@
-import type { HandoffShot, ScreenCheckReport } from "@colo-design/protocol";
+import type { HandoffShot, ScreenCheckReport } from "@nova-design/protocol";
 import { type DaemonNotice, noticeForState } from "./notices.js";
 import type { PreviewDriverFactory } from "./preview-driver.js";
 import type { RepoWorkspace } from "./repo.js";

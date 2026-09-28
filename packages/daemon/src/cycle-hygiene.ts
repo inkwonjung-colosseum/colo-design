@@ -236,14 +236,14 @@ export async function fsckClone(core: RepoCore): Promise<string | null> {
 }
 
 /**
- * 캡처 브랜치의 크기 (O4 — 기록만) — 원격 `colo-design-assets` 끝 트리의 파일
+ * 캡처 브랜치의 크기 (O4 — 기록만) — 원격 `nova-design-assets` 끝 트리의 파일
  * 수와 크기 합. 원격에 그 브랜치가 없으면 null, 원격에 닿지 못했으면
  * undefined(모름 — 호출자는 지난 기록을 지킨다).
  */
 export async function measureAssets(
   core: RepoCore,
 ): Promise<{ files: number; bytes: number } | null | undefined> {
-  // 전체 ref 이름으로 묻는다 — 짧은 이름은 꼬리 일치라 `x/colo-design-assets` 도 잡는다.
+  // 전체 ref 이름으로 묻는다 — 짧은 이름은 꼬리 일치라 `x/nova-design-assets` 도 잡는다.
   const listed = await core
     .git(["ls-remote", "origin", `refs/heads/${ASSETS_BRANCH}`])
     .catch(() => undefined);

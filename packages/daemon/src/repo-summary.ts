@@ -3,7 +3,7 @@
 // the turn answered for.
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DiffFile, RepoHandoffDraft } from "@colo-design/protocol";
+import type { DiffFile, RepoHandoffDraft } from "@nova-design/protocol";
 import { readComments } from "./comments.js";
 import { buildCommentsSection, buildFilesSection } from "./handoff-body.js";
 import { type MachineTurn, NO_MACHINE_TURN } from "./machine-provider.js";

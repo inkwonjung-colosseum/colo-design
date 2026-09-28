@@ -1,12 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PlanUsage, PlanWindow, SessionModelInfo } from "@colo-design/protocol";
+import type { PlanUsage, PlanWindow, SessionModelInfo } from "@nova-design/protocol";
 import { CONFIG_DIR } from "./environment.js";
 import type { Session } from "./session.js";
 
 /** Where the last plan-limit readings wait for the next start. */
 function planUsageFile(env: NodeJS.ProcessEnv = process.env): string {
-  return env.COLO_DESIGN_PLAN_USAGE ?? join(CONFIG_DIR, "plan-usage.json");
+  return env.NOVA_DESIGN_PLAN_USAGE ?? join(CONFIG_DIR, "plan-usage.json");
 }
 /** Where the model picker's rows wait for the next start. */
 const MODEL_CATALOG_FILE = join(CONFIG_DIR, "model-catalog.json");
@@ -66,7 +66,7 @@ export interface PlanTrackerDeps {
 /**
  * Whether a session-less catalog read may start now — the pure timekeeper
  * behind `PlanTracker.refreshModels`, whose constructor reads and writes
- * `~/.colo-design/config`, so the tests measure this instead. The rules it
+ * `~/.nova-design/config`, so the tests measure this instead. The rules it
  * keeps for every provider: a read already running is not doubled; one that
  * answered with rows is never asked again this run (the cache owns the rest);
  * one that failed or came back empty waits out `retryMs` — a machine without

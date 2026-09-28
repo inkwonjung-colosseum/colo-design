@@ -1,4 +1,4 @@
-import type { RepoHistoryEntry, RepoStatus } from "@colo-design/protocol";
+import type { RepoHistoryEntry, RepoStatus } from "@nova-design/protocol";
 import { Fragment, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
@@ -75,7 +75,7 @@ export function HistoryDrawer({
       .then((next) => !cancelled && setEntries(next.entries))
       .catch((cause) => {
         if (cancelled) return;
-        console.error("[colo-design] history read", cause);
+        console.error("[nova-design] history read", cause);
         setError(L.history.readFailed);
       });
     return () => {
@@ -140,7 +140,7 @@ export function HistoryDrawer({
         await api.repoStatus().catch(() => undefined);
         setTick((n) => n + 1);
       } catch (cause) {
-        console.error("[colo-design] restore", cause);
+        console.error("[nova-design] restore", cause);
         setError(L.history.restoreFailed);
       } finally {
         setRestoring(null);

@@ -1,5 +1,5 @@
 // 시점 빌드 재현: 보낸 화면 동결의 2번째 얼굴. 1단계가
-// 커밋된 캡처(.colo-design/shots/)를 보여준다면, 이 모듈은 '넘긴 시점의 실제
+// 커밋된 캡처(.nova-design/shots/)를 보여준다면, 이 모듈은 '넘긴 시점의 실제
 // 빌드'를 띄운다 — 열린 넘김의 브랜치 꼭지를 별도 워크트리에 체크아웃하고,
 // 레포가 선언한 미리보기 명령을 그 워크트리에서 두 번째 포트로 띄운다.
 //
@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import type { HandoffPreviewInfo, HandoffStatus } from "@colo-design/protocol";
+import type { HandoffPreviewInfo, HandoffStatus } from "@nova-design/protocol";
 import { extraPathPrefix } from "./claude-trust.js";
 import { currentPlatform, resolveGitExecutable } from "./environment.js";
 import { descendantPids, killTree, pidListeningPorts, probePreviewUrl } from "./preview-claim.js";
@@ -37,7 +37,7 @@ export type HandoffPreviewSource = () => {
   slug: string;
   /** The clone — git worktree add reads its object store and refs. */
   repoRoot: string;
-  /** `~/.colo-design/projects/<slug>` — the worktree's home, outside the clone. */
+  /** `~/.nova-design/projects/<slug>` — the worktree's home, outside the clone. */
   projectRoot: string;
   /** The resolved preview contract — the command the worktree serves with. */
   previewCommand: string | null;
@@ -48,7 +48,7 @@ export type HandoffPreviewSource = () => {
 } | null;
 
 /** 브랜치 꼭지 판정의 준비 대기 — 본 미리보기와 같은 벽시계 상한. */
-const READY_TIMEOUT_MS = Number(process.env.COLO_DESIGN_READY_TIMEOUT_MS) || 120_000;
+const READY_TIMEOUT_MS = Number(process.env.NOVA_DESIGN_READY_TIMEOUT_MS) || 120_000;
 /** 마지막 open() 뒤의 유휭 수명 — 위 수명 규칙 3번. */
 const IDLE_TTL_MS = 15 * 60_000;
 
@@ -325,7 +325,7 @@ export class HandoffPreviews {
         ...(hint === undefined ? {} : { PORT: String(hint) }),
         // 미리보기는 절대 과금 키를 물려받지 않는다 (본 미리보기와 같은 규율).
         ANTHROPIC_API_KEY: undefined,
-        PATH: extraPathPrefix(process.env.COLO_DESIGN_EXTRA_PATH),
+        PATH: extraPathPrefix(process.env.NOVA_DESIGN_EXTRA_PATH),
       },
     });
     live.child = child;

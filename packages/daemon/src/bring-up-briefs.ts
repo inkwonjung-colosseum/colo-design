@@ -13,7 +13,7 @@
  * 상태 하나를 받아 다음 장부와 결정을 돌려주는 순수 함수다 — fleet 은
  * 부작용(대화 열기 · 개발자 알림)만 진다.
  */
-import type { RepoStatus } from "@colo-design/protocol";
+import type { RepoStatus } from "@nova-design/protocol";
 
 /**
  * 같은 단계의 준비 실패를 AI 에게 넘기는 횟수 — 첫 브리프와, 고친 뒤에도 또

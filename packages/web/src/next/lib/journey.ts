@@ -1,4 +1,4 @@
-import type { DiffStatus, HandoffStatus, RepoStatus } from "@colo-design/protocol";
+import type { DiffStatus, HandoffStatus, RepoStatus } from "@nova-design/protocol";
 import type { L } from "../labels";
 import type { SubmitCopy } from "./submit-copy";
 

@@ -4,7 +4,7 @@
  * next.css→chat.css)를 올린다. `vite build` 의 입력은 index.html 뿐이라 제품에
  * 실리지 않고, tsconfig 가 dev/ 를 보지 않는다.
  *
- *   pnpm --filter @colo-design/web exec vite --port 29185 --strictPort
+ *   pnpm --filter @nova-design/web exec vite --port 29185 --strictPort
  *   → http://127.0.0.1:29185/dev/chip-fixture.html
  *
  * 벌 a–e 는 묶음 D 의 검수 항목: next 의 카드 · 켜짐 · 막힘 이유 · 받지 않는
@@ -12,7 +12,7 @@
  * 포커스하면 뜬다.
  */
 
-import type { SessionModelInfo } from "@colo-design/protocol";
+import type { SessionModelInfo } from "@nova-design/protocol";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import type { ChipTarget, Sessions } from "../src/hooks/useSessions";

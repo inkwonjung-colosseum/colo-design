@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 // `../dist` 임포트인 이유: session 은 형제(.js 지정자)를 부른다 — src 직접
 // 로드는 그 지정을 못 고친다(revive-budget 와 같은 길). 가짜 전송(agent)을
 // 붙여 세션의 자기치유 상태 기계만을 몬다 — CLI 는 없다.

@@ -1,4 +1,4 @@
-import type { ThreadSummary } from "@colo-design/protocol";
+import type { ThreadSummary } from "@nova-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Palette } from "../components/shell/Palette";
 import { Splitter } from "../components/shell/Splitter";

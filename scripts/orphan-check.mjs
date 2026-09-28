@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // orphan-check — PLAN-CRASH-PROCESS.md §3.B 의 재현 도구.
-// `before` 로 프로세스 스냅샷을 ~/.colo-design/logs/orphan-before.json 에 적고,
+// `before` 로 프로세스 스냅샷을 ~/.nova-design/logs/orphan-before.json 에 적고,
 // 시나리오(Stop · 창 닫기 · 강제 종료) 뒤 `after` 로 새로 생긴 claude · codex · omp ·
 // node · 셸 계열 프로세스를 표로 낸다. before 와 after 사이에 이 도구는 아무것도
 // 하지 않는다 — 재현 결과가 도구 자신으로 오염되지 않는다.
@@ -10,7 +10,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-const SNAPSHOT_PATH = join(homedir(), ".colo-design", "logs", "orphan-before.json");
+// 독립 실행 스크립트라 데몬 모듈을 가져오지 않는다 — 경로 표기는 홀로 남는다
+// (environment.ts 의 NOVA_DESIGN_DATA_DIR 과 같은 값을 가리킨다).
+const SNAPSHOT_PATH = join(homedir(), ".nova-design", "logs", "orphan-before.json");
 const WATCH_NAMES = new Set([
   "claude",
   "codex",

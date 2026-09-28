@@ -9,7 +9,7 @@ import {
   readInviteJson,
   repoKey,
   sameRepo,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import type { Daemon } from "./daemon-client";
 
 /**
@@ -22,10 +22,14 @@ import type { Daemon } from "./daemon-client";
 export async function readInviteFile(
   file: File,
 ): Promise<{ ok: true; invite: NormalizedInvite } | { ok: false; error: string }> {
-  if (!file.name.endsWith(".colo-invite")) {
+  // 개명 1단계(§4.3) — 새 확장자와 옛 확장자를 다 읽는다. 화면은 확장자를 말하지 않는다.
+  if (
+    !file.name.endsWith(".nova-invite") &&
+    !file.name.endsWith(".colo-invite") // read-legacy — 옛 확장자도 연다
+  ) {
     return {
       ok: false,
-      error: "초대 파일(.colo-invite)이 아닙니다 — 개발자가 보낸 파일을 선택해 주세요.",
+      error: "초대 파일이 아닙니다 — 개발자가 보낸 파일을 선택해 주세요.",
     };
   }
   const read = await readInviteJson(await file.text());

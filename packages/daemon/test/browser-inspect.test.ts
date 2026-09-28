@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import type { ColoDesignCommentTarget } from "@colo-design/protocol";
+import type { NovaDesignCommentTarget } from "@nova-design/protocol";
 import {
   IDENTITY_NAME_LIMIT,
   IDENTITY_PATH_LIMIT,
@@ -17,8 +17,8 @@ import { enrichIdentity, type IdentityFiles } from "../dist/pin-files.js";
 
 /** 임시 클론(파일 → 내용)과 프로젝트 폴더 — 관찰 지도는 projectRoot 에 산다. */
 function makeClone(files: Record<string, string>): { root: string; projectRoot: string } {
-  const root = mkdtempSync(join(tmpdir(), "colo-inspect-clone-"));
-  const projectRoot = mkdtempSync(join(tmpdir(), "colo-inspect-project-"));
+  const root = mkdtempSync(join(tmpdir(), "nova-inspect-clone-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), "nova-inspect-project-"));
   for (const [rel, content] of Object.entries(files)) {
     const file = join(root, rel);
     mkdirSync(dirname(file), { recursive: true });
@@ -31,7 +31,7 @@ function makeClone(files: Record<string, string>): { root: string; projectRoot: 
 const EMPTY: IdentityFiles = { candidates: [], observed: false };
 
 test("renderIdentity — 온전한 정체는 예시의 줄 순서를 그대로 잇는다", () => {
-  const element: ColoDesignCommentTarget = {
+  const element: NovaDesignCommentTarget = {
     component: "button",
     text: "검색",
     path: "body > main > form > button",
@@ -69,14 +69,14 @@ test("renderIdentity — 온전한 정체는 예시의 줄 순서를 그대로 �
 
 test("renderIdentity — 없는 칸은 줄째 빠지고 관찰 후보는 표식을 단다", () => {
   // 영역 핀처럼 경로조차 없는 정체 — 요소 줄 하나만 남는다.
-  const bare: ColoDesignCommentTarget = {
+  const bare: NovaDesignCommentTarget = {
     component: "div",
     text: "",
     path: "",
     rect: { x: 0, y: 0, width: 10, height: 10 },
   };
   assert.equal(renderIdentity(bare, EMPTY), "요소: div");
-  const withPath: ColoDesignCommentTarget = {
+  const withPath: NovaDesignCommentTarget = {
     component: "div",
     text: "",
     path: "body > div",
@@ -91,7 +91,7 @@ test("renderIdentity — 없는 칸은 줄째 빠지고 관찰 후보는 표식�
 test("renderIdentity — 긴 값은 자른다(이름 · 경로 · 스타일 값)", () => {
   const longName = "가".repeat(IDENTITY_NAME_LIMIT + 30);
   const longPath = `${"div > ".repeat(60)}span`;
-  const element: ColoDesignCommentTarget = {
+  const element: NovaDesignCommentTarget = {
     component: "span",
     text: longName,
     path: longPath,

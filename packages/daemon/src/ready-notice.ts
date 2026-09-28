@@ -1,4 +1,4 @@
-import type { RepoPhase } from "@colo-design/protocol";
+import type { RepoPhase } from "@nova-design/protocol";
 
 /**
  * 처음 여는 프로젝트의 준비가 배경에서 끝났는가(PLAN-UI U8 · P5) — 상태가

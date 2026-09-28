@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { composeAttention } from "@colo-design/protocol";
+import { composeAttention } from "@nova-design/protocol";
 
 // 요약 대화 기록은 Claude 의 설정 폴더에 산다 — 시험이 사용자의 ~/.claude 를
 // 건드리지 않게 이 프로세스의 것을 임시 폴더로 돌린다(시험 파일마다 프로세스가
 // 따로 돈다).
-process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "colo-hygiene-claude-"));
+process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "nova-hygiene-claude-"));
 
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-observe.test.ts 와 같은 길).
@@ -85,7 +85,7 @@ test("endedBranchesDue — 반려는 keepDays 뒤, 표식 없는 병합 기록�
       name: "merged-deferred",
       endedAt: iso(T0),
       state: "merged",
-      deleteRemoteAfterPush: "colo-design/20260902-1",
+      deleteRemoteAfterPush: "nova-design/20260902-1",
     },
   ];
   const at13 = endedBranchesDue(branches, 14, T0 + 13 * DAY);
@@ -138,21 +138,21 @@ test("movedRepoUrl — owner/repo 자리만 바꾸고 나머지 철자는 그대
 test("반려 브랜치 — keepRejectedDays 전에는 남고, 뒤에는 로컬 · 원격 · 원장에서 사라진다", async () => {
   const scene = await makeSupervisedScene();
   try {
-    const name = "colo-design/20260901-1";
+    const name = "nova-design/20260901-1";
     await scene.dev.pushToBranch(name, { "src/rejected.ts": "반려된 작업\n" }, "반려된 작업");
     await scene.git(["fetch", "origin"]);
     // 랜딩은 로컬을 이미 지운다 — 남아 있는 세계도 치우는지 보려고 되살린다.
     await scene.git(["branch", name, `origin/${name}`]);
     const deferred = {
-      name: "colo-design/20260901-2",
+      name: "nova-design/20260901-2",
       endedAt: iso(T0),
       state: "merged" as const,
-      deleteRemoteAfterPush: "colo-design/20260901-3",
+      deleteRemoteAfterPush: "nova-design/20260901-3",
     };
     const supervisor = seedLedger(scene, {
       branches: [
         { name, endedAt: iso(T0), state: "closed" },
-        { name: "colo-design/20260831-1", endedAt: iso(T0), state: "merged" },
+        { name: "nova-design/20260831-1", endedAt: iso(T0), state: "merged" },
         deferred,
       ],
     });
@@ -177,7 +177,7 @@ test("반려 브랜치 — keepRejectedDays 전에는 남고, 뒤에는 로컬 �
 test("반려 브랜치 — 원격에 닿지 못하면 원장에 남기고 다음 날 다시 지운다", async () => {
   const scene = await makeSupervisedScene();
   try {
-    const name = "colo-design/20260901-1";
+    const name = "nova-design/20260901-1";
     await scene.dev.pushToBranch(name, { "src/rejected.ts": "반려된 작업\n" }, "반려된 작업");
     const supervisor = seedLedger(scene, {
       branches: [{ name, endedAt: iso(T0), state: "closed" }],
@@ -245,7 +245,7 @@ test("임시 폴더 — 요약 폴더 · 요약 대화 기록 · 첨부 중 7일
     // /var → /private/var 처럼 철자가 달라지므로 폴더를 먼저 만든다.
     mkdirSync(summary, { recursive: true });
     const transcripts = claudeTranscriptDir(summary);
-    const attachments = join(scene.clone.path, ".git", "colo-design-attachments");
+    const attachments = join(scene.clone.path, ".git", "nova-design-attachments");
     aged(join(summary, "old.txt"), "지난 요약", 8 * DAY);
     aged(join(summary, "new.txt"), "오늘 요약", DAY);
     aged(join(transcripts, "old.jsonl"), "{}", 8 * DAY);
@@ -270,7 +270,7 @@ test("캡처 브랜치 — 원격에 있으면 파일 수 · 크기를 적고, �
   const scene = await makeSupervisedScene();
   try {
     await scene.dev.pushToBranch(
-      "colo-design-assets",
+      "nova-design-assets",
       { "shots/a/x.png": "0123456789", "shots/a/y.png": "01234567890123456789" },
       "캡처",
     );
@@ -283,9 +283,9 @@ test("캡처 브랜치 — 원격에 있으면 파일 수 · 크기를 적고, �
       bytes: readme + 10 + 20,
     });
     // 정리는 하지 않는다 — 원격 브랜치는 그대로다.
-    assert.equal(await remoteHas(scene, "colo-design-assets"), true);
+    assert.equal(await remoteHas(scene, "nova-design-assets"), true);
 
-    await exec("git", ["-C", scene.remote.path, "branch", "-D", "colo-design-assets"]);
+    await exec("git", ["-C", scene.remote.path, "branch", "-D", "nova-design-assets"]);
     scene.setNow(T0 + 7 * DAY);
     await scene.supervisor.tick("manual");
     assert.equal(readLedger(scene.ledgerPath).hygiene.assets, undefined);
@@ -301,16 +301,16 @@ test("저장소 이동 — full_name 이 바뀌면 origin 과 레지스트리 �
     // 레지스트리의 주소는 GitHub 모양이고, 클론의 origin 은 하네스의 로컬 원격이다.
     // 이동을 알아본 뒤에는 origin 이 github.com 을 가리키므로, 이 시험은 그 뒤
     // fetch 하는 틱을 부르지 않는다 — 시험이 실제 네트워크에 닿지 않게.
-    scene.core.url = "https://github.com/colo-design/harness.git";
+    scene.core.url = "https://github.com/nova-design/harness.git";
     // 다시 클론하면 사라지는 표식 — .git 안의 파일.
     const canary = join(scene.clone.path, ".git", "reclone-canary");
     writeFileSync(canary, "살아 있다");
     const head = (await scene.git(["rev-parse", "HEAD"])).trim();
-    scene.github.moveRepo("colo-moved/harness-renamed");
+    scene.github.moveRepo("nova-moved/harness-renamed");
 
     scene.setNow(T0);
     await scene.supervisor.tick("manual");
-    const moved = "https://github.com/colo-moved/harness-renamed.git";
+    const moved = "https://github.com/nova-moved/harness-renamed.git";
     assert.equal((await scene.git(["remote", "get-url", "origin"])).trim(), moved);
     assert.equal(scene.core.url, moved);
     assert.deepEqual(scene.urlChanges, [moved], "레지스트리의 주소가 한 번 옮겨져야 한다");

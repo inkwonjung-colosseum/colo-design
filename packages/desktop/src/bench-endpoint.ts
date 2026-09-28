@@ -1,6 +1,6 @@
 /**
  * 재생 벤치(PLAN-HARNESS §3.A)의 접속 파일 — 개발 실행(`pnpm dev:desktop`)이
- * `COLO_DESIGN_BENCH_ENDPOINT` 가 가리키는 파일에 데몬의 ws 주소를 한 줄로
+ * `NOVA_DESIGN_BENCH_ENDPOINT` 가 가리키는 파일에 데몬의 ws 주소를 한 줄로
  * 적어 두면, `scripts/bench` 의 클라이언트가 그 파일을 읽고 접속한다.
  * 패키징된 앱은 절대 쓰지 않는다 — 이 문은 개발 도구만을 위한 문이다.
  * electron 을 임포트하지 않는 순수 파일이다 — 데몬 쪽 시험이 이 파일을
@@ -10,7 +10,7 @@
 /** 적을 파일 — 패키징된 앱이거나 env 가 없으면 null. */
 export function benchEndpointPath(env: NodeJS.ProcessEnv, isPackaged: boolean): string | null {
   if (isPackaged) return null;
-  const file = env.COLO_DESIGN_BENCH_ENDPOINT?.trim();
+  const file = env.NOVA_DESIGN_BENCH_ENDPOINT?.trim();
   return file ? file : null;
 }
 

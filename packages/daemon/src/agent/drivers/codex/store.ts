@@ -2,7 +2,7 @@ import type { Dirent } from "node:fs";
 import { type FileHandle, open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 
 type Wire = Record<string, any>;
 

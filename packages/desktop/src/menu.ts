@@ -1,4 +1,4 @@
-import { APP_SHORTCUTS } from "@colo-design/protocol";
+import { APP_SHORTCUTS } from "@nova-design/protocol";
 import type { MenuItemConstructorOptions } from "electron";
 
 /**
@@ -101,7 +101,7 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
   // hide · hideOthers · unhide · about 는 mac 전용 역할이다 — 다른 OS 에서는
   // 아무 일도 하지 않는 죽은 항목으로 렌더되므로 mac 에서만 싣는다.
   const appMenu: MenuItemConstructorOptions = {
-    label: "Colo Design",
+    label: "Nova Design",
     submenu: [
       ...(platform === "darwin" ? [{ role: "about" } as MenuItemConstructorOptions] : []),
       item("new-session"),

@@ -6,6 +6,7 @@ import { createCredentialStore, loadRepoPat, migratePlaintextSecrets } from "./c
 import { buildStatus, CONFIG_DIR, childPath, resolveClaudeExecutable } from "./environment.js";
 import { createGitHubTransport, GitHubClient } from "./github.js";
 import { createFileLogger } from "./log.js";
+import { migrateLegacyDataHome, warnLegacyEnv } from "./migrate-home.js";
 import { runOnboardingChecks } from "./onboarding.js";
 import { ProjectRegistry } from "./projects.js";
 import { RepoWorkspace } from "./repo.js";
@@ -40,7 +41,7 @@ function loadConfig(): StoredConfig {
   mkdirSync(CONFIG_DIR, { recursive: true });
   // A second daemon on the same machine — an end-to-end suite while the user's
   // own daemon is running — needs a port of its own or it dies on bind.
-  const override = Number(process.env.COLO_DESIGN_PORT);
+  const override = Number(process.env.NOVA_DESIGN_PORT);
   if (existsSync(CONFIG_FILE)) {
     try {
       const stored = JSON.parse(readFileSync(CONFIG_FILE, "utf8")) as StoredConfig;
@@ -126,6 +127,11 @@ async function main(): Promise<void> {
   // here so children inherit it instead of each spawn site remembering.
   process.env.PATH = childPath();
 
+  // 0.4.0 저장 위치 이주(RENAME-NOVA-PLAN §3.3) — CONFIG_DIR 를 읽는 그
+  // 무엇(doctor 의 레지스트리 · loadConfig)보다 먼저. 실패해도 여기서 죽지
+  // 않는다 — 남은 이주는 다음 실행이 다시 시도한다.
+  const migration = migrateLegacyDataHome();
+
   const command = process.argv[2];
 
   if (command === "doctor") {
@@ -138,17 +144,19 @@ async function main(): Promise<void> {
   // 저장된 주소가 살아 있으면 그 데몬의 기계이므로 여기서 물러난다. 환경 변수로
   // 포트를 정하는 e2e 스위트의 자기 데몬은 이 검사의 밖에 둔다.
   if (
-    !process.env.COLO_DESIGN_PORT &&
+    !process.env.NOVA_DESIGN_PORT &&
     hadStoredConfig &&
     (await daemonHealthy(config.host, config.port))
   ) {
     console.log(
-      `colo-design daemon 이 이미 http://${config.host}:${config.port} 에서 돌고 있습니다 — 새 인스턴스를 시작하지 않습니다.`,
+      `nova-design daemon 이 이미 http://${config.host}:${config.port} 에서 돌고 있습니다 — 새 인스턴스를 시작하지 않습니다.`,
     );
     process.exit(0);
   }
 
   const logger = createFileLogger();
+  for (const line of migration.notes) logger.warn(line);
+  warnLegacyEnv(process.env, (line) => logger.warn(line));
   process.on("uncaughtException", (error) => logger.error("미처리 예외", { err: error }));
   process.on("unhandledRejection", (reason) =>
     logger.error("미처리 거부", { err: reason instanceof Error ? reason : String(reason) }),
@@ -162,7 +170,7 @@ async function main(): Promise<void> {
     appVersion: daemonVersion(),
     // 개발용 에이전트(omp)는 이 변수로만 열린다 — 브라우저 개발
     // 경로(`pnpm dev:daemon`)가 켠다. 데스크톱은 자기 `app.isPackaged` 로 정한다.
-    devAgents: process.env.COLO_DESIGN_DEV_AGENTS === "1",
+    devAgents: process.env.NOVA_DESIGN_DEV_AGENTS === "1",
   });
   try {
     await server.start();
@@ -171,7 +179,7 @@ async function main(): Promise<void> {
       console.error(
         `포트 ${config.port}를 다른 프로그램이 이미 써서 데몬을 시작하지 못했습니다 — ` +
           `daemon.json 이 오래된 주소를 가리키거나 다른 프로그램이 그 포트를 쓰고 있을 수 있습니다. ` +
-          `그 프로그램을 끊거나 COLO_DESIGN_PORT 로 다른 포트를 정해 시작해 주세요.`,
+          `그 프로그램을 끊거나 NOVA_DESIGN_PORT 로 다른 포트를 정해 시작해 주세요.`,
       );
       process.exit(1);
     }
@@ -179,7 +187,7 @@ async function main(): Promise<void> {
   }
 
   const url = `ws://${config.host}:${config.port}?token=${config.token}`;
-  console.log(`colo-design daemon listening on http://${config.host}:${config.port}`);
+  console.log(`nova-design daemon listening on http://${config.host}:${config.port}`);
   console.log(`client url: ${url}`);
   console.log(`config: ${CONFIG_FILE}`);
 

@@ -1,4 +1,4 @@
-import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
+import type { NovaDesignPinEnvelope, NovaDesignPinsSync } from "@nova-design/protocol";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { PreviewFrame, type PreviewOverlaySkin } from "../../components/preview/PreviewFrame";
 import type { PreviewLocation, PreviewTarget } from "../../components/preview/types";
@@ -17,7 +17,7 @@ export interface StageError {
 
 /** 데스크톱의 `<webview>` 무대인가 — 브라우저 개발 경로는 iframe 이다. */
 export function nativePreview(): boolean {
-  return Boolean(window.coloDesignDesktop?.preview?.native);
+  return Boolean(window.novaDesignDesktop?.preview?.native);
 }
 
 /**
@@ -63,9 +63,9 @@ export function PreviewHost({
   overlaySkin: PreviewOverlaySkin;
   /** 답이 끝나 화면이 옮겨 간 순간의 신호 — 오를 때마다 빛줄기가 한 번 훑는다. */
   sweep: number;
-  sync: ColoDesignPinsSync;
+  sync: NovaDesignPinsSync;
   location: PreviewLocation | null;
-  onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
+  onPin: (pin: NovaDesignPinEnvelope["pin"]) => void;
   onPinFocus: (id: string) => void;
   onLocation: (location: PreviewLocation | null) => void;
   onZoom: (factor: number) => void;
@@ -82,7 +82,7 @@ export function PreviewHost({
 
   // 데스크톱의 로딩 신호 — PreviewFrame 은 이 선로를 구독하지 않으므로 여기서 한 번.
   useEffect(() => {
-    const bridge = window.coloDesignDesktop?.preview;
+    const bridge = window.novaDesignDesktop?.preview;
     return bridge?.onLoading?.((payload) => setLoading(payload.on));
   }, []);
 

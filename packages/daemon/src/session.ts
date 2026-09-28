@@ -13,8 +13,8 @@ import type {
   SessionCommand,
   SessionSelectors,
   SessionState,
-} from "@colo-design/protocol";
-import { readTurn } from "@colo-design/protocol";
+} from "@nova-design/protocol";
+import { readTurn } from "@nova-design/protocol";
 import type { AgentSession, DriverHooks, PermissionVerdict, ToolClass } from "./agent/driver.js";
 import { GIT_WRITE_REFUSAL, gitWriteDenied } from "./git-guard.js";
 import { containsPath, realpathBestEffort } from "./paths.js";

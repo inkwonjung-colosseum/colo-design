@@ -7,7 +7,7 @@
  * 엔드포인트로 중계할 뿐이다. 상태 없음: 탭과 스냅샷의 진실은 데몬과 pane이
  * 소유하고, 여기는 와이어 번역만 한다.
  *
- * - env: COLO_DAEMON_URL (예: http://127.0.0.1:7823), COLO_BROWSER_SECRET
+ * - env: NOVA_DAEMON_URL (예: http://127.0.0.1:7823), NOVA_BROWSER_SECRET
  *   (세션별 시크릿 — 데몬이 세션을 열 때 발급한다). 시크릿이 세션 스코프라
  *   이 프로세스는 자기 세션의 브라우저만 본다.
  * - 프로토콜: stdio 위 줄 단위 JSON-RPC 2.0 — initialize,
@@ -32,17 +32,17 @@ import {
   type Wire,
 } from "./browser-tools.js";
 
-const daemonUrl = process.env.COLO_DAEMON_URL;
-const secret = process.env.COLO_BROWSER_SECRET;
+const daemonUrl = process.env.NOVA_DAEMON_URL;
+const secret = process.env.NOVA_BROWSER_SECRET;
 /**
- * 이 세션에 실리는 도구 — `submit_for_review` 는 COLO_BROWSER_SUBMIT 이
+ * 이 세션에 실리는 도구 — `submit_for_review` 는 NOVA_BROWSER_SUBMIT 이
  * 켜진 세션(프로젝트의 lifecycle.submitFromChat, PLAN L6 · O6)에만 한다.
  * 서버가 세션을 열 때 같은 판정을 내려 env 로 실었다.
  */
-const TOOLS = browserTools(process.env.COLO_BROWSER_SUBMIT === "1");
+const TOOLS = browserTools(process.env.NOVA_BROWSER_SUBMIT === "1");
 if (!daemonUrl || !secret) {
   console.error(
-    "COLO_DAEMON_URL·COLO_BROWSER_SECRET 환경 변수가 필요하다 — 이 프로세스는 데몬이 띄우는 MCP 자식이다.",
+    "NOVA_DAEMON_URL·NOVA_BROWSER_SECRET 환경 변수가 필요하다 — 이 프로세스는 데몬이 띄우는 MCP 자식이다.",
   );
   process.exit(1);
 }
@@ -73,13 +73,13 @@ async function handle(message: Wire): Promise<void> {
           typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05",
         capabilities: { tools: {} },
         serverInfo: {
-          // 이름은 도구 이름의 접두(mcp__colo-browser__*)라 바꾸지 않는다 —
+          // 이름은 도구 이름의 접두(mcp__nova-browser__*)라 바꾸지 않는다 —
           // screen_check · screen_files 같은 브라우저가 아닌 도구도 이 서버가
           // 실어 준다(PLAN-MCP §4). 타이틀이 그 어색함을 말하는 자리다.
           // 버전은 데몬이 env 로 싣는 앱 · 데몬의 것 — 모르면 "0" 이다.
-          name: "colo-browser",
+          name: "nova-browser",
           title: "콜로디자인 도구",
-          version: process.env.COLO_APP_VERSION || "0",
+          version: process.env.NOVA_APP_VERSION || "0",
         },
         instructions:
           "인앱 브라우저 도구 — 사용자가 보고 있는 페이지를 드라이브한다. browser_snapshot의 ref로 " +

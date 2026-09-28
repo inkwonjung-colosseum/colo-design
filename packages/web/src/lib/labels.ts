@@ -1,6 +1,6 @@
-import type { RepoStatus } from "@colo-design/protocol";
+import type { RepoStatus } from "@nova-design/protocol";
 
-export { toolLabel } from "@colo-design/protocol";
+export { toolLabel } from "@nova-design/protocol";
 
 /** The commands the clone resolved to, as RepoStatus carries them. */
 type RepoCommands = NonNullable<RepoStatus["commands"]>;

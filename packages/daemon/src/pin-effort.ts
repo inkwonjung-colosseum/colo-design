@@ -1,6 +1,6 @@
 /**
  * 핀 턴의 첫 자세 (2' 측정, 2026-09-20): 대화가 핀으로 시작하면 노력을
- * `COLO_DESIGN_PIN_EFFORT` 로 정한다 — 기본값은 꺼짐(환경변수가 없으면 아무
+ * `NOVA_DESIGN_PIN_EFFORT` 로 정한다 — 기본값은 꺼짐(환경변수가 없으면 아무
  * 일도 일어나지 않는다). 턴 종류별 자세의 첫 조각이고, 판정은 턴 통계
  * (firstEditMs · 총 시간 · 교정률)가 대는 길에서만 한다.
  *
@@ -10,10 +10,10 @@
  * (selectedEffort === null) 손을 댄다. `low` 는 거절한다 — "스스로 알아내는
  * 대신 사용자에게 묻는" 쪽으로 기울어 비개발자에게 질문 카드를 늘린다.
  */
-import { type EffortLevel, effortLevelSchema } from "@colo-design/protocol";
+import { type EffortLevel, effortLevelSchema } from "@nova-design/protocol";
 
 /** 환경변수 이름 — 벤치(--pin-effort)가 같은 이름을 쥔다. */
-export const PIN_EFFORT_ENV = "COLO_DESIGN_PIN_EFFORT";
+export const PIN_EFFORT_ENV = "NOVA_DESIGN_PIN_EFFORT";
 
 /** 판정의 재료 — 세션이 아는 것만, 읽기 쉽게. */
 export interface PinEffortInput {

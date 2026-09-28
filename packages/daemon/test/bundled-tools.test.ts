@@ -15,7 +15,7 @@ const existsOf =
 // ---------------------------------------------------------------------------
 
 test("번들 git 이 있으면 PATH 앞자리와 두 변수를 내놓는다 (darwin)", () => {
-  const bin = "/Applications/Colo Design.app/Contents/Resources/bin";
+  const bin = "/Applications/Nova Design.app/Contents/Resources/bin";
   const env = bundledToolEnv(bin, "darwin", {}, existsOf([join(bin, "git", "bin", "git")]));
   assert.deepEqual(env.pathPrefixes, [join(bin, "git", "bin")]);
   assert.equal(env.env.GIT_EXEC_PATH, join(bin, "git", "libexec", "git-core"));
@@ -47,7 +47,7 @@ test("번들이 있으면 기존 변수를 덮어쓴다 (darwin) — exec path �
 // ---------------------------------------------------------------------------
 
 test("번들 bash.exe 가 있으면 CLAUDE_CODE_GIT_BASH_PATH 를 세운다 (win32)", () => {
-  const bin = "C:\\Apps\\Colo Design\\resources\\bin";
+  const bin = "C:\\Apps\\Nova Design\\resources\\bin";
   const bash = join(bin, "usr", "bin", "bash.exe");
   const env = bundledToolEnv(bin, "win32", {}, existsOf([bash]));
   assert.deepEqual(env.pathPrefixes, []);
@@ -81,7 +81,7 @@ test("darwin 번들 경로는 win32 규칙에 들지 않는다 — 플랫폼이 
 // ---------------------------------------------------------------------------
 
 test("gitCandidates(darwin): EXTRA_PATH 각 항목의 번들 git 이 맨 앞이다", () => {
-  const candidates = gitCandidates("darwin", { COLO_DESIGN_EXTRA_PATH: "/r/bin:/다른/곳" });
+  const candidates = gitCandidates("darwin", { NOVA_DESIGN_EXTRA_PATH: "/r/bin:/다른/곳" });
   assert.deepEqual(candidates, [
     "/r/bin/git/bin/git",
     "/다른/곳/git/bin/git",

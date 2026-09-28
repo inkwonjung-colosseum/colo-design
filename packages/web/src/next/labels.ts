@@ -67,7 +67,7 @@ export const L = {
 
   // ── 단계 1 뼈대
   sidebar: {
-    brand: "Colo Design",
+    brand: "Nova Design",
     newConv: "새 대화",
     home: "홈",
     find: "찾기",
@@ -465,7 +465,7 @@ export const L = {
     /** 핀 이름표의 마지막 폴백 — 정체(글자 · 컴포넌트 · 화면)를 다 못 짚을 때. */
     point: "찍은 곳",
     bubble: "핀 메모",
-    /** 아래는 게스트 안 오버레이가 입는 말 — 선로(colo-overlay:mode)로 건너간다. */
+    /** 아래는 게스트 안 오버레이가 입는 말 — 선로(nova-overlay:mode)로 건너간다. */
     unnamed: "이름 없음",
     hint: "클릭은 요소, 끌면 영역을 가리켜요. 여러 개 찍고 한 번에 말하세요.",
     badgeWord: "핀",
@@ -591,7 +591,7 @@ export const L = {
 
   // ── 단계 5 처음 한 번·준비·초대
   onboarding: {
-    title: "Colo Design 을 시작해요",
+    title: "Nova Design 을 시작해요",
     sub: "세 가지가 채워지면 저절로 넘어가요.\n터미널을 열 일은 없어요.",
     tools: "도구 준비",
     toolsChecking: "확인하는 중…",

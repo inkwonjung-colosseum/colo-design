@@ -1,4 +1,4 @@
-# Colo Design 데스크톱 릴리스(DESIGN §7) — 태그 푸시(v*) 하나로 mac·win
+# Nova Design 데스크톱 릴리스(DESIGN §7) — 태그 푸시(v*) 하나로 mac·win
 # 설치 파일을 모두 빌드해 이 레포의 릴리스 페이지에 올린다.
 #
 # 흐름: build(macOS arm64 + Windows x64 행렬, --publish never 로 로컬 빌드)
@@ -8,9 +8,9 @@
 # 나타나는 것이 이 워크플로우의 목표다.
 #
 # 에셋(이름은 electron-builder.yml 의 artifactName 에 고정):
-#   colo-design-<v>-mac-arm64.dmg        macOS 설치 파일
-#   colo-design-<v>-mac-arm64.zip        mac 자가 업데이트가 내려받는 형태
-#   colo-design-Setup-<v>-win-x64.exe    Windows NSIS 설치 파일
+#   nova-design-<v>-mac-arm64.dmg        macOS 설치 파일
+#   nova-design-<v>-mac-arm64.zip        mac 자가 업데이트가 내려받는 형태
+#   nova-design-Setup-<v>-win-x64.exe    Windows NSIS 설치 파일
 #   latest.json                         앱의 업데이트 확인 피드(version/notes/
 #                                       url·sha256 = mac zip, winUrl·winSha256
 #                                       = win 설치 파일 — 자가 교체 검증용)
@@ -145,11 +145,11 @@ jobs:
       # 막히는 것보다 싸다. 서명이 빠지면 forceCodeSigning 이 빌드를 실패시킨다.
       - name: 설치 파일 빌드 (macOS)
         if: runner.os == 'macOS'
-        run: pnpm --filter @colo-design/desktop exec electron-builder --publish never -c.mac.identity=-
+        run: pnpm --filter @nova-design/desktop exec electron-builder --publish never -c.mac.identity=-
 
       - name: 설치 파일 빌드 (Windows)
         if: runner.os == 'Windows'
-        run: pnpm --filter @colo-design/desktop exec electron-builder --publish never
+        run: pnpm --filter @nova-design/desktop exec electron-builder --publish never
 
       # 서명이 실제로 붙었는지 산출물에서 확인한다 — forceCodeSigning 이 막는
       # 것은 "건너뜀"이고, 여기서 보는 것은 "결과물이 실제로 서명되어 있는가"다.
@@ -157,7 +157,7 @@ jobs:
       - name: mac 서명 확인
         if: runner.os == 'macOS'
         run: |
-          APP="packages/desktop/release/mac-arm64/Colo Design.app"
+          APP="packages/desktop/release/mac-arm64/Nova Design.app"
           codesign -dv --verbose=2 "$APP" 2>&1 | tee /tmp/codesign.txt
           if grep -q "linker-signed" /tmp/codesign.txt; then
             echo "::error::서명이 linker-signed 인 채로 남았습니다 — 이 앱의 알림은 macOS 에서 거절됩니다."
@@ -209,9 +209,9 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
           BASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          DMG="colo-design-${VERSION}-mac-arm64.dmg"
-          ZIP="colo-design-${VERSION}-mac-arm64.zip"
-          EXE="colo-design-Setup-${VERSION}-win-x64.exe"
+          DMG="nova-design-${VERSION}-mac-arm64.dmg"
+          ZIP="nova-design-${VERSION}-mac-arm64.zip"
+          EXE="nova-design-Setup-${VERSION}-win-x64.exe"
 
           # 산출물이 전부 있는지 — 없으면 릴리스를 반쪽으로 만들지 않는다.
           for f in "$DMG" "$ZIP" "$EXE"; do
@@ -242,8 +242,17 @@ jobs:
             echo
             echo "### 미서명 배포 안내"
             echo
-            echo "- **macOS**: 처음 실행하면 Gatekeeper 가 막는다. macOS Sequoia 이상엔 우클릭 → **열기** 가 없다 — 시스템 설정 → 개인정보 보호 및 보안 → **확인 없이 열기** 를 누르고 인증한다. 터미널이면 \`xattr -dr com.apple.quarantine \"/Applications/Colo Design.app\"\`."
+            echo "- **macOS**: 처음 실행하면 Gatekeeper 가 막는다. macOS Sequoia 이상엔 우클릭 → **열기** 가 없다 — 시스템 설정 → 개인정보 보호 및 보안 → **확인 없이 열기** 를 누르고 인증한다. 터미널이면 \`xattr -dr com.apple.quarantine \"/Applications/Nova Design.app\"\`."
             echo "- **Windows**: SmartScreen 이 \"Windows PC를 보호했습니다\" 를 띄우면 **추가 정보** → **실행** 으로 진행한다."
+            echo
+            # 0.4.0 개명 안내(RENAME-NOVA-PLAN §6) — 0.3.x 에서 건너오는 앱 사용자에게
+            # 미리 알릴 길이 앱 안에는 없다(앱은 latest.json 의 notes 를 읽기만 한다).
+            echo "### 0.3.x 에서 업데이트하는 경우"
+            echo
+            echo "이름이 Nova Design 으로 바뀌었어요. 업데이트하면 대화 · 작업 · 설정은 그대로 옮겨져요. 예전 초대 파일도 그대로 열려요."
+            echo
+            echo "- **mac**: 처음 한 번 \`다시 연결이 필요해요\` 가 뜨면, 개발자에게 받은 새 초대 파일을 창에 놓아 주세요."
+            echo "- **Windows**: 업데이트가 끝난 뒤 앱이 저절로 다시 열리지 않으면 시작 메뉴의 \`Nova Design\` 을 눌러 주세요."
             echo
             echo "---"
             echo
@@ -256,7 +265,7 @@ jobs:
             gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file release-notes.md
           else
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-              --title "Colo Design ${VERSION}" --notes-file release-notes.md dist/*
+              --title "Nova Design ${VERSION}" --notes-file release-notes.md dist/*
           fi
 
           # 게시 확인: 네 에셋이 아니면 실패 — "릴리스 페이지에 win·mac 모두
@@ -268,7 +277,7 @@ jobs:
               || { echo "::error::릴리스에 에셋이 없습니다: $f"; exit 1; }
           done
           {
-            echo "## 릴리스 완료: Colo Design ${VERSION}"
+            echo "## 릴리스 완료: Nova Design ${VERSION}"
             echo
             gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json url --jq '.url'
           } >> "$GITHUB_STEP_SUMMARY"

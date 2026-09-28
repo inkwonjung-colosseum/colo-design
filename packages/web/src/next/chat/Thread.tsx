@@ -4,7 +4,7 @@ import {
   type QueuedSend,
   type RepoStatus,
   readTurn,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import { Fragment, type ReactNode, useRef, useState } from "react";
 import { Markdown } from "../../components/Markdown";
 import { ActivitySummary, groupActivity } from "../../components/transcript/activity";

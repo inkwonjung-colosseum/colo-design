@@ -11,14 +11,14 @@ import type {
   RepoStatus,
   ServerMessage,
   SessionCommand,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import {
   composeAttention,
   errorKindOf,
   guidanceFor,
   markTurn,
   reviewToTurn,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
 import type { DriverRegistry } from "./agent/registry.js";
 import { AutoThreads } from "./auto-thread.js";

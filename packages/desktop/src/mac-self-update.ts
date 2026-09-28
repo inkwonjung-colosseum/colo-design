@@ -6,7 +6,7 @@ import { resultLine, type SelfUpdatePlan } from "./self-update.js";
  * mac 이 번들을 갈아 치우는 방법만 있다.
  */
 
-/** bash 큰따옴표 없이 안전하게 — 경로에 공백(`Colo Design.app`)이 흔하다. */
+/** bash 큰따옴표 없이 안전하게 — 경로에 공백(`Nova Design.app`)이 흔하다. */
 function sh(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -33,7 +33,7 @@ export function buildSwapScript(input: {
   const failResult = (reason: string) =>
     resultLine({ outcome: "failed", version, reason, logPath });
   return `#!/bin/bash
-# Colo Design 자가 교체 — 종료 대기 → zip 풀기 → 백업 교체 → 재실행.
+# Nova Design 자가 교체 — 종료 대기 → zip 풀기 → 백업 교체 → 재실행.
 exec >> ${sh(logPath)} 2>&1
 RESULT=${sh(resultPath)}
 write_result() { /usr/bin/printf '%s\\n' "$1" > "$RESULT"; }

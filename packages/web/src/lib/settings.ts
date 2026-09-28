@@ -1,4 +1,4 @@
-import type { EffortLevel, SessionModelInfo } from "@colo-design/protocol";
+import type { EffortLevel, SessionModelInfo } from "@nova-design/protocol";
 import { useCallback, useEffect, useState } from "react";
 
 /**
@@ -272,7 +272,7 @@ export const THEMES: ThemeChoice[] = [
   "codex",
 ];
 
-const KEY = "colo-design.settings";
+const KEY = "nova-design.settings";
 
 /**
  * 설정의 테마 줄이 보여주는 목록 — 팔레트 자체는 styles.css 에 있고(THEMES와 같은
@@ -470,7 +470,7 @@ function legacyComposerDefaults(): Partial<ChatSettings> {
   for (const workspace of ["planning", "design"]) {
     let raw: unknown;
     try {
-      raw = JSON.parse(localStorage.getItem(`colo-design.composer.${workspace}`) ?? "null");
+      raw = JSON.parse(localStorage.getItem(`nova-design.composer.${workspace}`) ?? "null");
     } catch {
       continue;
     }
@@ -631,7 +631,7 @@ export function useSettings(): {
   return { settings, update, theme };
 }
 
-const MODELS_KEY = "colo-design.models";
+const MODELS_KEY = "nova-design.models";
 
 /**
  * The model rows the daemon last served, per provider. Only a live session
@@ -707,7 +707,7 @@ export function saveModelCatalog(provider: string, models: SessionModelInfo[]): 
 // 레포 경고의 읽음 지문 — 닫은 소식은 기기에 눌러 담긴다
 // ---------------------------------------------------------------------------
 
-const REPO_WARNINGS_KEY = "colo-design.repo-warnings-read";
+const REPO_WARNINGS_KEY = "nova-design.repo-warnings-read";
 
 /**
  * 이 기기에서 닫은 레포 경고의 지문들. 헤더의 나머지 경고는 살아 있는 문제라
@@ -742,7 +742,7 @@ export function rememberReadRepoWarning(fingerprint: string): void {
 // 첫 준비의 교육 줄 — 한 번 끝낸 기기에는 대기 카드가 이름만 말한다
 // ---------------------------------------------------------------------------
 
-const REPO_PREP_SEEN_KEY = "colo-design.repo-prep-seen";
+const REPO_PREP_SEEN_KEY = "nova-design.repo-prep-seen";
 
 /** 준비 스택의 대기 카드 힌트("내려받기가 끝나면 이어서 합니다" 등)는 첫 준비의
     교육용이다 — 준비가 한 번 끝난 기기에서는 이름만 서는 게 더 조용하다. */

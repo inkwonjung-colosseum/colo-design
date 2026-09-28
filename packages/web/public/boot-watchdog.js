@@ -9,7 +9,7 @@
  */
 (() => {
   const BOOT_MS = 10000;
-  const KEY = "colo-design.last-crash";
+  const KEY = "nova-design.last-crash";
   const TITLE = "화면이 열리지 않아요";
   const REOPEN = "다시 열기";
   let shown = false;
@@ -23,6 +23,11 @@
   /* 직전 부팅이 남긴 사고의 한 줄 — source 접두를 붙인다. 없으면 빈줄. */
   const lastCrashLine = () => {
     try {
+      // read-legacy — 개명 전 부팅이 옛 키에 남긴 기록. 이 스크립트는 엔트리의
+      // 부팅 이주보다 먼저 읽을 수 있으므로 여기서도 한 번 새 키로 옮겨 둔다.
+      const legacyRaw = window.localStorage.getItem("colo-design.last-crash"); // read-legacy
+      if (legacyRaw && !window.localStorage.getItem(KEY))
+        window.localStorage.setItem(KEY, legacyRaw);
       const raw = window.localStorage.getItem(KEY);
       if (!raw) return "";
       const record = JSON.parse(raw);

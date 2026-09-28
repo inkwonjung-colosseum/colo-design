@@ -13,7 +13,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { DeveloperReview } from "@colo-design/protocol";
+import type { DeveloperReview } from "@nova-design/protocol";
 import { probeCorruption } from "./clone-salvage.js";
 import { conflictMarkers } from "./conflict-markers.js";
 import { hygieneDue } from "./cycle-hygiene.js";

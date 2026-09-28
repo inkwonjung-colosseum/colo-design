@@ -7,7 +7,7 @@
  *   pnpm exec vite --port 29181 --strictPort
  *   → http://127.0.0.1:29181/dev/thread-fixture.html
  */
-import { markTurn } from "@colo-design/protocol";
+import { markTurn } from "@nova-design/protocol";
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Block } from "../src/lib/daemon-client";

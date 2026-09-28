@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { NOVA_DESIGN_DATA_DIR } from "./environment.js";
 
 /**
  * 데몬의 파일 로그. 데스크톱 앱이 데몬을 in-process 로 키우므로 console 은
@@ -27,7 +27,7 @@ const RETENTION_DAYS = 7;
 
 /** 기록 위치. e2e 스위트가 임시 폴더로 돌리는 오버라이드. */
 export function daemonLogDir(): string {
-  return process.env.COLO_DESIGN_LOG_DIR ?? join(homedir(), ".colo-design", "logs");
+  return process.env.NOVA_DESIGN_LOG_DIR ?? join(NOVA_DESIGN_DATA_DIR, "logs");
 }
 
 function dayStamp(at: Date): string {

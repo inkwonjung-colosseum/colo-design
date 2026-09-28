@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-observe.test.ts 와 같은 길).
-import { guidanceFor } from "@colo-design/protocol";
+import { guidanceFor } from "@nova-design/protocol";
 import { GIT_WRITE_REFUSAL, gitWriteDenied } from "../dist/session.js";
 
 // PLAN L5 · 단계 3: 세션의 git 쓰기는 예외 없이 거절된다 — 옛 MERGE_HEAD 문은

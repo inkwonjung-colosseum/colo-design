@@ -1,4 +1,4 @@
-import { sameRepo } from "@colo-design/protocol";
+import { sameRepo } from "@nova-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { useInviteImport } from "../hooks/use-invite-import";
 import type { Daemon } from "../lib/daemon-client";

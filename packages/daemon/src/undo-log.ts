@@ -6,7 +6,7 @@
  * `retry` · `turn` 종류는 더 오지 않는다.
  *
  * 읽는 법:
- *   jq -r .kind ~/.colo-design/config/undo.jsonl | sort | uniq -c | sort -rn
+ *   jq -r .kind ~/.nova-design/config/undo.jsonl | sort | uniq -c | sort -rn
  *
  * 기록하는 것은 행동의 사실뿐이다(종류 · 프로젝트) — 사용자의 말도,
  * 화면의 내용도, 파일 경로도 남기지 않는다.
@@ -35,9 +35,9 @@ export interface UndoEvent {
   slug: string;
 }
 
-/** `COLO_DESIGN_UNDO_LOG` 가 테스트를 일회용 파일로 가리키게 한다. */
+/** `NOVA_DESIGN_UNDO_LOG` 가 테스트를 일회용 파일로 가리키게 한다. */
 function undoLogFile(env: NodeJS.ProcessEnv = process.env): string {
-  return env.COLO_DESIGN_UNDO_LOG ?? join(CONFIG_DIR, "undo.jsonl");
+  return env.NOVA_DESIGN_UNDO_LOG ?? join(CONFIG_DIR, "undo.jsonl");
 }
 
 export class UndoLog {
@@ -63,7 +63,7 @@ export class UndoLog {
   private trim(): void {
     this.lines = this.lines.slice(Math.floor(MAX_LINES / 2));
     // 통째로 다시 쓰는 순간에도 찢어짐은 없게 — tmp+rename 으로 원자적으로.
-    const temporary = `${this.file}.colo-design-${process.pid}`;
+    const temporary = `${this.file}.nova-design-${process.pid}`;
     writeFileSync(temporary, `${this.lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
     renameSync(temporary, this.file);
   }

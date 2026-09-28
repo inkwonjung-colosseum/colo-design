@@ -155,7 +155,7 @@ function deps(over: Partial<DeveloperNoticeDeps> = {}): DeveloperNoticeDeps {
   return {
     github: () => null,
     githubAuthExpired: () => false,
-    repoSlug: () => ({ owner: "colo-design", repo: "harness" }),
+    repoSlug: () => ({ owner: "nova-design", repo: "harness" }),
     project: () => ({ name: "앱", reviewers: ["dev1"], openPr: null }),
     authorName: () => "기획자",
     slack: new Escalation(new MemoryCredentialStore(), quiet, async () => {
@@ -190,7 +190,7 @@ test("agent: 쪽지는 이슈로 한 번 나가고, 같은 제목의 재요청�
     assert.equal(await notice.raise(agentProblem(title)), "issue");
     assert.equal(github.openIssueCount, 1);
     const issue = github.issue(1);
-    assert.ok(issue?.body.includes(`<!-- colo-design:problem ${AGENT_NOTICE_KEY_PREFIX}`));
+    assert.ok(issue?.body.includes(`<!-- nova-design:problem ${AGENT_NOTICE_KEY_PREFIX}`));
     assert.ok(issue?.body.includes(`**무엇이** ${agentProblem(title).what}`));
     assert.ok(issue?.body.includes(`**해 본 것** AI 가 대화 안에서 시도한 것 — 답변 참조`));
     // 같은 제목의 두 번째 쪽지 — 같은 키라 창 안에서는 쓰지 않는다(중복 없음).

@@ -21,8 +21,8 @@ import type {
   PreviewOpenOptions,
   PreviewOpenResult,
   PreviewViewport,
-} from "@colo-design/daemon/server";
-import type { ColoDesignCommentTarget } from "@colo-design/protocol";
+} from "@nova-design/daemon/server";
+import type { NovaDesignCommentTarget } from "@nova-design/protocol";
 import { BrowserWindow, type WebContents } from "electron";
 import { describeElementInPage, ownersOfElement } from "./element-identity.js";
 import { VIEWPORT_METRICS } from "./emulation.js";
@@ -1006,7 +1006,7 @@ class PaneBrowserDriver implements BrowserDriver {
    */
   async inspect(target: {
     ref: string;
-  }): Promise<{ url: string; element: ColoDesignCommentTarget }> {
+  }): Promise<{ url: string; element: NovaDesignCommentTarget }> {
     const dest = await this.target();
     const backendNodeId = dest.state.refs.get(target.ref);
     if (backendNodeId === undefined) {
@@ -1041,7 +1041,7 @@ class PaneBrowserDriver implements BrowserDriver {
         });
     const element = (await runInPage(
       describeElementInPage.toString(),
-    )) as ColoDesignCommentTarget | null;
+    )) as NovaDesignCommentTarget | null;
     if (element === null || typeof element !== "object" || typeof element.path !== "string") {
       throw new Error(`${target.ref} 를 화면에서 찾지 못했습니다 — snapshot 으로 다시 읽으십시오.`);
     }

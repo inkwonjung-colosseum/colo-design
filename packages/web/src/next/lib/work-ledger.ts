@@ -1,4 +1,4 @@
-import type { DeveloperReview, RepoHistoryEntry, RepoStatus } from "@colo-design/protocol";
+import type { DeveloperReview, RepoHistoryEntry, RepoStatus } from "@nova-design/protocol";
 
 /**
  * `이번 작업` 과 제출 확인의 순수 판정(PLAN-UI U2 · U3) — 데몬이 싣는 사실

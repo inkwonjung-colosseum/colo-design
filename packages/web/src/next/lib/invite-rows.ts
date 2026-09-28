@@ -1,4 +1,4 @@
-import type { InviteRow, InviteRowTarget } from "@colo-design/protocol";
+import type { InviteRow, InviteRowTarget } from "@nova-design/protocol";
 import type { L } from "../labels";
 
 /**

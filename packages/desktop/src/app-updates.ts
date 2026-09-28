@@ -7,12 +7,13 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { readFile, rm, statfs, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
-import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
-import { checkForUpdate, RELEASES_FEED_URL, type UpdateCheckResult } from "@colo-design/protocol";
+import { NOVA_DESIGN_DATA_DIR } from "@nova-design/daemon/environment";
+import { checkForUpdate, RELEASES_FEED_URL, type UpdateCheckResult } from "@nova-design/protocol";
 import { app, net, shell } from "electron";
 import { buildSwapScript as buildMacSwapScript } from "./mac-self-update.js";
 import {
@@ -38,7 +39,19 @@ let installFlight: Promise<Record<string, unknown>> | null = null;
 let swapFlight: Promise<Record<string, unknown>> | null = null;
 
 function updateResultPath(): string {
-  return join(COLO_DESIGN_DIR, "update-result.json");
+  return join(NOVA_DESIGN_DATA_DIR, "update-result.json");
+}
+
+/**
+ * 교체 결과 파일의 후보 — 새 폴더 먼저. read-legacy: 0.3.x 의 교체 스크립트는
+ * 옛 데이터 폴더(~/.colo-design)에 결과를 적는다. 이주가 이미 그 파일을 옮겼다
+ * 면 첫 후보에서 읽히고, 아니면 둘째 후보가 닿는다.
+ */
+function updateResultPaths(): string[] {
+  return [
+    updateResultPath(),
+    join(homedir(), ".colo-design", "update-result.json"), // read-legacy
+  ];
 }
 
 /** The feed carries both platforms' assets — this side picks its own. */
@@ -163,7 +176,7 @@ export class SelfUpdates {
         this.notifiedVersion = feed.version;
         void this.deps.notify(
           "새 버전이 있습니다",
-          `Colo Design ${feed.version} — 설정 → 문제 해결의 업데이트 확인에서 설치할 수 있습니다.`,
+          `Nova Design ${feed.version} — 설정 → 문제 해결의 업데이트 확인에서 설치할 수 있습니다.`,
           this.deps.focusMain,
         );
       } catch {
@@ -187,21 +200,31 @@ export class SelfUpdates {
    * 된 흔적이니 조용히 지운다. 실패의 클릭은 로그 파일을 연다.
    */
   async reportSwapResult(): Promise<void> {
-    const path = updateResultPath();
-    let raw: string;
-    try {
-      raw = await readFile(path, "utf8");
-    } catch {
-      return; // 결과 파일이 없으면 보고할 교체가 없었다
+    let raw: string | null = null;
+    let path = "";
+    for (const candidate of updateResultPaths()) {
+      try {
+        raw = await readFile(candidate, "utf8");
+        path = candidate;
+        break;
+      } catch {
+        // 이 후보에는 결과 파일이 없다 — 다음 후보.
+      }
     }
+    if (raw === null) return; // 결과 파일이 없으면 보고할 교체가 없었다
     await rm(path, { force: true });
     const result = parseSwapResult(raw);
     if (!result) return;
     if (result.outcome === "done") {
       if (result.version !== app.getVersion()) return;
+      // 0.4.x 동안: 개명(Colo Design → Nova Design)으로 건너온 첫 버전임을
+      // 한 문장으로 말한다(RENAME-NOVA-PLAN A2).
+      const renameNote = result.version.startsWith("0.4.")
+        ? " 이름이 Nova Design 으로 바뀌었어요 — 대화와 작업은 그대로예요."
+        : "";
       void this.deps.notify(
         "업데이트 완료",
-        `Colo Design ${result.version}으로 갈아입었습니다.`,
+        `Nova Design ${result.version}으로 갈아입었습니다.${renameNote}`,
         this.deps.focusMain,
       );
       return;
@@ -324,7 +347,7 @@ export class SelfUpdates {
   private announcePrepared(version: string): void {
     void this.deps.notify(
       "새 버전이 준비됐습니다",
-      `Colo Design ${version} — 재시작하면 설치됩니다. 클릭하면 지금 재시작합니다.`,
+      `Nova Design ${version} — 재시작하면 설치됩니다. 클릭하면 지금 재시작합니다.`,
       () => {
         void this.installPrepared();
       },
@@ -420,7 +443,7 @@ export class SelfUpdates {
     const version = prepared.version;
     const windows = process.platform === "win32";
     try {
-      const logPath = join(app.getPath("temp"), "colo-design-update.log");
+      const logPath = join(app.getPath("temp"), "nova-design-update.log");
       const script = {
         plan: prepared.plan,
         pid: process.pid,
@@ -429,7 +452,7 @@ export class SelfUpdates {
         version,
       };
       if (windows) {
-        const scriptPath = join(app.getPath("temp"), `colo-design-update-${version}.ps1`);
+        const scriptPath = join(app.getPath("temp"), `nova-design-update-${version}.ps1`);
         // BOM 을 붙여 쓴다: Windows PowerShell 5.1 은 BOM 없는 UTF-8 .ps1 을
         // 현재 코드페이지(ANSI)로 읽어 스크립트 안의 한국어를 깨뜨린다 — 깨진
         // 실패 이유는 그대로 사용자 알림에 실린다.
@@ -440,7 +463,7 @@ export class SelfUpdates {
           stdio: "ignore",
         }).unref();
       } else {
-        const scriptPath = join(app.getPath("temp"), `colo-design-update-${version}.sh`);
+        const scriptPath = join(app.getPath("temp"), `nova-design-update-${version}.sh`);
         await writeFile(scriptPath, buildMacSwapScript(script), { mode: 0o755 });
         // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
         spawn("/bin/bash", [scriptPath], {

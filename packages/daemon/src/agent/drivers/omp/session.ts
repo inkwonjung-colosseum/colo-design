@@ -4,7 +4,7 @@ import type {
   EffortLevel,
   SessionCommand,
   SessionModelInfo,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import { browserTools, callBrowserTool, refused } from "../../../browser-tools.js";
 import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
 import { ensureGitGuardHooks, gitGuardEnv } from "../../../git-guard.js";
@@ -224,7 +224,7 @@ export class OmpAgentSession implements AgentSession {
 
   /** 이 세션에 실은 도구 — 부르는 쪽(onHostToolCall)도 같은 목록에서 찾는다. */
   private hostTools() {
-    return browserTools(this.launch.browserMcp?.env.COLO_BROWSER_SUBMIT === "1");
+    return browserTools(this.launch.browserMcp?.env.NOVA_BROWSER_SUBMIT === "1");
   }
 
   // -------------------------------------------------------------------------
@@ -705,8 +705,8 @@ export class OmpAgentSession implements AgentSession {
     this.hostCalls.set(id, controller);
     try {
       const outcome = await callBrowserTool(tool, (frame.arguments ?? {}) as Wire, {
-        daemonUrl: relay.env.COLO_DAEMON_URL ?? "",
-        secret: relay.env.COLO_BROWSER_SECRET ?? "",
+        daemonUrl: relay.env.NOVA_DAEMON_URL ?? "",
+        secret: relay.env.NOVA_BROWSER_SECRET ?? "",
       });
       if (controller.signal.aborted || this.closed) return;
       this.transport.write({

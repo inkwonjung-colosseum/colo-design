@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { MachineSetting } from "../dist/machine-setting.js";
 
 test("MachineSetting — 만료 예정 키를 저장하고, 다시 켠 값처럼 읽고, null 은 잊는다", () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-machine-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-machine-"));
   const file = join(dir, "machine.json");
   try {
     const setting = new MachineSetting(file);

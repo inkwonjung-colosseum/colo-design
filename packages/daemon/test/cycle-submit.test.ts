@@ -7,11 +7,11 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { HandoffShot } from "@colo-design/protocol";
+import type { HandoffShot } from "@nova-design/protocol";
 import { PublishCycle } from "../dist/repo-publish.js";
 import { MemoryGitHub, makeClone, makeCore, makeRemote } from "./helpers/cycle-harness.ts";
 
-const BRANCH = "colo-design/20260924-1";
+const BRANCH = "nova-design/20260924-1";
 
 /** 캡처 한 장 — PNG 마법넘버만 있어도 blob 으로는 충분하다. */
 const shot = (route: string): HandoffShot => ({
@@ -41,15 +41,15 @@ async function setup() {
   return { remote, clone, github, core, publish };
 }
 
-test("캡처는 colo-design-assets 에 올라가고 사이클 브랜치 · 작업 트리는 깨끗하다", async () => {
+test("캡처는 nova-design-assets 에 올라가고 사이클 브랜치 · 작업 트리는 깨끗하다", async () => {
   const scene = await setup();
   try {
     const status = await scene.publish.runHandoff({ shots: [shot("/member/MemberList")] });
     assert.equal(status.stage, "handed-off");
 
     // 원격에 자산 브랜치가 섰고 그 끝이 링크의 sha 다.
-    const assetsSha = lsRemote(scene.remote.path, "refs/heads/colo-design-assets");
-    assert.notEqual(assetsSha, "", "원격에 colo-design-assets 브랜치가 있어야 한다");
+    const assetsSha = lsRemote(scene.remote.path, "refs/heads/nova-design-assets");
+    assert.notEqual(assetsSha, "", "원격에 nova-design-assets 브랜치가 있어야 한다");
     const body = scene.github.pull(status.handoff?.number ?? 0)?.body ?? "";
     assert.ok(
       body.includes(`/blob/${assetsSha}/shots/${BRANCH}/-member-MemberList.png`),
@@ -58,7 +58,7 @@ test("캡처는 colo-design-assets 에 올라가고 사이클 브랜치 · 작�
     // 사이클 브랜치에는 캡처가 없다 — 반영돼도 main 에 이미지가 쌓이지 않는다.
     const onBranch = execFileSync(
       "git",
-      ["ls-tree", "--name-only", `origin/${BRANCH}`, ".colo-design/"],
+      ["ls-tree", "--name-only", `origin/${BRANCH}`, ".nova-design/"],
       { cwd: scene.clone.path, encoding: "utf8" },
     ).trim();
     assert.equal(onBranch, "", "사이클 브랜치에 shots 가 없어야 한다");
@@ -71,7 +71,7 @@ test("캡처는 colo-design-assets 에 올라가고 사이클 브랜치 · 작�
 
     // 두 번째 제출의 캡처는 같은 브랜치에 쌓인다(부모가 있다).
     await scene.publish.runHandoff({ shots: [shot("/order/OrderDetail")] });
-    const assetsSha2 = lsRemote(scene.remote.path, "refs/heads/colo-design-assets");
+    const assetsSha2 = lsRemote(scene.remote.path, "refs/heads/nova-design-assets");
     assert.notEqual(assetsSha2, "");
     assert.notEqual(assetsSha2, assetsSha, "자산 브랜치가 앞으로 간다");
   } finally {

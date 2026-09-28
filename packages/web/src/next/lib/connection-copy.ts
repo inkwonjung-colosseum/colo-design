@@ -8,7 +8,7 @@
  * 단위 시험이 src 에서 곧장 읽는 순수 모듈은 형제를 부르지 않는다
  * (journey.ts 와 같은 규칙). 부르는 쪽은 `connectionCopy(input, now, L)`.
  */
-import type { DaemonStatus } from "@colo-design/protocol";
+import type { DaemonStatus } from "@nova-design/protocol";
 import type { L } from "../labels";
 
 /** 판정에 쓰는 칸 — `L.vocab` · `L.problem` · `L.settings` 가 구조적으로 채운다. */

@@ -104,14 +104,14 @@ test("expiryNoticeStep — 거둠은 저장된 슬러그(machine.json)에서 오
  * 내는 모양으로, 같은 값의 둘째 응답이 다시 알리지 않는지를 본다.
  */
 function withExpiryFixture(headerValue: string, run: () => Promise<void>) {
-  const dir = mkdtempSync(join(tmpdir(), "colo-expiry-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-expiry-"));
   const headers = { "github-authentication-token-expiration": headerValue };
   const pairs = [
     {
       name: "user",
       cite: "GET /user",
       request: { method: "GET", url: "/user" },
-      response: { status: 200, json: { login: "colo-planner" }, headers },
+      response: { status: 200, json: { login: "nova-planner" }, headers },
     },
     {
       name: "repos",
@@ -124,11 +124,11 @@ function withExpiryFixture(headerValue: string, run: () => Promise<void>) {
     },
   ];
   writeFileSync(join(dir, "fixtures.json"), JSON.stringify(pairs));
-  const before = process.env.COLO_DESIGN_GITHUB_FIXTURE;
-  process.env.COLO_DESIGN_GITHUB_FIXTURE = dir;
+  const before = process.env.NOVA_DESIGN_GITHUB_FIXTURE;
+  process.env.NOVA_DESIGN_GITHUB_FIXTURE = dir;
   return run().finally(() => {
-    if (before === undefined) delete process.env.COLO_DESIGN_GITHUB_FIXTURE;
-    else process.env.COLO_DESIGN_GITHUB_FIXTURE = before;
+    if (before === undefined) delete process.env.NOVA_DESIGN_GITHUB_FIXTURE;
+    else process.env.NOVA_DESIGN_GITHUB_FIXTURE = before;
     rmSync(dir, { recursive: true, force: true });
   });
 }

@@ -9,7 +9,7 @@ import type {
   SessionPinHint,
   SessionSelectors,
   SessionSummary,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Attachment } from "../lib/attachment";
 import { shouldDiscardOnFirstFailure } from "../next/lib/session-discard";
@@ -37,7 +37,7 @@ import {
 } from "../lib/settings";
 
 /** Reload 후 마지막으로 연 대화를 프로젝트별로 되돌려 놓는 곳 (실사 결함). */
-const LAST_THREAD_KEY = "colo-design.last-thread";
+const LAST_THREAD_KEY = "nova-design.last-thread";
 
 /**
  * 프로젝트의 저장된 마지막 스레드 포인터를 지운다 (삭제 부활 결함). 복원

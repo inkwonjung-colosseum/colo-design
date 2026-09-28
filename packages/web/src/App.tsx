@@ -5,7 +5,7 @@ import { useDaemon } from "./lib/daemon-client";
 import { normalizeNotificationSettings, useSettings } from "./lib/settings";
 import { NextShell } from "./next/NextShell";
 
-const URL_KEY = "colo-design.daemon-url";
+const URL_KEY = "nova-design.daemon-url";
 
 /**
  * The desktop app loads this page from the daemon itself with the pairing
@@ -40,7 +40,7 @@ export default function App() {
   useEffect(() => {
     // 부팅 성공 신호(3.A 층 1-2) — 와치독의 타이머를 끊고 낡은 미러를 비운다.
     markAppMounted(crashStore());
-    const bridge = window.coloDesignDesktop;
+    const bridge = window.novaDesignDesktop;
     if (!bridge?.getNotificationPrefs) {
       setNotifyPrefsReady(true);
       return;
@@ -64,7 +64,7 @@ export default function App() {
   }, [updateSettings]);
   useEffect(() => {
     if (!notifyPrefsReady) return;
-    void window.coloDesignDesktop?.setNotificationPrefs?.(settings.notifications);
+    void window.novaDesignDesktop?.setNotificationPrefs?.(settings.notifications);
   }, [settings.notifications, notifyPrefsReady]);
 
   // A file dropped outside the composer has no handler, and the browser

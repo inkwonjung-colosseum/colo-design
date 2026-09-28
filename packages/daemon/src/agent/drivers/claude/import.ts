@@ -1,4 +1,4 @@
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 
 /**
  * Rebuild a stored transcript as ChatEvents so the UI can show a past session.

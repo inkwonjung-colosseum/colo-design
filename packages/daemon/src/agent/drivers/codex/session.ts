@@ -6,7 +6,7 @@ import type {
   PlanWindow,
   SessionCommand,
   SessionModelInfo,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import { BROWSER_MCP_SERVER_NAME, codexBrowserMcpServer } from "../../../browser-launch.js";
 import { ensureGitGuardHooks, gitGuardEnv } from "../../../git-guard.js";
 import { composeTurnText, prepareAttachments } from "../../attachments.js";
@@ -43,7 +43,7 @@ function bypassSandboxPolicy(): Wire {
 
 /** The handshake every app-server connection opens with — a session's and the probe's alike. */
 const INITIALIZE_PARAMS = {
-  clientInfo: { name: "colo-design", title: null, version: "0" },
+  clientInfo: { name: "nova-design", title: null, version: "0" },
   capabilities: {
     // steer, item/* approvals and skills/list live behind this flag.
     experimentalApi: true,

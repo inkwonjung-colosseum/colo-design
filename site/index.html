@@ -3,12 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Colo Design — 말과 문서가 화면이 되는 도구</title>
+    <title>Nova Design — 말과 문서가 화면이 되는 도구</title>
     <meta
       name="description"
       content="개발 지식이 전혀 없는 사람이, 개발자의 레포에 연결해 채팅으로 화면을 만들고 고치는 도구. git, 터미널 같은 건 몰라도 쓴다."
     />
-    <meta property="og:title" content="Colo Design — 말과 문서가 화면이 되는 도구" />
+    <meta property="og:title" content="Nova Design — 말과 문서가 화면이 되는 도구" />
     <meta
       property="og:description"
       content="git이나 터미널을 몰라도 쓰는 화면 만들기 도구. 말을 보내면 미리보기에서 바로 확인하고, 제출 한 번으로 개발자에게 넘깁니다."
@@ -26,20 +26,20 @@
     />
     <link rel="stylesheet" href="style.css?v=10" />
     <script type="module" src="invite.js?v=8"></script>
-    <script type="module" src="demo.js?v=8"></script>
+    <script type="module" src="demo.js?v=9"></script>
     <script type="module" src="hero3d.js"></script>
   </head>
   <body>
     <header class="top">
       <a class="top__mark" href="#">
-        <img class="top__icon" src="colonova-icon.svg" alt="" width="20" height="20" />Colo Design
+        <img class="top__icon" src="colonova-icon.svg" alt="" width="20" height="20" />Nova Design
       </a>
       <nav class="top__nav">
         <a href="#how">흐름</a>
         <a href="#features">기능</a>
         <a href="#install">설치</a>
         <a href="#invite">초대장</a>
-        <a class="top__gh" href="https://github.com/inkwonjung-colosseum/colo-design">GitHub</a>
+        <a class="top__gh" href="https://github.com/inkwonjung-colosseum/nova-design">GitHub</a>
       </nav>
     </header>
 
@@ -56,7 +56,7 @@
           만들어 줍니다. git이나 터미널을 몰라도 씁니다.
         </p>
         <div class="hero__cta">
-          <a class="btn btn--primary" href="https://github.com/inkwonjung-colosseum/colo-design/releases">앱 내려받기</a>
+          <a class="btn btn--primary" href="https://github.com/inkwonjung-colosseum/nova-design/releases">앱 내려받기</a>
           <a class="btn" href="#invite">초대장 만들기</a>
         </div>
         <p class="hero__trust" aria-hidden="true">
@@ -71,7 +71,7 @@
           <div class="appwin" id="appwin" data-phase="idle">
             <div class="appwin__bar">
               <span class="appwin__light"></span><span class="appwin__light"></span><span class="appwin__light"></span>
-              <span class="appwin__title">Colo Design</span>
+              <span class="appwin__title">Nova Design</span>
             </div>
             <div class="appwin__body">
               <aside class="mock-side">
@@ -115,7 +115,7 @@
                   <div class="mock-chat">
                     <div class="msg msg--user" id="demo-usermsg">회원 목록에 검색창을 넣어 줘</div>
                     <div class="msg msg--ai" id="demo-aimsg">
-                      <span class="msg-who">Colo</span>
+                      <span class="msg-who">Nova</span>
                       <span id="demo-aitext">검색창을 넣었습니다 — 미리보기에서 확인해 보세요.</span>
                       <span class="msg-screen" id="demo-screencard">
                         <span class="msg-screen-name">회원 목록</span>
@@ -295,9 +295,9 @@
         <div class="install">
           <ol class="steps">
             <li>
-              <a href="https://github.com/inkwonjung-colosseum/colo-design/releases">릴리스 페이지</a>에서
-              기계에 맞는 파일을 내려받아 설치합니다 — mac은 <code>colo-design-&lt;버전&gt;-mac-arm64.dmg</code>,
-              Windows는 <code>colo-design-Setup-&lt;버전&gt;-win-x64.exe</code>.
+              <a href="https://github.com/inkwonjung-colosseum/nova-design/releases">릴리스 페이지</a>에서
+              기계에 맞는 파일을 내려받아 설치합니다 — mac은 <code>nova-design-&lt;버전&gt;-mac-arm64.dmg</code>,
+              Windows는 <code>nova-design-Setup-&lt;버전&gt;-win-x64.exe</code>.
             </li>
             <li>
               첫 실행에 한 번 허가가 필요합니다 — Windows는 SmartScreen의 추가 정보 → 실행,
@@ -473,13 +473,13 @@
 
     <!-- 알림 벤토가 부르는 OS 알림 재현 — 화면 구석에 한 번 하나 -->
     <div class="toast" id="site-toast" hidden>
-      <b>Colo Design</b>
+      <b>Nova Design</b>
       <span id="site-toast-text">다 만들었어요 — 대화를 확인해 보세요</span>
     </div>
 
     <footer class="foot">
-      <span>Colo Design — 말과 문서가 화면이 되는 파이프라인</span>
-      <a href="https://github.com/inkwonjung-colosseum/colo-design">github.com/inkwonjung-colosseum/colo-design</a>
+      <span>Nova Design — 말과 문서가 화면이 되는 파이프라인</span>
+      <a href="https://github.com/inkwonjung-colosseum/nova-design">github.com/inkwonjung-colosseum/nova-design</a>
     </footer>
   </body>
 </html>

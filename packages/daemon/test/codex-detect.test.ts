@@ -37,13 +37,13 @@ async function withEnv(patch: Record<string, string | undefined>, body: () => Pr
 }
 
 test("설치돼 있고 로그인도 됐다 — reason 없이 깨끗한 판정", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-codex-detect-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-codex-detect-"));
   try {
     mkdirSync(join(dir, "home"));
     writeFileSync(join(dir, "home", "auth.json"), '{"OPENAI_API_KEY":"k"}');
     const executable = fakeCodex(dir);
     await withEnv(
-      { COLO_DESIGN_CODEX_BIN: executable, CODEX_HOME: join(dir, "home") },
+      { NOVA_DESIGN_CODEX_BIN: executable, CODEX_HOME: join(dir, "home") },
       async () => {
         const diagnostic = await new CodexDriver().isAvailable();
         assert.equal(diagnostic.ok, true);
@@ -58,12 +58,12 @@ test("설치돼 있고 로그인도 됐다 — reason 없이 깨끗한 판정", 
 });
 
 test("설치돼 있지만 로그인이 없다 — 미설치가 아니라 로그인을 말하는 reason", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-codex-detect-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-codex-detect-"));
   try {
     mkdirSync(join(dir, "home")); // auth.json 없음
     const executable = fakeCodex(dir);
     await withEnv(
-      { COLO_DESIGN_CODEX_BIN: executable, CODEX_HOME: join(dir, "home") },
+      { NOVA_DESIGN_CODEX_BIN: executable, CODEX_HOME: join(dir, "home") },
       async () => {
         const diagnostic = await new CodexDriver().isAvailable();
         assert.equal(diagnostic.ok, true);
@@ -79,13 +79,13 @@ test("설치돼 있지만 로그인이 없다 — 미설치가 아니라 로그�
 });
 
 test("빈 auth.json 은 로그인 없음이다 — 몸통이 있는 것만 센다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-codex-detect-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-codex-detect-"));
   try {
     mkdirSync(join(dir, "home"));
     writeFileSync(join(dir, "home", "auth.json"), "{}");
     const executable = fakeCodex(dir);
     await withEnv(
-      { COLO_DESIGN_CODEX_BIN: executable, CODEX_HOME: join(dir, "home") },
+      { NOVA_DESIGN_CODEX_BIN: executable, CODEX_HOME: join(dir, "home") },
       async () => {
         const diagnostic = await new CodexDriver().isAvailable();
         assert.equal(diagnostic.ok, true);
@@ -98,7 +98,7 @@ test("빈 auth.json 은 로그인 없음이다 — 몸통이 있는 것만 센�
 });
 
 test("고정 후보가 비었으면 PATH 를 뒤진다 — 찾은 길을 이 실행은 기억한다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-codex-detect-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-codex-detect-"));
   try {
     const found = join(dir, "volta", "codex");
     const type = (stdout: string) =>

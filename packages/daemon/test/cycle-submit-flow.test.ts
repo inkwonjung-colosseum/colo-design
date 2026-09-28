@@ -8,7 +8,7 @@ import { readLedger } from "../dist/cycle-ledger.js";
 import { SUBMIT_RETRY_MS } from "../src/budgets.ts";
 import { makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
-const BRANCH = "colo-design/20260924-1";
+const BRANCH = "nova-design/20260924-1";
 const DEAD_REMOTE = "http://127.0.0.1:1/nope.git";
 
 /** 클론에 커밋 — 도구의 자동 보관이 지나간 모양. */
@@ -50,7 +50,7 @@ test("제출 — 네 단계가 한 번에 서고 의도가 지워진다", async 
     // 제목은 생성할 때만 — 초안(없음) → 프로젝트 이름 · 첫 커밋 제목.
     assert.equal(scene.github.pull(handoff.number)?.title, `하네스 프로젝트 · 회원 목록 화면`);
     const body = scene.github.pull(handoff.number)?.body ?? "";
-    assert.ok(body.includes("colo-design:start"), "본문에 도구 구간이 있어야 한다");
+    assert.ok(body.includes("nova-design:start"), "본문에 도구 구간이 있어야 한다");
     assert.ok(body.includes("바뀐 파일"), "본문에 바뀐 파일 절이 있어야 한다");
     assert.ok(
       scene.chatEvents.some((event) => event.kind === "cycle.handed"),
@@ -275,7 +275,7 @@ test("빈 본문의 열린 PR 입양 — GitHub 의 null 본문에도 도구 구
     await scene.supervisor.settled();
 
     const body = scene.github.pull(number)?.body ?? "";
-    assert.ok(body.includes("colo-design:start"), "도구 구간이 써져야 한다");
+    assert.ok(body.includes("nova-design:start"), "도구 구간이 써져야 한다");
     assert.ok(body.includes("바뀐 파일"), "바뀐 파일 절이 써져야 한다");
     assert.equal(scene.core.openHandoff?.number, number, "입양한 요청 그대로");
     assert.equal(ledgerOf(scene).submit, null);
@@ -316,7 +316,7 @@ test("한마디 — 작성자 줄 바로 아래 `> 한마디:`, 영수증 사건
     const after = scene.github.pull(number)?.body ?? "";
     assert.ok(after.includes("> 한마디: 색도 바꿨어요"));
     assert.ok(!after.includes("검색은 이름만"), "옛 한마디는 새 말로 바뀐다");
-    assert.equal(after.split("colo-design:end").length - 1, 1, "구간의 끝 표식은 하나");
+    assert.equal(after.split("nova-design:end").length - 1, 1, "구간의 끝 표식은 하나");
   } finally {
     await scene.dispose();
   }

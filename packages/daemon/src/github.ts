@@ -4,7 +4,7 @@
  * RestTransport: no code path here talks to anything but the transport it
  * was given, so the offline suites drive the real client against recorded
  * pairs (packages/daemon/test/fixtures/github/) and the daemon selects that
- * same transport when COLO_DESIGN_GITHUB_FIXTURE points at a fixture directory.
+ * same transport when NOVA_DESIGN_GITHUB_FIXTURE points at a fixture directory.
  *
  * Endpoints used (cite in every fixture):
  *   POST  /repos/{owner}/{repo}/pulls/{number}/requested_reviewers — ask for reviews (E4)
@@ -16,7 +16,7 @@
  *   GET   /user/repos                                          — the project picker's list
  *   GET   /repos/{owner}/{repo}/contents/package.json            — dev-family script probe
  */
-import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
+import type { GitHubRepo, GitHubRepoInspection } from "@nova-design/protocol";
 import { FixtureTransport, loadFixturePairs, type RestTransport } from "./rest-transport.js";
 
 export interface PullRequestRef {
@@ -865,9 +865,9 @@ function decodeContents(data: Record<string, any>): string {
 }
 
 /**
- * Fixture transport when COLO_DESIGN_GITHUB_FIXTURE points at a loadable
+ * Fixture transport when NOVA_DESIGN_GITHUB_FIXTURE points at a loadable
  * fixture directory; otherwise a fetch transport against api.github.com
- * (COLO_DESIGN_GITHUB_API repoints it at a local server).
+ * (NOVA_DESIGN_GITHUB_API repoints it at a local server).
  *
  * A fixture directory that fails to load still returns the fetch transport,
  * because the api base is a constant rather than per-project settings: there
@@ -880,8 +880,8 @@ export function createGitHubTransport(env: NodeJS.ProcessEnv = process.env): {
   transport: RestTransport;
   fixtureDir: string | null;
 } {
-  const apiUrl = (env.COLO_DESIGN_GITHUB_API ?? "https://api.github.com").replace(/\/+$/, "");
-  const fixtureDir = env.COLO_DESIGN_GITHUB_FIXTURE ?? null;
+  const apiUrl = (env.NOVA_DESIGN_GITHUB_API ?? "https://api.github.com").replace(/\/+$/, "");
+  const fixtureDir = env.NOVA_DESIGN_GITHUB_FIXTURE ?? null;
   if (fixtureDir) {
     try {
       return {

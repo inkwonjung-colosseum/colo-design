@@ -1,10 +1,10 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-  ColoDesignErrorEnvelope,
-  ColoDesignPinEnvelope,
-  ColoDesignPinsSync,
-} from "@colo-design/protocol";
+  NovaDesignErrorEnvelope,
+  NovaDesignPinEnvelope,
+  NovaDesignPinsSync,
+} from "@nova-design/protocol";
 import { type BrowserWindow, ipcMain, nativeImage, shell, type WebContents } from "electron";
 import { ownersOfElement } from "./element-identity.js";
 import { VIEWPORT_METRICS } from "./emulation.js";
@@ -30,10 +30,10 @@ import { VIEWPORT_METRICS } from "./emulation.js";
  * 링크의 나라는 탭이 아니라 그 페이지 안에서 논다: 외부 http(s) 로의 이동은
  * 제자리에서 일어나고 kind 가 `web` 으로 바뀐다 — 뒤로 가기가 프로젝트로
  * 돌아오는 길이다. 프로젝트가 하나도 마운트되지 않았을 때 에이전트·링크가
- * 여는 페이지는 `loose` 하나뿐 — 렌더러에 `colo-preview:host`로 요소를
+ * 여는 페이지는 `loose` 하나뿐 — 렌더러에 `nova-preview:host`로 요소를
  * 부탁하고, 요소가 사라지면(닫기·전환) `destroyed`로 잊는다.
  *
- * The repo bridge contract (D68) is `colo-design.navigate`: a pin's 화면
+ * The repo bridge contract (D68) is `nova-design.navigate`: a pin's 화면
  * 이동이 이 한 봉투로 간다 — the screens envelope that once marked the
  * bridge `present` is gone, so navigate always rides a plain load.
  * `preview-claude` (D61, the offscreen Claude window) keeps its own partition.
@@ -59,23 +59,23 @@ const CAPTURE_ACK_MS = 400;
  * The pinned element's React owner chain, read in the page's
  * main world — the isolated preload cannot see fiber expandos. The verdict
  * itself lives in element-identity.ts (`ownersOfElement`) so the pin relay
- * (this script, which finds the element by the `data-colo-pick` stamp) and
+ * (this script, which finds the element by the `data-nova-pick` stamp) and
  * the driver's inspect (Runtime.callFunctionOn on the resolved object) share
  * one judgment (PLAN-MCP §3.E-1). This constant is only the scaffold: it
  * interpolates the shared function's source and the pin id as a JSON string
  * literal — and only after the UUID gate, so nothing else ever reaches the
- * code string. The `data-colo-pick` stamp comes off in the script's finally;
+ * code string. The `data-nova-pick` stamp comes off in the script's finally;
  * a non-React or production page answers null and the pin travels without
  * owners.
  */
 const OWNER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OWNER_SCRIPT = `(id) => {
-  const el = document.querySelector('[data-colo-pick="' + id + '"]');
+  const el = document.querySelector('[data-nova-pick="' + id + '"]');
   if (!el) return null;
   try {
     return (${ownersOfElement.toString()}).call(el);
   } finally {
-    el.removeAttribute("data-colo-pick");
+    el.removeAttribute("data-nova-pick");
   }
 }`;
 
@@ -247,7 +247,7 @@ export class PlannerPreviewView {
   /**
    * 프로젝트 없이 열린 페이지 — 에이전트의 navigate 나 `앱에서 링크 열기`가
    * 마운트된 프로젝트 없이 부를 때의 유일한 몸통. 요소는 렌더러에
-   * `colo-preview:host`로 부탁하고, 요소가 사라지면(닫기·무대 철거)
+   * `nova-preview:host`로 부탁하고, 요소가 사라지면(닫기·무대 철거)
    * `destroyed`가 이 참조를 지운다.
    */
   private loose: PreviewPage | null = null;
@@ -288,7 +288,7 @@ export class PlannerPreviewView {
   /** 앱 배율(U19) — 게스트의 실제 배율은 미리보기 배율 × 앱 배율. */
   private appZoom = 1;
   /** The web's last pin sync (재설계 C1) — a page that loads or returns is re-told it. */
-  private lastPins: ColoDesignPinsSync | null = null;
+  private lastPins: NovaDesignPinsSync | null = null;
   /** Resolved when the overlay acknowledges a capture hide/show (D87). */
   private captureAck: (() => void) | null = null;
 
@@ -341,7 +341,7 @@ export class PlannerPreviewView {
         // 이미 화면의 페이지면 show 의 재무장을 못 받는다 — 지금 다시 말한다.
         if (this.activePage === existing) {
           const contents = existing.contents;
-          contents.send("colo-overlay:mode", { on: this.commentsOn, skin: this.overlaySkin });
+          contents.send("nova-overlay:mode", { on: this.commentsOn, skin: this.overlaySkin });
           this.sendPins(contents, this.lastPins ?? { pins: [] });
         }
       }
@@ -355,7 +355,7 @@ export class PlannerPreviewView {
     this.wantedOrigin = origin;
     if (this.activePage?.home !== origin) {
       this.activePage = null;
-      this.send("colo-preview:location", null);
+      this.send("nova-preview:location", null);
     }
   }
 
@@ -443,7 +443,7 @@ export class PlannerPreviewView {
     // 활성 페이지가 없다 — loose 요소를 렌더러에 부탁하고, 게스트가 붙으면
     // 이 주소로 세운다(클레임 경로).
     this.pendingLooseUrl = url;
-    this.send("colo-preview:host", { url });
+    this.send("nova-preview:host", { url });
   }
 
   /**
@@ -465,11 +465,11 @@ export class PlannerPreviewView {
       this.wantedOrigin = null;
       // pane 이 빈 화면이 됐다는 말 — 주소창·뒤로/앞으로 칩이 지난 페이지의
       // 것을 들고 있지 않게 지운다.
-      this.send("colo-preview:location", null);
+      this.send("nova-preview:location", null);
       return;
     }
     // loose — 닫기를 렌더러에 부탁한다. 요소가 철거되면 destroyed가 잊는다.
-    this.send("colo-preview:close", { url: page.contents.getURL() });
+    this.send("nova-preview:close", { url: page.contents.getURL() });
     this.forget(page);
   }
 
@@ -680,7 +680,7 @@ export class PlannerPreviewView {
   }
 
   /**
-   * D85 ⓔ: 배율은 눈, 에뮬레이션은 장치 — 독립이다. 되알림(`colo-preview:zoom`)
+   * D85 ⓔ: 배율은 눈, 에뮬레이션은 장치 — 독립이다. 되알림(`nova-preview:zoom`)
    * 이 필요한 건 `···` 메뉴가 먼저 바꾸면 렌더러가 모르기 때문이다.
    */
   zoomIn(): void {
@@ -698,7 +698,7 @@ export class PlannerPreviewView {
   /**
    * 앱 배율(U19) — 게스트의 실제 배율은 미리보기 배율 × 앱 배율이다. 살아
    * 있는 페이지 전부(따뜻한 페이지와 loose)에 다시 건다. 되알림
-   * (`colo-preview:zoom`)이 말하는 값은 미리보기 배율(page.zoomFactor)만 —
+   * (`nova-preview:zoom`)이 말하는 값은 미리보기 배율(page.zoomFactor)만 —
    * 사용자에게 보이는 `100%` 는 앱 배율과 무관하다.
    */
   setAppZoom(factor: number): void {
@@ -714,7 +714,7 @@ export class PlannerPreviewView {
     const clamped = Math.min(2, Math.max(0.5, factor));
     page.contents.setZoomFactor(clamped * this.appZoom);
     page.zoomFactor = clamped;
-    this.send("colo-preview:zoom", { factor: clamped });
+    this.send("nova-preview:zoom", { factor: clamped });
   }
 
   /** The preview origin on screen — the main window's popup gate. */
@@ -743,7 +743,7 @@ export class PlannerPreviewView {
     // external 의 자리를 대신한다). 다시 preview 로 돌아오면 show/did-navigate
     // 가 재무장한다.
     if (this.activePage?.kind !== "preview") return;
-    this.webContents()?.send("colo-overlay:mode", { on, skin: this.overlaySkin });
+    this.webContents()?.send("nova-overlay:mode", { on, skin: this.overlaySkin });
   }
 
   /**
@@ -751,7 +751,7 @@ export class PlannerPreviewView {
    * that loads or comes back from a park is re-told it, and project it onto
    * the overlay (the badges redraw from this).
    */
-  syncPins(sync: ColoDesignPinsSync): void {
+  syncPins(sync: NovaDesignPinsSync): void {
     this.lastPins = sync;
     if (this.activePage?.kind !== "preview") return;
     if (this.webContents()) this.sendPins(this.webContents() as WebContents, sync);
@@ -760,7 +760,7 @@ export class PlannerPreviewView {
   /** 재설계 C1: the web's chip click — the matching badge on the page flashes. */
   pinFlash(id: string): void {
     if (this.activePage?.kind !== "preview") return;
-    this.webContents()?.send("colo-overlay:flash", { id });
+    this.webContents()?.send("nova-overlay:flash", { id });
   }
 
   /**
@@ -771,7 +771,7 @@ export class PlannerPreviewView {
   private async withOverlayHidden(work: () => Promise<void>): Promise<void> {
     const contents = this.webContents();
     if (!contents) return;
-    contents.send("colo-overlay:capture", { on: true });
+    contents.send("nova-overlay:capture", { on: true });
     await new Promise<void>((ok) => {
       const timer = setTimeout(ok, CAPTURE_ACK_MS);
       this.captureAck = () => {
@@ -783,7 +783,7 @@ export class PlannerPreviewView {
     try {
       await work();
     } finally {
-      contents.send("colo-overlay:capture", { on: false });
+      contents.send("nova-overlay:capture", { on: false });
     }
   }
 
@@ -793,9 +793,9 @@ export class PlannerPreviewView {
    * 전달이 조용히 죽는다 — 스윕은 오버레이의 pins-poll 폴백이 잇는다
    * (게스트→main invoke 는 살아 있다).
    */
-  private sendPins(contents: WebContents, sync: ColoDesignPinsSync): void {
+  private sendPins(contents: WebContents, sync: NovaDesignPinsSync): void {
     try {
-      contents.send("colo-overlay:pins", sync);
+      contents.send("nova-overlay:pins", sync);
     } catch {
       // A dead contents reports nothing — the overlay's poll pulls the truth.
     }
@@ -805,7 +805,7 @@ export class PlannerPreviewView {
    * 오버레이의 pins-poll 답 — 이 게스트가 repo 페이지일 때만 진실을 준다.
    * 로밍 중인 페이지에게 스윕 진실을 주면 남의 핀을 지운다.
    */
-  pinsFor(sender: WebContents): ColoDesignPinsSync {
+  pinsFor(sender: WebContents): NovaDesignPinsSync {
     const page = this.pageOf(sender);
     return page !== null && page.kind === "preview"
       ? (this.lastPins ?? { pins: [] })
@@ -896,7 +896,7 @@ export class PlannerPreviewView {
    * is where the element is NOW, one shot per pin (긴 변 600px, JPEG q70).
    * A failed crop costs only the thumbnail; the pin always gets through.
    */
-  private async relayPin(payload: ColoDesignPinEnvelope): Promise<void> {
+  private async relayPin(payload: NovaDesignPinEnvelope): Promise<void> {
     try {
       await this.withOverlayHidden(async () => {
         const contents = this.webContents();
@@ -953,7 +953,7 @@ export class PlannerPreviewView {
         }
       });
     } finally {
-      this.send("colo-preview:pin", payload);
+      this.send("nova-preview:pin", payload);
       // The gesture ends here: focus returns to the composer, so the
       // planner keeps talking without reaching for the mouse (재설계 C4).
       this.window()?.webContents.focus();
@@ -1033,24 +1033,24 @@ export class PlannerPreviewView {
     // 자리를 대신한다).
     if (page?.kind !== "preview") return;
     const type = typeof payload?.type === "string" ? payload.type : "";
-    if (type === "colo-design.pin" && this.activePage === page) {
+    if (type === "nova-design.pin" && this.activePage === page) {
       // 에이전트 입력 동안의 "핀"은 그 클릭이 삼킨 흔적일 뿐 사용자의 말이
       // 아니다 — 오버레이 깃발(col·overlay:agent)의 누수 대비 안전망이다
       // (베타 테스트 #2).
       if (this.agentInputDepth > 0) return;
       // inside is logged, never an unhandled rejection.
-      void this.relayPin(payload as ColoDesignPinEnvelope).catch((error) => {
+      void this.relayPin(payload as NovaDesignPinEnvelope).catch((error) => {
         console.error("preview pin relay failed", error);
       });
-    } else if (type === "colo-design.pin-focus" && this.activePage === page) {
-      this.send("colo-preview:pin-focus", payload);
+    } else if (type === "nova-design.pin-focus" && this.activePage === page) {
+      this.send("nova-preview:pin-focus", payload);
     }
   }
 
   /**
    * 에이전트 입력의 깊이 — 브라우저 도구가 화면에 손을 대는 op(click · type
    * · drag …)의 동안만 0 이 아니다. 그 동안 오려내는 것은 둘: 오버레이의
-   * 핀 캡처(preload 의 `colo-overlay:agent` 깃발)와, 여기서 새어 나오는 핀
+   * 핀 캡처(preload 의 `nova-overlay:agent` 깃발)와, 여기서 새어 나오는 핀
    * 봉투(onOverlayPost 의 drop). 도구의 클릭은 화면을 확인하려는 손길이지
    * 사용자의 가리킴이 아니므로, 핀 모드가 켜져 있어도 그 클릭이 사용자의
    * 핀으로 쌓이는 일이 없어야 한다 (베타 테스트 #2).
@@ -1083,7 +1083,7 @@ export class PlannerPreviewView {
       if (sender === contents) delivered.resolve();
     };
     this.agentInputAcks.add(waiter);
-    contents.send("colo-overlay:agent", { on });
+    contents.send("nova-overlay:agent", { on });
     // 게스트가 죽어 있으면 답도 없다 — op 가 멈추는 것보다 낫다, 유예 뒤에는
     // 답이 없어도 간다.
     const timer = setTimeout(() => delivered.resolve(), 500);
@@ -1206,7 +1206,7 @@ export class PlannerPreviewView {
     if (this.activePage === page) {
       this.activePage = null;
       // 주소창·뒤로/앞으로 칩이 지난 페이지의 것을 들고 있지 않게 지운다.
-      this.send("colo-preview:location", null);
+      this.send("nova-preview:location", null);
     }
   }
 
@@ -1226,11 +1226,11 @@ export class PlannerPreviewView {
     // 다시 입힌다(데스크톱이면 남은 에뮬레이션을 벗긴다).
     this.applyEmulation(page);
     // The repo overlay stays out of roamed pages: comments mode off, and
-    contents.send("colo-overlay:mode", { on: this.commentsOn && preview, skin: this.overlaySkin });
+    contents.send("nova-overlay:mode", { on: this.commentsOn && preview, skin: this.overlaySkin });
     this.sendPins(contents, preview ? (this.lastPins ?? { pins: [] }) : { pins: [] });
     this.sendLocation(page);
-    this.send("colo-preview:loading", { on: contents.isLoading() });
-    this.send("colo-preview:zoom", { factor: page.zoomFactor });
+    this.send("nova-preview:loading", { on: contents.isLoading() });
+    this.send("nova-preview:zoom", { factor: page.zoomFactor });
   }
 
   /**
@@ -1271,7 +1271,7 @@ export class PlannerPreviewView {
       // is re-told everything it needs. preview 페이지는 모드와 마지막 핀 동기,
       // 로밍 중인 페이지는 모드 off 와 빈 핀 스윕(앞 문서가 남긴 배지를 지운다).
       if (page.kind === "preview") {
-        contents.send("colo-overlay:mode", { on: this.commentsOn });
+        contents.send("nova-overlay:mode", { on: this.commentsOn });
         this.sendPins(contents, this.lastPins ?? { pins: [] });
         // ③ 페이지가 낡은 epoch 위에 서 있으면 그 뿌리로 다시 시작한다 —
         // 포트가 다른 프로젝트에 넘어갔을 수 있다. 재로드의 did-navigate 가
@@ -1281,7 +1281,7 @@ export class PlannerPreviewView {
           this.refresh(page, mount.url, mount.epoch);
         }
       } else {
-        contents.send("colo-overlay:mode", { on: false });
+        contents.send("nova-overlay:mode", { on: false });
         this.sendPins(contents, { pins: [] });
       }
     });
@@ -1297,10 +1297,10 @@ export class PlannerPreviewView {
       if (this.lastPins) this.sendPins(contents, this.lastPins);
     });
     contents.on("did-start-loading", () => {
-      if (this.activePage === page) this.send("colo-preview:loading", { on: true });
+      if (this.activePage === page) this.send("nova-preview:loading", { on: true });
     });
     contents.on("did-stop-loading", () => {
-      if (this.activePage === page) this.send("colo-preview:loading", { on: false });
+      if (this.activePage === page) this.send("nova-preview:loading", { on: false });
     });
     // D69: the pane's own ears — no repo hook. 44 의 형태: 첫 인자가 details
     // 이벤트다(level 은 "info"|"warning"|"error"|"debug"). D89: every line
@@ -1361,7 +1361,7 @@ export class PlannerPreviewView {
             ((input.key === "p" || input.key === "P") && Boolean(input.shift))));
       if (!forward) return;
       event.preventDefault();
-      this.send("colo-preview:key", {
+      this.send("nova-preview:key", {
         key: input.key,
         meta: Boolean(input.meta),
         shift: Boolean(input.shift),
@@ -1373,7 +1373,7 @@ export class PlannerPreviewView {
 
   private reportError(
     page: PreviewPage,
-    kind: ColoDesignErrorEnvelope["kind"],
+    kind: NovaDesignErrorEnvelope["kind"],
     message: string,
     at?: string,
   ): void {
@@ -1384,8 +1384,8 @@ export class PlannerPreviewView {
     } catch {
       // A URL that will not parse has no screen to name; the message stands.
     }
-    this.send("colo-preview:error", {
-      type: "colo-design.error",
+    this.send("nova-preview:error", {
+      type: "nova-design.error",
       kind,
       message,
       route,
@@ -1406,7 +1406,7 @@ export class PlannerPreviewView {
     // loose 페이지가 막 태어났을 때의 주소는 about:blank 다 — 주소창엔 빈 칸이
     // 어울린다.
     if (url === "about:blank") path = "/";
-    this.send("colo-preview:location", {
+    this.send("nova-preview:location", {
       /** preview 인지 web 인지 — external 불리어의 자리를 대신한다. */
       kind: page.kind,
       path,
@@ -1432,18 +1432,18 @@ export class PlannerPreviewView {
 export function registerPreviewIpc(view: PlannerPreviewView): void {
   // Routed by sender: a parked page's bridge may speak (its own reload) and
   // must reach its own page's facts, never the renderer.
-  ipcMain.on("colo-overlay:post", (event, payload: { type?: unknown }) => {
+  ipcMain.on("nova-overlay:post", (event, payload: { type?: unknown }) => {
     view.onOverlayPost(event.sender, payload);
   });
-  ipcMain.on("colo-overlay:agent-ack", (event) => {
+  ipcMain.on("nova-overlay:agent-ack", (event) => {
     view.onAgentInputAck(event.sender);
   });
-  ipcMain.on("colo-overlay:capture-done", (event) => {
+  ipcMain.on("nova-overlay:capture-done", (event) => {
     if (event.sender !== view.webContents()) return;
     view.onCaptureDone();
   });
   // 오버레이의 스윕 폴백(ⓒ) — 배지가 남아 있는 동안 진실을 당겨간다.
-  ipcMain.handle("colo-overlay:pins-poll", (event) => view.pinsFor(event.sender));
+  ipcMain.handle("nova-overlay:pins-poll", (event) => view.pinsFor(event.sender));
   ipcMain.handle("preview:mount", (_event, input: unknown) => {
     if (!input || typeof input !== "object" || !("url" in input) || typeof input.url !== "string") {
       return { ok: true };
@@ -1508,7 +1508,7 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
   // 재설계 C1: the web pushes the whole pin list; the overlay's badges are
   // its projection. Idempotent — the web resends it on every change and
   // after a page load.
-  ipcMain.handle("preview:pins", (_event, sync: ColoDesignPinsSync) => {
+  ipcMain.handle("preview:pins", (_event, sync: NovaDesignPinsSync) => {
     view.syncPins(sync);
     return { ok: true };
   });

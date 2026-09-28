@@ -52,5 +52,5 @@ export function extractDeveloperReplies(text: string, ids: number[]): Map<number
  * "사용자".
  */
 export function replyFooter(authorName: string | null): string {
-  return `— Colo Design 이 ${authorName ?? "사용자"} 님 대신 남김`;
+  return `— Nova Design 이 ${authorName ?? "사용자"} 님 대신 남김`;
 }

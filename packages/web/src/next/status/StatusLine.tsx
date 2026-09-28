@@ -234,7 +234,7 @@ export function StatusLine({
     daemon.api
       .submit(sessions.activeId, note || undefined)
       .catch((error) => {
-        console.error("[colo-design] submit", error);
+        console.error("[nova-design] submit", error);
         setWhy(L.submit.sendFailed);
       })
       .finally(() => setSending(false));

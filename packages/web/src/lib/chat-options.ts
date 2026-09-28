@@ -1,4 +1,4 @@
-import type { EffortLevel, SessionModelInfo } from "@colo-design/protocol";
+import type { EffortLevel, SessionModelInfo } from "@nova-design/protocol";
 
 /**
  * How the conversation settings are named.

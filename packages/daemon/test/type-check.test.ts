@@ -151,7 +151,7 @@ test("diagnosticsAnswer — unavailable · timeout · failed 의 문장", () => 
 
 /** 임시 클론 — tsconfig 과 node_modules/typescript/bin/tsc 을 채워 넣는다. */
 function makeRepo(withTsconfig: boolean, withTypescript: boolean): string {
-  const root = mkdtempSync(join(tmpdir(), "colo-type-check-plan-"));
+  const root = mkdtempSync(join(tmpdir(), "nova-type-check-plan-"));
   if (withTsconfig) writeFileSync(join(root, "tsconfig.json"), "{}");
   if (withTypescript) {
     mkdirSync(join(root, "node_modules", "typescript", "bin"), { recursive: true });
@@ -376,7 +376,7 @@ test("TypeChecker — 진짜 tsc: 오류를 돌려주고 빌드 정보 파일은
     existsSync(join(TYPESCRIPT_INSTALL, "bin", "tsc")),
     "레포 루트의 node_modules/typescript 가 있어야 이 시험이 돈다",
   );
-  const root = mkdtempSync(join(tmpdir(), "colo-type-check-real-"));
+  const root = mkdtempSync(join(tmpdir(), "nova-type-check-real-"));
   const repoRoot = join(root, "repo");
   const projectRoot = join(root, "project");
   try {

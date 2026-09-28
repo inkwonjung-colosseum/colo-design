@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ChangedFileLite, DiffFile, DiffHunk } from "@colo-design/protocol";
+import type { ChangedFileLite, DiffFile, DiffHunk } from "@nova-design/protocol";
 
 /**
  * 저장이 승인하는 diff — `git diff HEAD` 의 글자를 파일과 hunk 로 바꾸고,

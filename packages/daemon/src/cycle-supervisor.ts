@@ -25,7 +25,7 @@ import {
   markTurn,
   type RepoStatus,
   reviewToTurn,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import {
   BUDGETS,
   backoffDelay,
@@ -76,7 +76,7 @@ import {
 } from "./cycle-reconcile.js";
 import { isScreenQuietKey } from "./developer-notice.js";
 import { extractDeveloperReplies, replyFooter } from "./developer-replies.js";
-import { COLO_DESIGN_DIR } from "./environment.js";
+import { NOVA_DESIGN_DATA_DIR } from "./environment.js";
 import type { GitHubClient, PullRequestRef } from "./github.js";
 import { mergeToolBlock, pickHandoffTitle, readToolNote } from "./handoff-body.js";
 import { type DaemonLogger, sanitizeText } from "./log.js";
@@ -86,6 +86,7 @@ import {
   conflictBrief,
   DEFAULT_HANDOFF_TITLE,
   detailOf,
+  LEGACY_STASH_MESSAGES,
   SAVE_CONFLICT_OPEN_DETAIL,
   STASH_MESSAGE,
 } from "./repo-core.js";
@@ -158,7 +159,7 @@ export interface SupervisorDeps {
   core: RepoCore;
   /** save · pull · 넘기기 — 차선과 diff 를 나눠 쓰는 같은 뿌리의 워크스페이스. */
   workspace: RepoWorkspace;
-  /** 원장 파일 — `~/.colo-design/projects/<slug>/cycle.json`. */
+  /** 원장 파일 — `~/.nova-design/projects/<slug>/cycle.json`. */
   ledgerPath: string;
   /** SessionManager.busyIn(root) — 턴이 도는 동안은 기다리는 판정이 앞선다. */
   busy: () => boolean;
@@ -230,7 +231,7 @@ export interface SupervisorDeps {
   resolveMachineNotice?: (key: string) => void;
   /** 디스크 여유를 읽는 손 — 기본은 fs.statfs. 시험이 주입한다. */
   statfs?: (path: string) => Promise<DiskStats>;
-  /** 여유를 볼 자리 — 기본은 `~/.colo-design`(그 폴더가 든 볼륨). */
+  /** 여유를 볼 자리 — 기본은 `~/.nova-design`(그 폴더가 든 볼륨). */
   dataDir?: string;
   logger: DaemonLogger;
   /**
@@ -1469,7 +1470,7 @@ export class CycleSupervisor {
       await client.commentOnIssue({
         ...slug,
         number: pr,
-        body: "반려 이유를 남겨 주시면 AI 가 반영해 새 요청으로 다시 보냅니다. — Colo Design",
+        body: "반려 이유를 남겨 주시면 AI 가 반영해 새 요청으로 다시 보냅니다. — Nova Design",
       });
     } catch (error) {
       this.log(`반려 이유 청구 실패(다시 시도하지 않음): ${detailOf(error, this.deps.core.pat)}`);
@@ -1543,7 +1544,12 @@ export class CycleSupervisor {
         const list = await core.git(["stash", "list"]).catch(() => "");
         const stillOurs = list
           .split("\n")
-          .some((line) => line.startsWith(`${ref}:`) && line.includes(STASH_MESSAGE));
+          .some(
+            (line) =>
+              line.startsWith(`${ref}:`) &&
+              (line.includes(STASH_MESSAGE) ||
+                LEGACY_STASH_MESSAGES.some((old) => line.includes(old))),
+          );
         if (stillOurs) await core.git(["stash", "drop", ref]).catch(() => "");
       }
     }
@@ -2112,7 +2118,7 @@ export class CycleSupervisor {
   private async freeDiskBytes(): Promise<number | null> {
     const read = this.deps.statfs ?? ((path: string) => statfs(path));
     try {
-      return freeBytesOf(await read(this.deps.dataDir ?? COLO_DESIGN_DIR));
+      return freeBytesOf(await read(this.deps.dataDir ?? NOVA_DESIGN_DATA_DIR));
     } catch {
       return null;
     }

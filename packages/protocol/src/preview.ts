@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
 // Preview envelopes (PLAN D64–D69) — two contracts live here.
 //
-// 1. 레포 브리지 계약 (D68): `colo-design.navigate` is ALL a connected repo
+// 1. 레포 브리지 계약 (D68): `nova-design.navigate` is ALL a connected repo
 //    owes the tool — a pin's 화면 이동이 이 한 봉투로 간다. The repo
 //    carries a hand-synced duplicate of these shapes
 //    (reference clone `src/preview-bridge/types.ts`); on the desktop the
-//    envelopes ride the preview preload's `window.coloDesign.post` → IPC, in a
+//    envelopes ride the preview preload's `window.novaDesign.post` → IPC, in a
 //    plain browser they ride postMessage with the iframe.
 // 2. 도구 내부 (D67 · D69): the comments bundle, the error report and the
 //    comments-mode switch are the TOOL talking to itself — the desktop's
@@ -19,7 +19,7 @@
  * own text, a CSS path from the page's `body`, and the viewport rect at pin
  * time(2026-09-21 레포 마커 철거 — 신원은 경로뿐이다).
  */
-export interface ColoDesignCommentTarget {
+export interface NovaDesignCommentTarget {
   /** The tag name — the element's own kind. */
   component: string;
   /** The element's own text (direct text nodes), trimmed and capped. */
@@ -56,17 +56,17 @@ export interface ColoDesignCommentTarget {
  * One pin from the tool's preview overlay (재설계 C1): a click lands as ONE
  * envelope, the view crops the element (`shot`), and the web parks it as a
  * composer attachment. The overlay holds no draft state — the web's pin list
- * is the truth, and it projects back through `ColoDesignPinsSync`.
+ * is the truth, and it projects back through `NovaDesignPinsSync`.
  */
-export interface ColoDesignPinEnvelope {
-  type: "colo-design.pin";
+export interface NovaDesignPinEnvelope {
+  type: "nova-design.pin";
   pin: {
     /** The overlay's UUID — chip, badge and store row all meet on it. */
     id: string;
     /** The screen the pin sat on, as `screenContext` read it. */
     screen: string;
 
-    element: ColoDesignCommentTarget;
+    element: NovaDesignCommentTarget;
     /**
      * What the planner was looking at (PLAN D87): the view crops the element
      * (`element.rect`) out of the page before the pin reaches the web, and
@@ -85,7 +85,7 @@ export interface ColoDesignPinEnvelope {
  * badge on `path`. A pin on another screen draws no badge; its row exists
  * all the same.
  */
-export interface ColoDesignPinsSync {
+export interface NovaDesignPinsSync {
   pins: Array<{
     id: string;
     screen: string;
@@ -127,11 +127,11 @@ export interface ColoDesignPinsSync {
  * D69): `console-message` errors and a crashed renderer are `runtime`, a
  * failed main-frame load is `build`. Built from the preview view's own
  * events — no repo hook involved — and sent to the web as
- * `colo-preview:error`, where the banner above the frame offers it to Claude
+ * `nova-preview:error`, where the banner above the frame offers it to Claude
  * as one marker turn.
  */
-export interface ColoDesignErrorEnvelope {
-  type: "colo-design.error";
+export interface NovaDesignErrorEnvelope {
+  type: "nova-design.error";
   /** A crash inside the page, or the build that serves it. */
   kind: "runtime" | "build";
   /** The error text, as the browser or the loader reported it. */

@@ -49,16 +49,16 @@ function looksText(bytes: Buffer): boolean {
 /**
  * 첨부가 놓이는 곳. git 저장소라면 `.git` 안 — git status 가 보지 않는
  * 유일한 작업실 내부 공간이다(워크트리의 `.git` 파일은 파일이므로 폴백으로).
- * 그 밖의 cwd 는 숨김 `.colo-design/` 아래.
+ * 그 밖의 cwd 는 숨김 `.nova-design/` 아래.
  */
 function attachmentDir(cwd: string): string {
   try {
     const git = join(cwd, ".git");
-    if (statSync(git).isDirectory()) return join(git, "colo-design-attachments");
+    if (statSync(git).isDirectory()) return join(git, "nova-design-attachments");
   } catch {
     // .git 이 없거나 읽을 수 없다 — 폴백으로.
   }
-  return join(cwd, ".colo-design", "attachments");
+  return join(cwd, ".nova-design", "attachments");
 }
 
 /** 파일명은 계획자가 붙인 이름을 닮되 경로 밖의 문자는 걸러낸다. */
@@ -92,6 +92,9 @@ function prune(dir: string): void {
  */
 export function pruneStagedAttachments(cwd: string): void {
   prune(attachmentDir(cwd));
+  // read-legacy — 0.3.x 가 남긴 첨부 폴더도 같은 7일 규칙으로 거둔다.
+  prune(join(cwd, ".git", "colo-design-attachments")); // read-legacy
+  prune(join(cwd, ".colo-design", "attachments")); // read-legacy
 }
 
 /** 바이너리 첨부를 디스크에 적고 절대 경로를 돌려준다. */

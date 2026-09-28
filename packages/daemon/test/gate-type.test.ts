@@ -30,7 +30,7 @@ test("gateBrief — 둘째 인자가 없으면 지금의 모양 그대로다", (
   assert.equal(
     brief,
     [
-      '<!-- colo-design:gate {"step":"화면 확인"} -->',
+      '<!-- nova-design:gate {"step":"화면 확인"} -->',
       "사용자가 가리킨 화면을 도구가 다시 열어 봤습니다. 아래를 고친 뒤 답해 주세요.",
       "",
       "### /list",
@@ -41,7 +41,7 @@ test("gateBrief — 둘째 인자가 없으면 지금의 모양 그대로다", (
 
 test("gateBrief — 타입 절만 있으면 그 절만으로 게이트가 선다", () => {
   const brief = gateBrief([], ["- src/a.ts:3:7 TS2322 형식이 맞지 않습니다"]);
-  assert.ok(brief.startsWith('<!-- colo-design:gate {"step":"화면 확인"} -->'));
+  assert.ok(brief.startsWith('<!-- nova-design:gate {"step":"화면 확인"} -->'));
   assert.ok(
     brief.includes("이번 턴에 고친 파일을 도구가 타입 검사했습니다. 아래를 고친 뒤 답해 주세요."),
   );

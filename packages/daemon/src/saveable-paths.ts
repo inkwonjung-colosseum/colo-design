@@ -12,7 +12,7 @@
  * - 락파일은 레포가 **추적하지 않을 때만** 뺀다. 추적 중인 락파일의 변경은
  *   AI 가 의존성을 더한 정당한 편집이므로 담는다.
  */
-import type { DiffFile } from "@colo-design/protocol";
+import type { DiffFile } from "@nova-design/protocol";
 
 /** 도구의 설치가 남길 수 있는 락파일 — 바닥글 이름으로 어느 깊이에서든. */
 const LOCKFILE_BASENAMES: Record<string, true> = {

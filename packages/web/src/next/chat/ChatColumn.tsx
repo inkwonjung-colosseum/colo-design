@@ -1,4 +1,4 @@
-import type { SessionPinHint } from "@colo-design/protocol";
+import type { SessionPinHint } from "@nova-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PinAttachment } from "../../hooks/usePins";
 import type { Attachment } from "../../lib/attachment";
@@ -48,7 +48,7 @@ export function ChatColumn({
     (screen: TurnScreen) => {
       if (narrow) nav.showTab("preview");
       if (!openScreenPath(screen.path)) {
-        void window.coloDesignDesktop?.preview?.navigate?.(screen.path);
+        void window.novaDesignDesktop?.preview?.navigate?.(screen.path);
       }
     },
     [narrow, nav],
@@ -432,7 +432,7 @@ export function ChatColumn({
           pinNumberStart={pins.ghosts.length + 1}
           onPinNote={pins.setNote}
           onPinRemove={pins.remove}
-          onPinFocus={(id) => void window.coloDesignDesktop?.preview?.pinFlash?.(id)}
+          onPinFocus={(id) => void window.novaDesignDesktop?.preview?.pinFlash?.(id)}
           narrow={narrow}
           onPinMode={() => {
             nav.showTab("preview");

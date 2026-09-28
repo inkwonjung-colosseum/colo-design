@@ -1,4 +1,4 @@
-import type { ThreadSummary } from "@colo-design/protocol";
+import type { ThreadSummary } from "@nova-design/protocol";
 import type { Ref } from "react";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";

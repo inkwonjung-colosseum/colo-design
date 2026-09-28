@@ -4,22 +4,22 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { DaemonStatus } from "@colo-design/protocol";
-import { PROTOCOL_VERSION } from "@colo-design/protocol";
+import type { DaemonStatus } from "@nova-design/protocol";
+import { PROTOCOL_VERSION } from "@nova-design/protocol";
 import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
 
 const run = promisify(execFile);
 
 /**
- * Everything Colo Design writes lives under one hidden folder in the user's
+ * Everything Nova Design writes lives under one hidden folder in the user's
  * home: the repo clones and this daemon's own settings (PLAN D1). One root is
  * one thing to back up, explain, or delete — and the dot keeps a planner out
  * of files only the tool should write.
  */
-export const COLO_DESIGN_DIR = join(homedir(), ".colo-design");
+export const NOVA_DESIGN_DATA_DIR = join(homedir(), ".nova-design");
 
 /** Daemon settings: `daemon.json`, `repo.json`, `projects.json`. */
-export const CONFIG_DIR = join(COLO_DESIGN_DIR, "config");
+export const CONFIG_DIR = join(NOVA_DESIGN_DATA_DIR, "config");
 
 export type Platform = "win32" | "darwin" | "linux";
 
@@ -142,7 +142,7 @@ export function gitCandidates(platform: Platform, env: NodeJS.ProcessEnv = proce
     // 번들 MinGit 이 먼저다(P1-1): 데스크톱 앱이 resources/bin 에 실어 나르고
     // git.exe 는 그 안의 cmd/ 아래에 있다 — PATH 의 resources/bin 만으로는
     // `where` 가 못 찾는 자리다. 번들이 없는 브라우저 개발 경로는 건너뛴다.
-    const bundled = (env.COLO_DESIGN_EXTRA_PATH ?? "")
+    const bundled = (env.NOVA_DESIGN_EXTRA_PATH ?? "")
       .split(";")
       .filter(Boolean)
       .map((dir) => join(dir, "cmd", "git.exe"));
@@ -156,7 +156,7 @@ export function gitCandidates(platform: Platform, env: NodeJS.ProcessEnv = proce
   // 두고 GIT_EXEC_PATH 를 그것으로 세웠으니, 데몬이 다른 git 을 집으면 exec
   // path 가 섞여 깨진다. EXTRA_PATH 의 각 항목에 대해 `<dir>/git/bin/git` 을
   // 맨 앞에 둔다(win32 분기의 모양과 같다). 번들이 없는 개발 실행은 그대로.
-  const bundled = (env.COLO_DESIGN_EXTRA_PATH ?? "")
+  const bundled = (env.NOVA_DESIGN_EXTRA_PATH ?? "")
     .split(":")
     .filter(Boolean)
     .map((dir) => join(dir, "git", "bin", "git"));
@@ -179,7 +179,7 @@ let gitResolution: { key: string; path: string | null } | null = null;
 /**
  * The git this daemon drives — and the one every git child spawns, so the
  * gate's verdict and the clone it clears share one binary. A pinned
- * `COLO_DESIGN_GIT_BIN` replaces discovery outright: the suites point it at a
+ * `NOVA_DESIGN_GIT_BIN` replaces discovery outright: the suites point it at a
  * stub (or at nothing) and no machine-local install may answer instead.
  * Otherwise PATH wins and the installer locations fill its gaps — the
  * Finder-launched desktop app inherits `/usr/bin:/bin`, where a Homebrew-only
@@ -190,7 +190,7 @@ export async function resolveGitExecutable(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | null> {
   const platform = currentPlatform();
-  const pin = env.COLO_DESIGN_GIT_BIN;
+  const pin = env.NOVA_DESIGN_GIT_BIN;
   const key = `${pin ?? ""}\u0000${env.PATH ?? ""}`;
   if (gitResolution?.key === key) return gitResolution.path;
 
@@ -285,7 +285,7 @@ export async function resolvePnpmExecutable(): Promise<string | null> {
 }
 
 /**
- * Node as the repo's own commands would see it. `COLO_DESIGN_EXTRA_PATH` — the
+ * Node as the repo's own commands would see it. `NOVA_DESIGN_EXTRA_PATH` — the
  * desktop app's bundled runtime — is searched FIRST, because that is the PATH
  * prefix `repo.ts` puts ahead of every install · preview · build child: a
  * version the repo commands would not use is a wrong answer here, however
@@ -296,7 +296,7 @@ export async function resolveNodeVersion(
   env: NodeJS.ProcessEnv = process.env,
   platform: Platform = currentPlatform(),
 ): Promise<{ version: string; bundled: boolean } | null> {
-  const extra = env.COLO_DESIGN_EXTRA_PATH;
+  const extra = env.NOVA_DESIGN_EXTRA_PATH;
   const extraDirs = extra ? extra.split(platform === "win32" ? ";" : ":").filter(Boolean) : [];
   const binary = platform === "win32" ? "node.exe" : "node";
   for (const dir of extraDirs) {
@@ -395,7 +395,7 @@ export async function resolveClaudeExecutable(override?: string): Promise<string
   const platform = currentPlatform();
   const candidates = [
     override,
-    process.env.COLO_DESIGN_CLAUDE_BIN,
+    process.env.NOVA_DESIGN_CLAUDE_BIN,
     ...claudeCandidates(platform, homedir()),
   ].filter((value): value is string => Boolean(value));
 

@@ -11,7 +11,7 @@
   적어 둔다(패키징된 앱은 절대 쓰지 않는다):
 
   ```bash
-  COLO_DESIGN_BENCH_ENDPOINT=/tmp/colo-bench.json pnpm dev:desktop
+  NOVA_DESIGN_BENCH_ENDPOINT=/tmp/nova-bench.json pnpm dev:desktop
   ```
 
   대신 독립 데몬(`pnpm dev:daemon`)을 쓸 때는 인쇄되는 `client url` 을
@@ -24,15 +24,15 @@
 ```bash
 # fixture 앱(한 파일 server.js) — 원격에 작업 가지가 올라가는 것을 확인했으면 --yes
 node scripts/bench/bench.mjs run \
-  --endpoint /tmp/colo-bench.json \
-  --project colo-beta-fixture \
+  --endpoint /tmp/nova-bench.json \
+  --project nova-beta-fixture \
   --scenarios scripts/bench/scenarios/fixture.json \
   --provider omp --model devin/swe-2 --effort high \
   --label before
 
 # CDS 레포 — fixture 가 아니면 --yes 가 필요하다(원격에 작업 가지가 올라간다)
 node scripts/bench/bench.mjs run \
-  --endpoint /tmp/colo-bench.json \
+  --endpoint /tmp/nova-bench.json \
   --project cds-design-second-repo \
   --scenarios scripts/bench/scenarios/cds.json \
   --label before --yes
@@ -42,7 +42,7 @@ node scripts/bench/bench.mjs run \
 |---|---|
 | `--endpoint <파일>` | dev:desktop 이 적어 둔 접속 파일(`--url` 과 둘 중 하나 필수) |
 | `--url <ws 주소>` | `ws://127.0.0.1:<포트>/?token=<토큰>` 꼴을 직접 건다 |
-| `--project <slug>` | 프로젝트 — 필수. `colo-beta-fixture` 가 아니면 `--yes` 를 요한다 |
+| `--project <slug>` | 프로젝트 — 필수. `nova-beta-fixture` 가 아니면 `--yes` 를 요한다 |
 | `--scenarios <파일>` | 시나리오 JSON — 필수 |
 | `--provider` · `--model` · `--effort` | `session.create` 에 그대로 실린다(없으면 데몬 기본값) |
 | `--label <이름>` | 결과 파일 꼬리표(기본 `run`) |
@@ -99,7 +99,7 @@ node scripts/bench/bench.mjs compare bench-results/…-before.json bench-results
   표식 턴으로 실린다 — 마커의 `items[].id` 와 `pinHints[].id` 가 같아서
   데몬의 파일 후보 강화가 붙는다.
 
-저장소에 둘레가 마련돼 있다 — `scenarios/fixture.json`(colo-beta-fixture 의
+저장소에 둘레가 마련돼 있다 — `scenarios/fixture.json`(nova-beta-fixture 의
 7개)과 `scenarios/cds.json`(CDS 레포의 5개, 실제 화면 폴더에 맞춰 뒀다).
 
 ## 시험
@@ -115,5 +115,5 @@ node scripts/bench/bench.mjs compare bench-results/…-before.json bench-results
   `startSha` 가 기준이다(자동 되돌리기는 없다 — PLAN-HARNESS O-4).
 - 턴 통계 파일은 7일 보존이다 — 결과 파일에 턴 행이 통째로 들어가므로 비교는
   결과 파일끼리 하면 오래간다.
-- 접속 파일(`COLO_DESIGN_BENCH_ENDPOINT`)에는 그 실행의 토큰이 들어 있다.
+- 접속 파일(`NOVA_DESIGN_BENCH_ENDPOINT`)에는 그 실행의 토큰이 들어 있다.
   임시 폴더에 적게 하고 앱을 끄면 데몬이 지운다.

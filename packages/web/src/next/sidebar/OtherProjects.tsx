@@ -1,4 +1,4 @@
-import type { ProjectSummary } from "@colo-design/protocol";
+import type { ProjectSummary } from "@nova-design/protocol";
 import { L } from "../labels";
 import { projectNote } from "../lib/project-note";
 import { NoteMark, ProjectMark } from "../ui/ProjectMark";

@@ -30,7 +30,7 @@ test("실패한 전송 뒤 같은 문장은 곧바로 다시 보내진다", asyn
   const { seen, impl } = recorder([new Response(null, { status: 500 }), new Response("ok")]);
   const escalation = new Escalation(new MemoryCredentialStore(), quiet, impl);
   await escalation.set(WEBHOOK);
-  const text = "[Colo Design] 푸시가 실패했습니다";
+  const text = "[Nova Design] 푸시가 실패했습니다";
   assert.equal(await escalation.notify(text), false);
   assert.equal(await escalation.notify(text), true);
   assert.equal(seen.length, 2);
@@ -40,7 +40,7 @@ test("성공한 전송 뒤 10분 안의 같은 문장은 보내지 않고 true �
   const { seen, impl } = recorder([new Response("ok")]);
   const escalation = new Escalation(new MemoryCredentialStore(), quiet, impl);
   await escalation.set(WEBHOOK);
-  const text = "[Colo Design] 푸시가 실패했습니다";
+  const text = "[Nova Design] 푸시가 실패했습니다";
   const first = 1_000_000;
   assert.equal(await escalation.notify(text, first), true);
   // 10분 창 안의 재울림 — 개발자 쪽 채널이 같은 고장으로 도배하지 않는다.

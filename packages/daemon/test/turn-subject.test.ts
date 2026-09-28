@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { markTurn, reviewToTurn } from "@colo-design/protocol";
+import { markTurn, reviewToTurn } from "@nova-design/protocol";
 import {
   COMMON_INSTRUCTIONS,
   commentReflectionSubject,

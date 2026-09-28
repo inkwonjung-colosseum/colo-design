@@ -1,6 +1,6 @@
 /**
  * 코멘트 저장소 (PLAN D57): the pins a planner sends from the preview land in
- * the project's own `comments.json` (`~/.colo-design/projects/<slug>/`), one
+ * the project's own `comments.json` (`~/.nova-design/projects/<slug>/`), one
  * row per comment. 자동 정리 made delivery the row's birth: every row is
  * written resolved, because the turn carrying the words IS the delivery. The
  * store is an append-only log of what went to the agent — a second send of the
@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { CommentItem } from "@colo-design/protocol";
+import type { CommentItem } from "@nova-design/protocol";
 
 /** A row is kept only when every field the wire promises is really there. */
 function isCommentItem(value: unknown): value is CommentItem {

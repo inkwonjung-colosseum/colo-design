@@ -1,4 +1,4 @@
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 
 /**
  * 다시 연 대화에 턴 끝을 세운다 (PLAN-THREAD T-1). 라이브는 턴마다 `turn.end`

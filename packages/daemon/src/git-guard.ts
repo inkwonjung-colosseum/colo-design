@@ -15,8 +15,8 @@
  * (RepoCore.git)은 이 환경을 쓰지 않으므로 영향이 없다.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { NOVA_DESIGN_DATA_DIR } from "./environment.js";
 
 /**
  * 세션이 git 쓰기를 시도할 때 읽는 한 문장 — PreToolUse 훅의 deny 이유,
@@ -25,9 +25,9 @@ import { join } from "node:path";
 export const GIT_WRITE_REFUSAL =
   "보관과 제출은 이 도구가 합니다 — git 명령 없이 파일만 고쳐 주세요. 정리가 끝나면 도구가 마무리합니다.";
 
-/** 가드 훅 폴더의 기본 자리 — `~/.colo-design/tools/git-guard`. */
+/** 가드 훅 폴더의 기본 자리 — `~/.nova-design/tools/git-guard`. */
 export function gitGuardHooksDir(env: NodeJS.ProcessEnv = process.env): string {
-  return env.COLO_DESIGN_GIT_GUARD_DIR ?? join(homedir(), ".colo-design", "tools", "git-guard");
+  return env.NOVA_DESIGN_GIT_GUARD_DIR ?? join(NOVA_DESIGN_DATA_DIR, "tools", "git-guard");
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ export function gitWriteDenied(command: string): boolean {
 
 /** reference-transaction: 첫 인자 prepared = 참조 변경이 막 닫히려는 순간. */
 const REFERENCE_TRANSACTION = `#!/bin/sh
-# Colo Design git guard — AI 세션의 참조 변경을 막는다 (PLAN L5).
+# Nova Design git guard — AI 세션의 참조 변경을 막는다 (PLAN L5).
 # 커밋 · 리셋 · 브랜치 이동 · stash · merge · fetch 의 ref 갱신이 모두 여기를 지난다.
 if [ "$1" = "prepared" ]; then
   echo '${GIT_WRITE_REFUSAL}' >&2
@@ -171,7 +171,7 @@ exit 0
 
 /** pre-push: 푸시는 reference-transaction 이 보지 못하는 길이라 따로 막는다. */
 const PRE_PUSH = `#!/bin/sh
-# Colo Design git guard — AI 세션의 push 를 막는다 (PLAN L5).
+# Nova Design git guard — AI 세션의 push 를 막는다 (PLAN L5).
 echo '${GIT_WRITE_REFUSAL}' >&2
 exit 1
 `;

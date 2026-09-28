@@ -27,3 +27,19 @@ test("초대 파일 지우기 — 절대 위치의 .colo-invite 만 통과한다
     assert.notEqual(inviteDiscardRefusal(bad), null, String(bad));
   }
 });
+
+test("초대 파일 지우기 — .nova-invite 도 같은 잣대로 통과한다 (개명 1단계)", () => {
+  assert.equal(inviteDiscardRefusal("/Users/me/Downloads/회원 관리.nova-invite"), null);
+  // 윈도 위치는 윈도에서만 절대 위치다.
+  const windows = inviteDiscardRefusal("C:\\Users\\me\\Downloads\\a.nova-invite");
+  assert.equal(windows === null, process.platform === "win32");
+  for (const bad of [
+    "a.nova-invite",
+    "../a.nova-invite",
+    "/Users/me/a.nova-invite.txt",
+    "/Users/me/a.NOVA-INVITE",
+    "/Users/me/a\0.nova-invite",
+  ]) {
+    assert.notEqual(inviteDiscardRefusal(bad), null, String(bad));
+  }
+});

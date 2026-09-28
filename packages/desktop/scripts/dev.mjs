@@ -8,7 +8,7 @@
  *
  * `--hmr`(빠른 개발 고리):
  *   - 웹은 빌드하지 않는다 — vite 개발 서버가 그 자리를 대신한다
- *   - electron 창이 그 서버를 열고(COLO_DESIGN_DEV_SERVER), 데몬은 그대로
+ *   - electron 창이 그 서버를 열고(NOVA_DESIGN_DEV_SERVER), 데몬은 그대로
  *     in-process 다. 웹 소스를 고치면 창이 즉시 바뀐다.
  *
  * 두 경로 모두: 데스크톱 src/ 를 지켜보다가 메인/프리로드가 바뀌면 다시
@@ -27,7 +27,7 @@ const shell = process.platform === "win32";
 
 /** vite 개발 서버 주소 — 포트는 packages/web/vite.config.ts 의 strictPort 와 같다. */
 const DEFAULT_DEV_SERVER = "http://127.0.0.1:29173";
-const DEV_SERVER = process.env.COLO_DESIGN_DEV_SERVER ?? DEFAULT_DEV_SERVER;
+const DEV_SERVER = process.env.NOVA_DESIGN_DEV_SERVER ?? DEFAULT_DEV_SERVER;
 const hmr = process.argv.includes("--hmr");
 
 function run(command, args, cwd, env) {
@@ -40,11 +40,11 @@ function run(command, args, cwd, env) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-run("pnpm", ["--filter", "@colo-design/protocol", "build"], repo);
-run("pnpm", ["--filter", "@colo-design/daemon", "build"], repo);
+run("pnpm", ["--filter", "@nova-design/protocol", "build"], repo);
+run("pnpm", ["--filter", "@nova-design/daemon", "build"], repo);
 // HMR 경로에서는 vite 가 웹을 직접 준다 — 정적 산출물을 만들 이유가 없다.
-if (!hmr) run("pnpm", ["--filter", "@colo-design/web", "build"], repo);
-run("pnpm", ["--filter", "@colo-design/desktop", "build"], repo);
+if (!hmr) run("pnpm", ["--filter", "@nova-design/web", "build"], repo);
+run("pnpm", ["--filter", "@nova-design/desktop", "build"], repo);
 
 // 메인이 찾는 경로(app.getAppPath()/web-dist)에 웹 산출물을 둔다 —
 // 릴리스 빌드와 같은 스테이징 스크립트를 쓴다.
@@ -64,14 +64,14 @@ let finished = false;
 function startElectron() {
   if (finished) return;
   // dev 는 설치본과 userData 를 나눈다 — productName 이 같아 기본 userData
-  // (~/Library/Application Support/Colo Design)를 공유하면 설치본이 잡은
+  // (~/Library/Application Support/Nova Design)를 공유하면 설치본이 잡은
   // single-instance 잠금에 dev 가 두 번째 인스턴스로 합쳐져 조용히 종료된다.
   // worktree 안에 두는 것도 의도다: 워크트리끼리도 같은 잠금 경쟁을 한다.
   electronProc = spawn(electron, [`--user-data-dir=${devUserData}`, desktop], {
     stdio: "inherit",
     cwd: desktop,
     shell,
-    env: hmr ? { ...process.env, COLO_DESIGN_DEV_SERVER: DEV_SERVER } : process.env,
+    env: hmr ? { ...process.env, NOVA_DESIGN_DEV_SERVER: DEV_SERVER } : process.env,
     // 터미널 프로세스 그룹과 갈라 놓는다 — 종료·재시작은 이 스크립트가 그룹째로
     // 주도한다. Ctrl+C 는 detached 그룹에 닿지 않으니 아래 핸들러가 대신 전한다.
     detached: process.platform !== "win32",
@@ -144,10 +144,10 @@ if (hmr) {
   } else if (DEV_SERVER !== DEFAULT_DEV_SERVER) {
     // 주소를 손으로 지정했다면 그 자리에 서버를 띄우는 것도 그 사람 몫이다 —
     // 여기서 띄우는 vite 는 vite.config.ts 의 고정 포트로만 듣는다.
-    console.error(`COLO_DESIGN_DEV_SERVER(${DEV_SERVER}) 에 개발 서버가 없습니다.`);
+    console.error(`NOVA_DESIGN_DEV_SERVER(${DEV_SERVER}) 에 개발 서버가 없습니다.`);
     process.exit(1);
   } else {
-    vite = spawn("pnpm", ["--filter", "@colo-design/web", "dev"], {
+    vite = spawn("pnpm", ["--filter", "@nova-design/web", "dev"], {
       stdio: "inherit",
       cwd: repo,
       shell,
@@ -188,7 +188,7 @@ async function rebuildAndRestart() {
   if (finished) return;
   restarting = true;
   console.log("[dev] 데스크톱 소스 변경 — 재빌드");
-  const result = spawnSync("pnpm", ["--filter", "@colo-design/desktop", "build"], {
+  const result = spawnSync("pnpm", ["--filter", "@nova-design/desktop", "build"], {
     stdio: "inherit",
     cwd: repo,
     shell,
@@ -229,9 +229,12 @@ async function webDevServerRunning(url) {
   } catch {
     return false; // 아무도 없다 — 우리가 띄운다
   }
-  if (body.includes("colo-design.daemon-url")) return true;
+  // read-legacy — 개명 전 소스(옛 저장 키)를 내보내는 개발 서버도 우리 것이다.
+  if (body.includes("nova-design.daemon-url") || body.includes("colo-design.daemon-url"))
+    // read-legacy
+    return true;
   console.error(
-    `${url} 을 다른 서버가 쓰고 있습니다 — 그 서버를 끄거나 COLO_DESIGN_DEV_SERVER 로 다른 주소를 지정해 주세요.`,
+    `${url} 을 다른 서버가 쓰고 있습니다 — 그 서버를 끄거나 NOVA_DESIGN_DEV_SERVER 로 다른 주소를 지정해 주세요.`,
   );
   process.exit(1);
 }

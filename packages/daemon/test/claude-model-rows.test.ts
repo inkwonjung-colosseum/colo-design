@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-// 컴파일된 dist 를 읽는다 — `@colo-design/protocol` 의 스키마 import 가 얽혀 있다.
+// 컴파일된 dist 를 읽는다 — `@nova-design/protocol` 의 스키마 import 가 얽혀 있다.
 import { toModelRows } from "../dist/agent/drivers/claude/session.js";
 
 /** `ANTHROPIC_MODEL` 을 잠깐 세웠다가 끝나면 반드시 되돌린다 — 다른 시험이 읽는다. */

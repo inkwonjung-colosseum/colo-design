@@ -12,8 +12,8 @@ import {
   writeSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { LostSend, QueuedSendPayload } from "@colo-design/protocol";
-import { COLO_DESIGN_DIR } from "./environment.js";
+import type { LostSend, QueuedSendPayload } from "@nova-design/protocol";
+import { NOVA_DESIGN_DATA_DIR } from "./environment.js";
 
 /**
  * 대기 줄의 디스크 절반 (PLAN D86 의 확장). 메모리의 `Session.held` 가 진실의
@@ -123,7 +123,7 @@ export interface QueueDisk {
 export class QueueStore {
   private readonly dir: string;
 
-  constructor(dir: string = process.env.COLO_DESIGN_RUN_DIR ?? join(COLO_DESIGN_DIR, "run")) {
+  constructor(dir: string = process.env.NOVA_DESIGN_RUN_DIR ?? join(NOVA_DESIGN_DATA_DIR, "run")) {
     this.dir = dir;
   }
 
@@ -188,7 +188,7 @@ export class QueueStore {
   private write(sessionId: string, file: QueueFile): void {
     mkdirSync(this.dir, { recursive: true });
     const target = this.file(sessionId);
-    const temporary = `${target}.colo-design-${process.pid}`;
+    const temporary = `${target}.nova-design-${process.pid}`;
     const fd = openSync(temporary, "w", 0o600);
     try {
       // rename은 이름만 옮길 뿐이므로 내용이 먼저 디스크에 봉인돼야 한다 —

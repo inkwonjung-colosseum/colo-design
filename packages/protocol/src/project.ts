@@ -326,7 +326,7 @@ export interface DaemonStatus {
    */
   machineProviderActive?: { id: string; origin: "setting" | "auto" } | null;
   /**
-   * 이 데몬이 개발 실행인가(COLO_DESIGN_DEV_AGENTS=1 · 패키징 안 된 데스크톱).
+   * 이 데몬이 개발 실행인가(NOVA_DESIGN_DEV_AGENTS=1 · 패키징 안 된 데스크톱).
    * 웹 번들은 production 빌드라 import.meta.env.DEV 로 대신 판단하면 패키징된
    * 앱에서 항상 false 다 — 개발 전용 면(슬래시 메뉴 등)은 이 선로 값을 본다.
    */

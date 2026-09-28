@@ -17,10 +17,10 @@ import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
-import type { AgentInstallKind } from "@colo-design/protocol";
+import type { AgentInstallKind } from "@nova-design/protocol";
 import { resolveCodexExecutable } from "./agent/drivers/codex/driver.js";
 import { withoutSelfUpdate } from "./agent-env.js";
-import { COLO_DESIGN_DIR, resolveClaudeExecutable } from "./environment.js";
+import { NOVA_DESIGN_DATA_DIR, resolveClaudeExecutable } from "./environment.js";
 import type { SpawnLike } from "./onboarding.js";
 
 /** 설치 전체의 시간 상한 — 넘으면 자식을 끊고 실패로 끝낸다. */
@@ -67,7 +67,7 @@ export interface AgentInstallDeps {
   spawnLike?: SpawnLike;
   resolveClaude?: () => Promise<string | null>;
   resolveCodex?: () => Promise<string | null>;
-  /** Codex 실행 파일이 내려앉는 자리 — 기본 ~/.colo-design/tools/bin. */
+  /** Codex 실행 파일이 내려앉는 자리 — 기본 ~/.nova-design/tools/bin. */
   toolsBinDir?: string;
   /** 전체 시간 상한(시험용 주입) — 기본 15 분. */
   timeoutMs?: number;
@@ -145,7 +145,7 @@ const DISK_MARKERS = ["no space left", "not enough space", "enospc"];
 
 /** IT 담당자에게 그대로 보낼 복사용 한 줄 — policy 분류의 detail 뒤에 붙는다. */
 const POLICY_COPY_LINE =
-  "Colo Design 이 Claude Code 를 사용자 폴더에 설치하려고 합니다(https://claude.ai/install.ps1 또는 install.sh). 이 설치를 허용해 주세요.";
+  "Nova Design 이 Claude Code 를 사용자 폴더에 설치하려고 합니다(https://claude.ai/install.ps1 또는 install.sh). 이 설치를 허용해 주세요.";
 
 /**
  * 설치 실패를 네 가지로 나눠 한국어 문장을 만든다. platform 은 curl 종료 코드의
@@ -345,7 +345,7 @@ export class AgentInstall {
       fetchLike: this.deps.fetchLike ?? fetch,
       spawnLike: this.deps.spawnLike ?? spawn,
       // Codex 가 내려앉는 자리 — 드라이버의 탐색 후보 맨 앞이 같은 경로를 본다.
-      toolsBinDir: this.deps.toolsBinDir ?? join(COLO_DESIGN_DIR, "tools", "bin"),
+      toolsBinDir: this.deps.toolsBinDir ?? join(NOVA_DESIGN_DATA_DIR, "tools", "bin"),
       signal: controller.signal,
       progress: (line, force = false) => {
         if (cancelled || !line) return;
@@ -430,7 +430,7 @@ export class AgentInstall {
     const target = update ? ["latest"] : [];
     // 시험용 대체: 스크립트 대신 이 명령을 셸로 실행한다(검수자가 성공·실패·
     // 느린 진행을 흉내 낸다). 실기 실행에서는 비어 있다. 대상은 $1 로 받는다.
-    const override = ctx.env.COLO_DESIGN_CLAUDE_INSTALL_CMD;
+    const override = ctx.env.NOVA_DESIGN_CLAUDE_INSTALL_CMD;
     let scriptPath: string | null = null;
     let command: string;
     let args: string[];
@@ -454,7 +454,7 @@ export class AgentInstall {
       const ext = ctx.platform === "win32" ? "ps1" : "sh";
       scriptPath = join(
         tmpdir(),
-        `colo-claude-install-${process.pid}-${Math.random().toString(36).slice(2)}.${ext}`,
+        `nova-claude-install-${process.pid}-${Math.random().toString(36).slice(2)}.${ext}`,
       );
       await writeFile(scriptPath, script, "utf8");
       // 정책 우회(-ExecutionPolicy Bypass)는 이 프로세스의 이 실행 범위만 —
@@ -511,10 +511,10 @@ export class AgentInstall {
     update = false,
   ): Promise<{ ok: boolean; detail: string; executable?: string | null }> {
     // 시험용 대체: 이 주소를 릴리스 API 로 쓴다(로컬 서버가 JSON 을 내어 준다).
-    const api = ctx.env.COLO_DESIGN_CODEX_RELEASE_API ?? CODEX_RELEASE_API;
+    const api = ctx.env.NOVA_DESIGN_CODEX_RELEASE_API ?? CODEX_RELEASE_API;
     const response = await ctx
       .fetchLike(api, {
-        headers: { accept: "application/vnd.github+json", "user-agent": "colo-design" },
+        headers: { accept: "application/vnd.github+json", "user-agent": "nova-design" },
         signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(SCRIPT_FETCH_TIMEOUT_MS)]),
       })
       .catch(() => null);
@@ -523,7 +523,7 @@ export class AgentInstall {
     const asset = codexAssetFor(ctx.platform, ctx.arch, release.assets ?? []);
     if (!asset) return { ok: false, detail: NO_CODEX_ASSET };
 
-    const workDir = await mkdtemp(join(tmpdir(), "colo-codex-"));
+    const workDir = await mkdtemp(join(tmpdir(), "nova-codex-"));
     try {
       const archivePath = join(workDir, asset.name);
       let hex: string;

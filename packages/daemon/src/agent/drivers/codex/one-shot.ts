@@ -16,7 +16,7 @@ import { runCliOneShot } from "../../one-shot-cli.js";
 
 /** 답이 적히는 임시 파일 — 원샷마다 하나, 읽고 나면 지운다. */
 function answerFile(): string {
-  return join(tmpdir(), `colo-design-one-shot-${process.pid}-${randomBytes(6).toString("hex")}`);
+  return join(tmpdir(), `nova-design-one-shot-${process.pid}-${randomBytes(6).toString("hex")}`);
 }
 
 export async function codexOneShot(

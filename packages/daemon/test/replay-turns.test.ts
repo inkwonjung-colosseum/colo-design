@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 import { closeReplayTurns } from "../src/replay-turns.ts";
 
 const echo = (text: string): ChatEvent => ({ kind: "user.echo", text, images: 0 });

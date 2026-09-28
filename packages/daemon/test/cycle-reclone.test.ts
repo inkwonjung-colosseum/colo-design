@@ -19,8 +19,8 @@ import { promisify } from "node:util";
 // 새 클론을 적는다 — 시험이 사용자의 설정을 건드리지 않게 이 프로세스의 것을
 // 임시 폴더로 돌린다. 차선 밖의 git 쓰기는 던지게 한다: 재클론의 모든 git 이
 // 감독자의 차선 칸 안에서 도는지를 이 파일이 함께 본다(PLAN L1).
-process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "colo-reclone-claude-"));
-process.env.COLO_DESIGN_LANE_STRICT = "1";
+process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "nova-reclone-claude-"));
+process.env.NOVA_DESIGN_LANE_STRICT = "1";
 
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-observe.test.ts 와 같은 길).
@@ -34,7 +34,7 @@ import { type CycleLedger, emptyLedger, readLedger, writeLedger } from "../dist/
 import { RepoCore } from "../dist/repo-core.js";
 import { makeScene, makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
-const BRANCH = "colo-design/20260924-1";
+const BRANCH = "nova-design/20260924-1";
 const exec = promisify(execFile);
 
 /** 클론에 커밋 — 도구의 자동 보관이 한 차례 지나간 모양. */
@@ -98,7 +98,7 @@ test("탐침 — 클론 경로의 철자가 디스크와 대소문자만 달라�
 }, async () => {
   // git 은 폴더를 디스크의 철자로 답한다 — 받은 철자와 견주면 멀쩡한 클론이
   // "다른 git 폴더" 로 읽혀 날마다 다시 받게 된다(macOS 실측).
-  const root = mkdtempSync(join(tmpdir(), "colo-probe-"));
+  const root = mkdtempSync(join(tmpdir(), "nova-probe-"));
   try {
     const real = join(root, "CaseClone");
     await exec("git", ["init", "-q", "-b", "main", real]);
@@ -263,7 +263,7 @@ test("보관이 없는 객체에 막히면(Error building trees) — 손상으�
 test("되살리기 실패 — 표식을 남기지 않고 이유를 돌려준다, 추적되지 않은 파일은 제자리로", async () => {
   const scene = await makeScene();
   try {
-    const dir = mkdtempSync(join(tmpdir(), "colo-salvage-"));
+    const dir = mkdtempSync(join(tmpdir(), "nova-salvage-"));
     // 얹힐 자리가 없는 패치 — 가짜 블롭 id 라 3-way 로도 못 얹는다.
     writeFileSync(
       join(dir, "changes.patch"),
@@ -298,7 +298,7 @@ test("되살리기 실패 — 표식을 남기지 않고 이유를 돌려준다,
 test("되살리기 — 새 클론에 이미 고친 것이 있으면 아무것도 얹지 않는다(그 사이의 변경을 지킨다)", async () => {
   const scene = await makeScene();
   try {
-    const dir = mkdtempSync(join(tmpdir(), "colo-salvage-"));
+    const dir = mkdtempSync(join(tmpdir(), "nova-salvage-"));
     writeFileSync(join(dir, "changes.patch"), "쓰지 않을 패치\n");
     mkdirSync(join(dir, "untracked"), { recursive: true });
     writeFileSync(join(dir, "untracked", "README.md"), "덮으면 안 되는 쪽\n");

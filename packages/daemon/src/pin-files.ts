@@ -6,7 +6,7 @@
  * 요소의 글자. 그 정체로 에이전트가 첫 tool call마다 반복하는 검색(그 요소가
  * 어느 파일의 것인가)을 데몬이 대신 한다: 클론을 한 번 훑어 후보를 매기고,
  * `파일 후보:` 줄을 턴 블록에 얹어 보낸다(2026-09-21 레포 마커 철거 —
- * `data-colo-src` 의 정확한 `파일:` 길은 폐지했다).
+ * `data-nova-src` 의 정확한 `파일:` 길은 폐지했다).
  *
  * 두 번의 빨라짐(같은 날): ① 훑은 파일 내용은 mtime·크기로 검증해 뿌리마다
  * 묶어 둔다 — 핀 턴마다 파일을 다시 읽지 않는다(에이전트가 편집하면 mtime 이
@@ -18,7 +18,7 @@
 
 import { readFile, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import type { SessionPinHint } from "@colo-design/protocol";
+import type { SessionPinHint } from "@nova-design/protocol";
 import { collectCodeFiles } from "./code-files.js";
 import { filesForRoute } from "./route-index.js";
 import { observedFilesFor } from "./screen-map.js";
@@ -231,13 +231,13 @@ export async function enrichCommentsTurn(
   observed?: { projectRoot: string } | null,
 ): Promise<{ text: string; candidates: string[] }> {
   const untouched = { text, candidates: [] as string[] };
-  if (!text.startsWith("<!-- colo-design:comments ") || hints.length === 0) return untouched;
+  if (!text.startsWith("<!-- nova-design:comments ") || hints.length === 0) return untouched;
   const markerEnd = text.indexOf(" -->");
   if (markerEnd < 0) return untouched;
   let marker: { items?: unknown };
   try {
     marker = JSON.parse(
-      text.slice("<!-- colo-design:comments ".length, markerEnd),
+      text.slice("<!-- nova-design:comments ".length, markerEnd),
     ) as typeof marker;
   } catch {
     return untouched;

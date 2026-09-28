@@ -45,7 +45,7 @@ test("줄 걸음 경로도 새 불릿을 걷는다 — 저장본의 불릿이 �
   );
   assert.ok(elementBullet !== undefined, "요소 읽기 불릿이 실려 있다");
   const stored = [
-    "# Colo Design 공통 규칙",
+    "# Nova Design 공통 규칙",
     "",
     "이 규칙은 어떤 레포를 연결했는지와 무관하게 모든 대화에 함께 간다.",
     "",

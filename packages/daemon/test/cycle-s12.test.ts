@@ -6,7 +6,7 @@ import { test } from "node:test";
 
 // 요약 대화 기록의 자리(Claude 설정 폴더)를 임시 폴더로 — 위생의 정리가
 // 사용자의 ~/.claude 를 겨누지 않게(cycle-hygiene.test.ts 와 같은 까닭).
-process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "colo-s12-claude-"));
+process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "nova-s12-claude-"));
 
 import { makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
@@ -43,7 +43,7 @@ test("S12 (축소판) — 사이클 20번(보관 · 제출 · 병합 · 랜딩) 
         ? readdirSync(join(project, "summary")).length
         : 0,
       gitTool: readdirSync(join(scene.clone.path, ".git"))
-        .filter((name) => name.startsWith("colo-design"))
+        .filter((name) => name.startsWith("nova-design"))
         .sort(),
     });
     let now = Date.parse("2026-09-01T09:00:00.000Z");

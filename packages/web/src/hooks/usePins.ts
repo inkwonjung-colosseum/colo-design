@@ -1,8 +1,8 @@
 import type {
-  ColoDesignCommentTarget,
-  ColoDesignPinEnvelope,
-  ColoDesignPinsSync,
-} from "@colo-design/protocol";
+  NovaDesignCommentTarget,
+  NovaDesignPinEnvelope,
+  NovaDesignPinsSync,
+} from "@nova-design/protocol";
 import { useEffect, useState } from "react";
 import type { Daemon } from "../lib/daemon-client";
 
@@ -13,7 +13,7 @@ export interface PinAttachment {
   /* 2026-09-21 상태 축 철거 — 표식(state) 필드는 이 자리에 있었다. */
   /* 2026-09-21 레포 마커 철거 — pagePath 필드는 이 자리에 있었다
      (screen 이 항상 경로 신원이 되며 폐지). */
-  element: ColoDesignCommentTarget;
+  element: NovaDesignCommentTarget;
   /** The crop the view took at pin time — "what the planner saw". */
   shot?: { mediaType: string; data: string };
   /** The planner's optional memo on this one element; the turn's sentence does not live here. */
@@ -30,7 +30,7 @@ export interface Pins {
    */
   ghosts: PinAttachment[];
   /** A pin lands from the overlay; a repeated id is the same pin, ignored. */
-  add(pin: ColoDesignPinEnvelope["pin"]): void;
+  add(pin: NovaDesignPinEnvelope["pin"]): void;
   remove(id: string): void;
   setNote(id: string, note: string): void;
   clear(): void;
@@ -53,7 +53,7 @@ export interface Pins {
   recordError: string | null;
 }
 /** One project's pins live under one sessionStorage key. */
-const PINS_KEY_PREFIX = "colo-design.pins.";
+const PINS_KEY_PREFIX = "nova-design.pins.";
 /**
  * The 7th pin onward keeps its crop out of storage: six crops × ~40KB is
  * what sessionStorage wants to hold, and six is also the turn's image cap —
@@ -67,14 +67,14 @@ const SHOT_STORE_MAX = 6;
  * they have no path for the overlay to re-anchor on. The reactive effect in
  * `usePins` and PreviewFrame's after-navigation resend both send THIS shape.
  */
-export function pinsSync(ghosts: PinAttachment[], list: PinAttachment[]): ColoDesignPinsSync {
+export function pinsSync(ghosts: PinAttachment[], list: PinAttachment[]): NovaDesignPinsSync {
   // PLAN-UI U4: tone · n 을 채운다 — 보낸 핀은 턴 동안 회색(sent), 번호는 말풍선 ·
   // 입력창 칩과 같은 자리 번호(고스트 먼저, 그다음 살아 있는 목록).
   const row = (
     pin: PinAttachment,
     sent: boolean,
     n: number,
-  ): ColoDesignPinsSync["pins"][number] => ({
+  ): NovaDesignPinsSync["pins"][number] => ({
     id: pin.id,
     screen: pin.screen,
     path: pin.element.path,
@@ -156,7 +156,7 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
       // Quota or private mode: pins stay in memory, they just do not survive a reload.
     }
   }, [slug, list]);
-  const add = (pin: ColoDesignPinEnvelope["pin"]) => {
+  const add = (pin: NovaDesignPinEnvelope["pin"]) => {
     setList((current) =>
       current.some((row) => row.id === pin.id) ? current : [...current, { ...pin, note: "" }],
     );

@@ -78,7 +78,7 @@ test("rankPathMatches — 마지막 조각이 이름, 나머지는 순서 있는
 // ————— 임시 클론 — filesForRoute —————
 
 function makeClone(): string {
-  return mkdtempSync(join(tmpdir(), "colo-route-index-"));
+  return mkdtempSync(join(tmpdir(), "nova-route-index-"));
 }
 
 test("filesForRoute — CDS 모양: 화면 파일과 목 파일, 화면이 먼저", async () => {
@@ -260,7 +260,7 @@ test("enrichCommentsTurn — 정체가 빈손이면 주소의 파일이 (주소)
     mkdirSync(join(root, "src/screens/member"), { recursive: true });
     writeFileSync(join(root, "src/screens/member/list.tsx"), "export {};\n");
     const text = [
-      '<!-- colo-design:comments {"items":[{"id":"p1"}]} -->',
+      '<!-- nova-design:comments {"items":[{"id":"p1"}]} -->',
       "회원 목록에서 이 버튼을 고쳐 줘.",
       '1. 버튼 — "등록하기"',
     ].join("\n");

@@ -90,7 +90,7 @@ test("screen_files 도구 — 두 새 도구는 목록의 맨 끝이고 route �
 
 /** 지도 행과 클론을 한 곳에 세운 임시 장면 — 시험 끝에 지운다. */
 function makeScene(): { root: string; projectRoot: string; repoRoot: string } {
-  const root = mkdtempSync(join(tmpdir(), "colo-screen-files-"));
+  const root = mkdtempSync(join(tmpdir(), "nova-screen-files-"));
   const projectRoot = join(root, "project");
   const repoRoot = join(root, "repo");
   mkdirSync(projectRoot);
@@ -204,7 +204,7 @@ test("observedFilesFor — 루프백 전체 주소 행은 같은 경로의 화�
 // ————— 글자 사냥 — 임시 클론으로 huntPinFiles —————
 
 test("screen_files 의 재료 — 제목 글자가 코드에 적힌 자리를 huntPinFiles 가 찾는다", async () => {
-  const root = mkdtempSync(join(tmpdir(), "colo-screen-hunt-"));
+  const root = mkdtempSync(join(tmpdir(), "nova-screen-hunt-"));
   try {
     mkdirSync(join(root, "src/screens/member"), { recursive: true });
     writeFileSync(

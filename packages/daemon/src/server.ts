@@ -5,15 +5,15 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { homedir } from "node:os";
 import {
   type ClientMessage,
-  type ColoDesignCommentTarget,
   composeAttention,
+  type NovaDesignCommentTarget,
   PROTOCOL_VERSION,
   type ProjectSummary,
   parseClientMessage,
   type ServerMessage,
   type SessionPinHint,
   type SessionState,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
 import type { Diagnostic } from "./agent/driver.js";
 import { ClaudeDriver } from "./agent/drivers/claude/driver.js";
@@ -92,10 +92,10 @@ import { diagnosticsAnswer, isTypeScriptFile, TypeChecker, typeTroublesOf } from
 import { serveWeb } from "./web-static.js";
 
 // The host's notice type (notices.ts) — re-exported so
-// `@colo-design/daemon/server` stays the one import a host needs.
+// `@nova-design/daemon/server` stays the one import a host needs.
 export type { DaemonNotice } from "./notices.js";
 // The desktop builds its drivers against these (게이트 재배선 + 인앱 브라우저
-// 2단계) — exported here so `@colo-design/daemon/server` stays the one import
+// 2단계) — exported here so `@nova-design/daemon/server` stays the one import
 // a host needs.
 export type {
   BrowserActionReport,
@@ -333,7 +333,7 @@ export interface DaemonConfig {
    * 개발용 에이전트(omp)를 프로바이더 목록에 올린다. 실사용자는 Claude Code ·
    * Codex 만 쓴다 — omp 는 이 도구의 개발자만 쓰므로 그 길은 개발 실행에만
    * 열어 둔다: 데스크톱은 `!app.isPackaged`, CLI 는
-   * `COLO_DESIGN_DEV_AGENTS=1`. 패키징된 앱은 절대 켜지 않는다.
+   * `NOVA_DESIGN_DEV_AGENTS=1`. 패키징된 앱은 절대 켜지 않는다.
    */
   devAgents?: boolean;
   /**
@@ -353,7 +353,7 @@ export interface DaemonConfig {
    */
   onNotice?: (notice: DaemonNotice) => void;
   /**
-   * 데몬의 파일 로그 싱크. 지정하지 않으면 `~/.colo-design/logs` 의 하루
+   * 데몬의 파일 로그 싱크. 지정하지 않으면 `~/.nova-design/logs` 의 하루
    * 파일 로거를 스스로 만든다 — 데스크톱 앱이 in-process 로 데몬을 키우므로
    * console 은 아무에게도 닿지 않고, 흔적은 파일로만 남는다.
    */
@@ -375,7 +375,7 @@ export interface DaemonConfig {
   browserDriverFactory?: BrowserDriverFactory;
   /**
    * 앱 · 데몬의 버전 — 브라우저 MCP 자식이 serverInfo.version 으로 말한다
-   * (browserMcpEntry 가 COLO_APP_VERSION env 로 싣는다). 데스크톱은
+   * (browserMcpEntry 가 NOVA_APP_VERSION env 로 싣는다). 데스크톱은
    * app.getVersion() 을, 단독 실행은 데몬 package.json 의 version 을 넣는다.
    * 없으면 자식은 "0" 으로 산다 — 버전을 모른다는 뜻일 뿐이다.
    */
@@ -1095,7 +1095,7 @@ export class DaemonServer {
     // one `git status` per cloned project so a restart does not blank the
     // counts. Only the ACTIVE project gets a preview server; that is what
     // activation above already did. Clones re-arm their trust entry too: the
-    // ~/.colo-design migration renamed every clone path, and trust is keyed
+    // ~/.nova-design migration renamed every clone path, and trust is keyed
     // by path.
     const sweeps: Array<Promise<unknown>> = [];
     for (const project of this.registry.list()) {
@@ -1230,7 +1230,7 @@ export class DaemonServer {
    * The origins a WebSocket upgrade may come from: the daemon's own pages
    * (loopback on the bound port — the desktop's one-process origin) and, on
    * the HMR dev path, the vite server the window was opened from
-   * (`COLO_DESIGN_DEV_SERVER`, desktop/scripts/dev.mjs). Anything else that
+   * (`NOVA_DESIGN_DEV_SERVER`, desktop/scripts/dev.mjs). Anything else that
    * sends an Origin is a foreign page and gets a 403.
    */
   private allowedUpgradeOrigin(origin: string): boolean {
@@ -1244,7 +1244,7 @@ export class DaemonServer {
     const port = this.address().port;
     const loopback = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(parsed.hostname);
     if (loopback && parsed.port === String(port)) return true;
-    const devServer = process.env.COLO_DESIGN_DEV_SERVER;
+    const devServer = process.env.NOVA_DESIGN_DEV_SERVER;
     if (devServer) {
       try {
         if (parsed.origin === new URL(devServer).origin) return true;
@@ -1985,7 +1985,7 @@ export class DaemonServer {
     params: Record<string, unknown>,
     result: unknown,
   ): Promise<string> {
-    const inspected = result as { url?: unknown; element?: ColoDesignCommentTarget };
+    const inspected = result as { url?: unknown; element?: NovaDesignCommentTarget };
     const element = inspected.element;
     const url = typeof inspected.url === "string" ? inspected.url : "";
     const workspaces = this.workspaceOfSession(sessionId);

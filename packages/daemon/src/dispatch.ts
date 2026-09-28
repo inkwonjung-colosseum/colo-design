@@ -8,7 +8,7 @@ import {
   markTurn,
   readTurn,
   type ServerMessage,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import type { DriverRegistry } from "./agent/registry.js";
 import type { AgentInstall } from "./agent-install.js";
 import type { AgentUpdates } from "./agent-update.js";
@@ -811,7 +811,7 @@ export class RequestRouter {
       }
       case "escalation.test": {
         const sent = await this.deps.escalation.notify(
-          "[Colo Design] 개발자 알림 시험 — 이 메시지가 보이면 연결된 것입니다.",
+          "[Nova Design] 개발자 알림 시험 — 이 메시지가 보이면 연결된 것입니다.",
         );
         if (!sent)
           throw new Error("알림을 보내지 못했습니다 — 웹훅 주소나 봇 토큰·채널을 확인해 주세요.");
@@ -1374,9 +1374,9 @@ export class RequestRouter {
  */
 function openInFileManager(path: string): void {
   const platform = currentPlatform();
-  // COLO_DESIGN_OPEN_BIN pins the opener — the e2e suite points it at a
+  // NOVA_DESIGN_OPEN_BIN pins the opener — the e2e suite points it at a
   // stub that logs the path instead of raising a real Finder window.
-  const pinned = process.env.COLO_DESIGN_OPEN_BIN;
+  const pinned = process.env.NOVA_DESIGN_OPEN_BIN;
   const [command, args] = pinned
     ? [pinned, [path]]
     : platform === "win32"

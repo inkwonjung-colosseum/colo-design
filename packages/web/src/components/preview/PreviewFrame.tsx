@@ -1,4 +1,4 @@
-import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
+import type { NovaDesignPinEnvelope, NovaDesignPinsSync } from "@nova-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PreviewLocation, PreviewTarget } from "./types";
 
@@ -31,7 +31,7 @@ import type { PreviewLocation, PreviewTarget } from "./types";
 /**
  * 오버레이가 게스트 안에서 입는 말과 색 — 문장의 주인은 웹의 labels 이고
  * 데스크톱 preload 는 그 파일을 읽지 못하므로, 이 값이 선로
- * (`colo-overlay:mode`)를 타고 게스트로 간다.
+ * (`nova-overlay:mode`)를 타고 게스트로 간다.
  */
 export interface PreviewOverlaySkin {
   accent?: string;
@@ -74,9 +74,9 @@ export function PreviewFrame({
    * `pinsSync` built it; resent after every navigation so a reload or an
    * SPA move re-anchors the badges (region pins on their page rect).
    */
-  sync: ColoDesignPinsSync;
+  sync: NovaDesignPinsSync;
   /** A pin landed from the overlay; a repeated id is usePins's to ignore. */
-  onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
+  onPin: (pin: NovaDesignPinEnvelope["pin"]) => void;
   /** 배지 클릭 — the planner wants that pin's memo input (PageWorkspace holds the state). */
   onPinFocus: (id: string) => void;
   onError: (error: { kind: "runtime" | "build"; message: string; route: string }) => void;
@@ -92,7 +92,7 @@ export function PreviewFrame({
   const syncRef = useRef(sync);
   syncRef.current = sync;
   const syncPins = useCallback(() => {
-    void window.coloDesignDesktop?.preview?.pins?.(syncRef.current);
+    void window.novaDesignDesktop?.preview?.pins?.(syncRef.current);
   }, []);
 
   // The web's whole pin list is the truth — re-send it whenever it changes
@@ -129,7 +129,7 @@ export function PreviewFrame({
   // PreviewFrame이 무대를 쥐고 있음을 main에 알린다 — 링크·외부 열기의
   // OS 브라우저 폴백 판정 재료(옛 bounds 0의 자리).
   useEffect(() => {
-    const bridge = window.coloDesignDesktop?.preview;
+    const bridge = window.novaDesignDesktop?.preview;
     void bridge?.hostReady?.(true);
     return () => {
       void bridge?.hostReady?.(false);
@@ -142,14 +142,14 @@ export function PreviewFrame({
   // only on the whole stage going away (below).
   useEffect(() => {
     if (!url) return;
-    void window.coloDesignDesktop?.preview?.mount?.(url, epoch);
+    void window.novaDesignDesktop?.preview?.mount?.(url, epoch);
   }, [url, epoch]);
 
   // The stage is gone — the guests die with their elements; main forgets
   // them via `destroyed`. unmount also parks main's active pointer so the
   // address bar doesn't carry a dead page's words.
   useEffect(() => {
-    const bridge = window.coloDesignDesktop?.preview;
+    const bridge = window.novaDesignDesktop?.preview;
     return () => void bridge?.unmount?.();
   }, []);
 
@@ -159,7 +159,7 @@ export function PreviewFrame({
   // brings the project's page back before the route lands on it.
   useEffect(() => {
     if (!url || !target) return;
-    const bridge = window.coloDesignDesktop?.preview;
+    const bridge = window.novaDesignDesktop?.preview;
     void bridge
       ?.mount?.(url, epoch)
       .then(() => bridge?.open?.(target.path))
@@ -170,17 +170,17 @@ export function PreviewFrame({
   }, [url, epoch, target]);
 
   useEffect(() => {
-    if (reloadKey > 0) void window.coloDesignDesktop?.preview?.reload?.();
+    if (reloadKey > 0) void window.novaDesignDesktop?.preview?.reload?.();
   }, [reloadKey]);
 
   useEffect(() => {
-    void window.coloDesignDesktop?.preview?.commentsMode?.(commentsOn, overlaySkin);
+    void window.novaDesignDesktop?.preview?.commentsMode?.(commentsOn, overlaySkin);
   }, [commentsOn, overlaySkin]);
 
   // 폭 is emulation on the guest, not CSS names — the element narrows with
   // the stage's own width, the guest believes it is the device.
   useEffect(() => {
-    void window.coloDesignDesktop?.preview?.emulate?.(width === "desktop" ? null : width);
+    void window.novaDesignDesktop?.preview?.emulate?.(width === "desktop" ? null : width);
   }, [width]);
 
   // The channels subscribe ONCE: PreviewHost passes fresh inline callbacks
@@ -206,7 +206,7 @@ export function PreviewFrame({
     onZoom,
   };
   useEffect(() => {
-    const bridge = window.coloDesignDesktop?.preview;
+    const bridge = window.novaDesignDesktop?.preview;
     if (!bridge) return;
     const offs = [
       bridge.onLocation?.(
@@ -225,7 +225,7 @@ export function PreviewFrame({
       ),
       // A pin lands whole — no empty-envelope guard anymore, and a repeated
       // id is usePins's to ignore.
-      bridge.onPin?.((payload: ColoDesignPinEnvelope) => handlers.current.onPin(payload.pin)),
+      bridge.onPin?.((payload: NovaDesignPinEnvelope) => handlers.current.onPin(payload.pin)),
       bridge.onPinFocus?.((payload: { id: string }) => handlers.current.onPinFocus(payload.id)),
       bridge.onError?.((payload: { kind: "runtime" | "build"; message: string; route: string }) =>
         handlers.current.onError(payload),

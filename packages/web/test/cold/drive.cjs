@@ -9,7 +9,7 @@ const [url, stepsFile, w = '1440', h = '900'] = process.argv.slice(2);
   const errs = [];
   page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errs.push('console: ' + m.text().slice(0, 200)); });
-  const shot = async (name) => { await page.screenshot({ path: (process.env.SHOT_DIR || '/tmp/colo-smoke/shots') + '/' + name + '.png' }); console.log('shot', name); };
+  const shot = async (name) => { await page.screenshot({ path: (process.env.SHOT_DIR || '/tmp/nova-smoke/shots') + '/' + name + '.png' }); console.log('shot', name); };
   const wait = (ms) => page.waitForTimeout(ms);
   const log = (...a) => console.log('LOG', ...a);
   await page.goto(url, { waitUntil: 'domcontentloaded' });

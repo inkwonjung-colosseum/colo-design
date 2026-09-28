@@ -1,10 +1,19 @@
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import { bundledToolEnv, COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
-import type { DaemonNotice } from "@colo-design/daemon/server";
+import { bundledToolEnv, NOVA_DESIGN_DATA_DIR } from "@nova-design/daemon/environment";
+import { migrateLegacyDataHome } from "@nova-design/daemon/migrate-home";
+import type { DaemonNotice } from "@nova-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
-import { DaemonServer, daemonOwnedPorts } from "@colo-design/daemon/server";
+import { DaemonServer, daemonOwnedPorts } from "@nova-design/daemon/server";
 import { app, BrowserWindow, dialog, Menu, safeStorage, shell } from "electron";
 import { PlannerNotices } from "./app-notify.js";
 import { SelfUpdates } from "./app-updates.js";
@@ -12,6 +21,7 @@ import { loadAppZoom, saveAppZoom, stepZoom } from "./app-zoom.js";
 import { benchEndpointBody, benchEndpointPath, benchEndpointPid } from "./bench-endpoint.js";
 import { registerDesktopBridge } from "./bridge.js";
 import { loadNotificationPrefs, loadStoredPort, saveDesktopSettings } from "./desktop-settings.js";
+import { APP_BUNDLE_ID, bundleRenamePlan, migrateUserDataFolder } from "./identity.js";
 import { buildMenuTemplate } from "./menu.js";
 import { createBrowserDriverFactory, createPreviewDriverFactory } from "./preview-driver.js";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
@@ -23,29 +33,24 @@ import { daemonUrl, guardNavigations, MainWindowHost, windowUrl } from "./window
 export { createBrowserDriverFactory, createPreviewDriverFactory } from "./preview-driver.js";
 
 /**
- * Colo Design 데스크톱 앱의 메인 프로세스:
+ * Nova Design 데스크톱 앱의 메인 프로세스:
  * - 데몬을 in-process 로 호스팅한다 — 별도 Node 사이드카가 없다. 포트는
  *   임시 포트, 페어링 토큰은 실행마다 새로 만들어 url 로만 전달한다.
  * - 웹 UI 는 데몬이 직접 정적 서빙한다(webDist). 렌더러는
  *   http://127.0.0.1:<port>/?token=<token> 을 연다 — 연결 화면 없음.
  * - 자격 증명은 safeStorage 저장소를 데몬에 주입한다.
  * - 번들 런타임(포터블 node·pnpm, win 은 MinGit)이 resources 에 있으면
- *   COLO_DESIGN_EXTRA_PATH 로 데몬에 알려준다(repo-core.ts 가 PATH 앞에 붙인다).
+ *   NOVA_DESIGN_EXTRA_PATH 로 데몬에 알려준다(repo-core.ts 가 PATH 앞에 붙인다).
  * - AI 의 미리보기 창(PLAN D61 · D63)은 preview-driver.ts 가 든다 —
  *   숨은 오프스크린 `BrowserWindow` 가 데몬의 `previewDriverFactory` 로
  *   들어가고, paint 는 PiP 프레임으로 렌더러에 흐른다.
  *
  * 이 파일은 조립만 남는다 — 창은 windows.ts, OS 알림·배지는 app-notify.ts,
- * 자가 교체는 app-updates.ts, 렌더러 다리는 bridge.ts 가 갖는다.
+ * 자가 교체는 app-updates.ts, 렌더러 다리는 bridge.ts 가 갖는다. 설치 정체성
+ * (번들 아이디 · 폴더 이름 · 이주)은 identity.ts 이다.
  */
 
-/**
- * 앱 번들 아이디. 두 자리가 같은 문자열을 써야 한다 — Windows 토스트의 AUMID
- * (NSIS 바로 가기에 새겨진 appId)와 mac 알림 설정으로 가는 딥링크.
- */
-const APP_BUNDLE_ID = "org.colo-design.desktop";
-
-const LOGS_DIR = join(COLO_DESIGN_DIR, "logs");
+const LOGS_DIR = join(NOVA_DESIGN_DATA_DIR, "logs");
 
 // ---------------------------------------------------------------------------
 // 데스크톱 설정 — desktop-settings.json 은 창이 없어도 메인이 알아야 하는 값
@@ -88,13 +93,55 @@ host.onCreated = registerCloseGuard;
  * — 병렬 레인이 같은 앱을 동시에 띄운다.
  */
 const underTest =
-  process.env.COLO_DESIGN_DESKTOP_UNIT === "1" || Boolean(process.env.COLO_DESIGN_DESKTOP_SMOKE);
+  process.env.NOVA_DESIGN_DESKTOP_UNIT === "1" || Boolean(process.env.NOVA_DESIGN_DESKTOP_SMOKE);
+
+// ---------------------------------------------------------------------------
+// 시작 맨 앞의 개명 정리(RENAME-NOVA-PLAN §7.1 A6) — 앞 단계가 프로세스를
+// 끝내면 뒤는 돌지 않는다. 테스트 실행(단위 임포트 · 스모크)은 이 계단을
+// 밟지 않는다 — 개발 기계와 스모크 폴더에는 옛 이름이 없다.
+// ---------------------------------------------------------------------------
+if (!underTest) {
+  // 1. mac 번들 정리(D-6) — 0.3.x 교체가 새 앱을 `/Applications/Colo
+  //    Design.app` 자리에 놓았다면 이름을 바꾸고 다시 실행한다. 시도 표식을
+  //    먼저 적는다 — 실패가 재실행 고리가 되지 않게. 안 되면 옛 자리에서
+  //    그대로 돈다(다음 버전의 첫 실행이 다시 시도한다).
+  const rename = bundleRenamePlan({
+    packaged: app.isPackaged,
+    platform: process.platform,
+    execPath: process.execPath,
+    version: app.getVersion(),
+    dataDir: NOVA_DESIGN_DATA_DIR,
+    legacyDataDir: join(dirname(NOVA_DESIGN_DATA_DIR), ".colo-design"), // read-legacy
+    exists: existsSync,
+  });
+  if (rename.action === "relaunch-rename") {
+    try {
+      mkdirSync(dirname(rename.marker), { recursive: true });
+      writeFileSync(rename.marker, new Date().toISOString());
+      renameSync(rename.from, rename.to);
+      app.relaunch({ execPath: join(rename.to, "Contents", "MacOS", "Nova Design") });
+      app.exit(0);
+    } catch {
+      // 이름 바꾸기 실패 — 옛 자리에서 계속 돈다.
+    }
+  }
+  // 2. userData 이주(D-3) — 단일 인스턴스 잠금보다 **먼저** 폴더째 rename
+  //    한다(잠금이 userData 안에 산다). localStorage · desktop-settings ·
+  //    DPAPI 키(Local State)·Partitions 이 폴더를 따라 온다. 새 폴더가 이미
+  //    있으면 건드리지 않는다 — 멱원이다.
+  try {
+    migrateUserDataFolder(app.getPath("appData"));
+  } catch {
+    // 이주 실패는 앱을 죽이지 않는다 — 설정이 초기화되어 뜰 뿐이다.
+  }
+}
+
 if (underTest || app.requestSingleInstanceLock()) {
   app.on("second-instance", () => host.focusMain());
   // The preview-driver unit imports this module inside its own Electron to
   // reach createPreviewDriverFactory() — the daemon boot below belongs to the
   // app entry only (PLAN D61).
-  if (process.env.COLO_DESIGN_DESKTOP_UNIT !== "1") {
+  if (process.env.NOVA_DESIGN_DESKTOP_UNIT !== "1") {
     void app
       .whenReady()
       .then(() => bootApp())
@@ -102,7 +149,7 @@ if (underTest || app.requestSingleInstanceLock()) {
         // 준비 중 폭발한 오류는 창도 오류 상자도 없이 조용히 사라진다 —
         // 잡아서 보여주고 끝낸다.
         dialog.showErrorBox(
-          "Colo Design",
+          "Nova Design",
           `시작하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`,
         );
         app.quit();
@@ -118,8 +165,8 @@ if (underTest || app.requestSingleInstanceLock()) {
 // the developer's real credentials.json — the GitHub gate would pass and the
 // "fresh machine lands on the wizard" check would hang on any machine that
 // has logged in. setPath must precede every userData reader below.
-if (process.env.COLO_DESIGN_DESKTOP_SMOKE) {
-  app.setPath("userData", process.env.COLO_DESIGN_DESKTOP_SMOKE);
+if (process.env.NOVA_DESIGN_DESKTOP_SMOKE) {
+  app.setPath("userData", process.env.NOVA_DESIGN_DESKTOP_SMOKE);
 }
 
 /**
@@ -186,6 +233,9 @@ function removeBenchEndpoint(): void {
 }
 
 async function bootApp(): Promise<void> {
+  // 0.4.0 저장 위치 이주(§3.3) — 데몬이 in-process 로 CONFIG_DIR · 클론 읽기를
+  // 시작하기 전에. 실패해도 앱은 뜬다(migrate-home 이 예외를 삼킨다).
+  migrateLegacyDataHome();
   // Windows 토스트 알림은 시작 메뉴 바로 가기의 AUMID 로 귀속된다. NSIS 템플릿은
   // 바로 가기에 appId 를 새기므로 같은 문자열을 여기서 직접 건다 — Squirrel 이
   // 하던 자동 맞춤이 NSIS 에는 없고, 어긋난 채 띄운 알림은 Windows 가 조용히
@@ -206,7 +256,7 @@ async function bootApp(): Promise<void> {
 
   const resourcesBin = join(process.resourcesPath, "bin");
   const extraPath = existsSync(resourcesBin) ? resourcesBin : undefined;
-  if (extraPath) process.env.COLO_DESIGN_EXTRA_PATH = extraPath;
+  if (extraPath) process.env.NOVA_DESIGN_EXTRA_PATH = extraPath;
   // 번들 도구 환경(2단계): 이동식 git(darwin) 과 bash(win32) 를 세계의 맨
   // 앞에 둔다 — PATH 앞자리는 기존 resources/bin 보다 더 앞이고, 변수는 있는
   // 값을 덮어쓴다. 데몬·세션·AI 명령이 모두 이 env 를 물려받는다.
@@ -245,10 +295,10 @@ async function bootApp(): Promise<void> {
       browserDriverFactory: browserDrivers,
       onNotice,
       // 브라우저 MCP 자식의 serverInfo.version 이 앱 버전을 말하게 한다
-      // (DaemonConfig.appVersion — COLO_APP_VERSION 으로 자식까지 간다).
+      // (DaemonConfig.appVersion — NOVA_APP_VERSION 으로 자식까지 간다).
       appVersion: app.getVersion(),
       // 개발용 에이전트(omp)는 패키징되지 않은 실행(`pnpm dev:desktop` ·
-      // `pnpm --filter @colo-design/desktop dev`)에만 — 실사용자의 앱은 Claude
+      // `pnpm --filter @nova-design/desktop dev`)에만 — 실사용자의 앱은 Claude
       // Code · Codex 두 native 선로만 받는다(DaemonConfig.devAgents).
       devAgents: !app.isPackaged,
     });
@@ -269,7 +319,7 @@ async function bootApp(): Promise<void> {
     if (!underTest) {
       const reason = error instanceof Error ? error.message : String(error);
       dialog.showErrorBox(
-        "Colo Design을 시작하지 못했습니다",
+        "Nova Design을 시작하지 못했습니다",
         `원인: ${reason}\n\n자세한 기록은 이 폴더에 있습니다:\n${LOGS_DIR}`,
       );
     }
@@ -334,17 +384,17 @@ async function bootApp(): Promise<void> {
           zoomReset: () => stepAppZoom("reset"),
         },
         gotoAddress: () =>
-          host.window?.webContents.send("colo-preview:key", {
+          host.window?.webContents.send("nova-preview:key", {
             key: "l",
             meta: true,
           }),
         openSettings: () =>
-          host.window?.webContents.send("colo-preview:key", {
+          host.window?.webContents.send("nova-preview:key", {
             key: ",",
             meta: true,
           }),
         newSession: () =>
-          host.window?.webContents.send("colo-preview:key", {
+          host.window?.webContents.send("nova-preview:key", {
             key: "t",
             meta: true,
           }),
@@ -365,7 +415,7 @@ async function bootApp(): Promise<void> {
   // 데스크톱 스위트의 손잡이(desktop-comments.mjs 가 app.evaluate 로 닿는다).
   // main 의 globalThis 는 렌더러에서 보이지 않으니 제품 면에는 나오지 않는다.
   const suiteHandle = globalThis as Record<string, unknown>;
-  suiteHandle.coloDesignPlannerPreview = plannerPreview;
+  suiteHandle.novaDesignPlannerPreview = plannerPreview;
   await window.loadURL(url);
   // The pane outlives the window — on mac ⌘W destroys it and the dock
   // icon builds another (createWindow's closure follows `host.window`).

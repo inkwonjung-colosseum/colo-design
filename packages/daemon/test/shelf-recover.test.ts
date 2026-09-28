@@ -19,10 +19,10 @@ function gitOf(root: string) {
 }
 
 async function makeRepo(): Promise<string> {
-  const root = mkdtempSync(join(tmpdir(), "colo-shelf-recover-"));
+  const root = mkdtempSync(join(tmpdir(), "nova-shelf-recover-"));
   const git = gitOf(root);
   await git(["init", "-b", "main"]);
-  await git(["config", "user.email", "test@colo-design"]);
+  await git(["config", "user.email", "test@nova-design"]);
   await git(["config", "user.name", "테스트"]);
   writeFileSync(join(root, "screen.txt"), "첫 줄\n");
   await git(["add", "-A"]);
@@ -32,18 +32,18 @@ async function makeRepo(): Promise<string> {
 
 /**
  * 옛 shelve(v0.3.8~v0.3.10)가 만들던 슬롯 — 부모가 HEAD인 커밋에 작업 폴더
- * 스냅샷을 실은 뒤 refs/colo-design/shelf 로 가리킨다. throwaway index 는
+ * 스냅샷을 실은 뒤 refs/nova-design/shelf 로 가리킨다. throwaway index 는
  * 그 명령이 쓰던 GIT_INDEX_FILE 트릭 그대로.
  */
 async function makeSlot(root: string): Promise<void> {
-  const indexPath = join(root, ".git", "colo-design-shelf-test-index");
+  const indexPath = join(root, ".git", "nova-design-shelf-test-index");
   const env = { ...process.env, GIT_INDEX_FILE: indexPath };
   await exec("git", ["add", "-A"], { cwd: root, env });
   const tree = (await exec("git", ["write-tree"], { cwd: root, env })).stdout.trim();
   const git = gitOf(root);
   const head = (await git(["rev-parse", "HEAD"])).trim();
   const commit = (
-    await exec("git", ["commit-tree", tree, "-p", head, "-m", "Colo Design 잠깐 치워두기"], {
+    await exec("git", ["commit-tree", tree, "-p", head, "-m", "Nova Design 잠깐 치워두기"], {
       cwd: root,
       env,
     })

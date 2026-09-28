@@ -4,8 +4,8 @@
  * the marker card it carries. 핀 턴은 다음을 따른다:
  * 문장은 컴포저에서 온 노트 하나, 목록은 마커가 실고, json fence 는 없다.
  */
-import type { TurnMarker } from "@colo-design/protocol";
-import { markTurn } from "@colo-design/protocol";
+import type { TurnMarker } from "@nova-design/protocol";
+import { markTurn } from "@nova-design/protocol";
 import type { PreviewError } from "../components/preview/types";
 import type { PinAttachment } from "../hooks/usePins";
 

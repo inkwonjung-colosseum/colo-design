@@ -16,7 +16,7 @@
  *   (`2.1.282`). 업데이트는 스크립트에 `latest` 를 건네 같은 버전을 깐다.
  */
 
-import type { AgentInstallKind, DaemonStatus, ServerMessage } from "@colo-design/protocol";
+import type { AgentInstallKind, DaemonStatus, ServerMessage } from "@nova-design/protocol";
 import { type AgentInstall, CODEX_RELEASE_API } from "./agent-install.js";
 import type { DaemonNotice } from "./notices.js";
 import { isNewerVersion, plainVersion } from "./versions.js";
@@ -105,7 +105,7 @@ export function wantsAutoUpdate(input: {
 
 /**
  * 한 에이전트의 최신 버전. 주소는 환경 변수로 갈아 끼운다(시험용):
- * `COLO_DESIGN_CLAUDE_LATEST_API` · `COLO_DESIGN_CODEX_RELEASE_API`(설치와 공유).
+ * `NOVA_DESIGN_CLAUDE_LATEST_API` · `NOVA_DESIGN_CODEX_RELEASE_API`(설치와 공유).
  * 실패는 던진다 — 부르는 쪽이 로그에 남긴다.
  */
 export async function fetchLatestVersion(
@@ -116,14 +116,14 @@ export async function fetchLatestVersion(
   const fetchLike = deps.fetchLike ?? fetch;
   const signal = AbortSignal.timeout(CHECK_TIMEOUT_MS);
   if (agent === "claude") {
-    const response = await fetchLike(env.COLO_DESIGN_CLAUDE_LATEST_API ?? CLAUDE_LATEST_API, {
+    const response = await fetchLike(env.NOVA_DESIGN_CLAUDE_LATEST_API ?? CLAUDE_LATEST_API, {
       signal,
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return parseClaudeLatest(await response.text());
   }
-  const response = await fetchLike(env.COLO_DESIGN_CODEX_RELEASE_API ?? CODEX_RELEASE_API, {
-    headers: { accept: "application/vnd.github+json", "user-agent": "colo-design" },
+  const response = await fetchLike(env.NOVA_DESIGN_CODEX_RELEASE_API ?? CODEX_RELEASE_API, {
+    headers: { accept: "application/vnd.github+json", "user-agent": "nova-design" },
     signal,
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);

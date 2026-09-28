@@ -1,9 +1,9 @@
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 
 /**
  * 대화록 내보내기: the transcript is the planner's own deliverable —
  * the reasoning behind screens they will be asked about in a meeting room.
- * Until now it lived only in ~/.colo-design, one 지우기 away from gone; this
+ * Until now it lived only in ~/.nova-design, one 지우기 away from gone; this
  * turns it into a markdown file the planner can keep wherever they keep
  * documents.
  *

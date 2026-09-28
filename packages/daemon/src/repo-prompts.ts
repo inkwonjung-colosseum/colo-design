@@ -1,4 +1,4 @@
-import type { DiffFile } from "@colo-design/protocol";
+import type { DiffFile } from "@nova-design/protocol";
 
 /**
  * 기계가 쓰는 한 턴짜리 프롬프트들 (PLAN D53): 저장 메모, 넘기기 본문 초안.

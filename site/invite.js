@@ -196,12 +196,12 @@ function inviteFile(envelope, name) {
 /** 메일 앱에 여는 초안 — 첨부는 브라우저가 못 하니 본문이 그 자리를 안내한다.
  *  세 줄은 안내문 블록과 같은 것(4단계) — 고른 OS 만 담는다. */
 function mailtoHref(values) {
-  const subject = `[Colo Design] ${values.authorName ?? values.projects[0].name} 초대 파일`;
+  const subject = `[Nova Design] ${values.authorName ?? values.projects[0].name} 초대 파일`;
   const body = [
     // "외" 뒤에는 나머지 수(전체 − 1)가 온다 — 1개면 "외" 없이.
     `${values.authorName ?? ""} ${values.projects[0].name}${
       values.projects.length > 1 ? ` 외 ${values.projects.length - 1}개 프로젝트` : ""
-    } 작업을 위한 Colo Design 초대 파일을 보냅니다.`.trim(),
+    } 작업을 위한 Nova Design 초대 파일을 보냅니다.`.trim(),
     "",
     ...values.projects.map((project) => `- ${project.name} (${project.repoUrl})`),
     "",
@@ -220,8 +220,8 @@ function mailtoHref(values) {
 // ---------------------------------------------------------------------------
 
 const GUIDE_INSTALL_LINE = {
-  mac: "설치: https://github.com/inkwonjung-colosseum/colo-design/releases/latest 에서 colo-design-…-mac-arm64.dmg 를 내려받아 설치하세요. 처음 열 때 막히면 시스템 설정 → 개인정보 보호 및 보안에서 확인 없이 열기를 눌러 주세요.",
-  win: '설치: https://github.com/inkwonjung-colosseum/colo-design/releases/latest 에서 colo-design-Setup-…-win-x64.exe 를 내려받아 설치하세요. 처음 실행할 때 한 번만 "추가 정보" → "실행" 을 눌러 주세요.',
+  mac: "설치: https://github.com/inkwonjung-colosseum/nova-design/releases/latest 에서 nova-design-…-mac-arm64.dmg 를 내려받아 설치하세요. 처음 열 때 막히면 시스템 설정 → 개인정보 보호 및 보안에서 확인 없이 열기를 눌러 주세요.",
+  win: '설치: https://github.com/inkwonjung-colosseum/nova-design/releases/latest 에서 nova-design-Setup-…-win-x64.exe 를 내려받아 설치하세요. 처음 실행할 때 한 번만 "추가 정보" → "실행" 을 눌러 주세요.',
 };
 const GUIDE_COMMON_LINES = [
   '앱이 필요한 것을 스스로 설치합니다. "Claude Code 로그인" 을 누르고 브라우저에서 본인 계정으로 로그인만 하면 됩니다.',
@@ -939,7 +939,7 @@ share.addEventListener("click", () => {
     .share({
       files: [file],
       title: `${sealedName} 초대 파일`,
-      text: "Colo Design 초대 파일입니다 — 가져온 뒤에는 지워 주세요.",
+      text: "Nova Design 초대 파일입니다 — 가져온 뒤에는 지워 주세요.",
     })
     .catch(() => {
       // 사용자가 공유 시트를 닫은 것도 여기로 온다 — 다시 누르면 되니 조용히 둔다.

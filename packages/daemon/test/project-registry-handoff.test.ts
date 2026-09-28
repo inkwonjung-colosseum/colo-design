@@ -26,7 +26,7 @@ function registryWithHandoff(reviewers: unknown): { registry: ProjectRegistry; d
               url: "https://github.com/org/repo/pull/7",
               title: "회원 목록 화면",
               state: "open",
-              branch: "colo-design/20260924-1",
+              branch: "nova-design/20260924-1",
               reviewers,
             },
           },
@@ -37,8 +37,8 @@ function registryWithHandoff(reviewers: unknown): { registry: ProjectRegistry; d
   );
   return {
     registry: ProjectRegistry.load({
-      COLO_DESIGN_PROJECTS_SETTINGS: file,
-      COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
+      NOVA_DESIGN_PROJECTS_SETTINGS: file,
+      NOVA_DESIGN_PROJECTS_DIR: join(dir, "projects"),
     }),
     dir,
   };

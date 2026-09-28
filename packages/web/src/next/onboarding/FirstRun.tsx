@@ -1,4 +1,4 @@
-import type { OnboardingStep } from "@colo-design/protocol";
+import type { OnboardingStep } from "@nova-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { useInstallStep } from "../../hooks/use-install-step";
 import type { InviteImportController } from "../../hooks/use-invite-import";

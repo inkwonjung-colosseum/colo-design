@@ -1,4 +1,4 @@
-import { APP_SHORTCUTS } from "@colo-design/protocol";
+import { APP_SHORTCUTS } from "@nova-design/protocol";
 import { useEffect, useRef } from "react";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { CloseIcon, CommandIcon } from "../icons";

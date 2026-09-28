@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-// 컴파일된 dist 를 읽는다 — `@colo-design/protocol` 의 import 가 얽혀 있다.
+// 컴파일된 dist 를 읽는다 — `@nova-design/protocol` 의 import 가 얽혀 있다.
 import { toPlanUsage as claudePlan } from "../dist/agent/drivers/claude/session.js";
 import { toPlanUsage as codexPlan, probeCodexUsage } from "../dist/agent/drivers/codex/session.js";
 import { PlanTracker } from "../dist/plan-tracker.js";
@@ -186,8 +186,8 @@ test("probeCodexUsage — 답하지 않는 CLI 는 데몬의 종료 신호에 �
 
 test("PlanTracker — 쉬는 대화가 없으면 그 AI 의 probe 로, 있으면 그 대화로 읽는다", async () => {
   const dir = mkdtempSync(join(tmpdir(), "plan-tracker-"));
-  const before = process.env.COLO_DESIGN_PLAN_USAGE;
-  process.env.COLO_DESIGN_PLAN_USAGE = join(dir, "plan-usage.json");
+  const before = process.env.NOVA_DESIGN_PLAN_USAGE;
+  process.env.NOVA_DESIGN_PLAN_USAGE = join(dir, "plan-usage.json");
   try {
     const asked: string[] = [];
     const reading = (provider: string) => ({
@@ -238,8 +238,8 @@ test("PlanTracker — 쉬는 대화가 없으면 그 AI 의 probe 로, 있으면
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.deepEqual(asked, ["probe:codex", "session:claude"]);
   } finally {
-    if (before === undefined) delete process.env.COLO_DESIGN_PLAN_USAGE;
-    else process.env.COLO_DESIGN_PLAN_USAGE = before;
+    if (before === undefined) delete process.env.NOVA_DESIGN_PLAN_USAGE;
+    else process.env.NOVA_DESIGN_PLAN_USAGE = before;
     rmSync(dir, { recursive: true, force: true });
   }
 });

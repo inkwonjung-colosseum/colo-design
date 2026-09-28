@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { ChatEvent } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
 import { ProjectFleet } from "../dist/project-fleet.js";
 
 /**
@@ -13,7 +13,7 @@ import { ProjectFleet } from "../dist/project-fleet.js";
  * 잘려 보였다. 조회는 사이드바의 새로 고침과 같은 기본 한도(50)로 읽어야 한다.
  */
 test("사이클 사건의 대체 목록 조회는 기본 한도로 읽는다 — 캐시를 한 줄로 덮지 않는다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-fleet-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-fleet-"));
   try {
     const listLimits: Array<number | undefined> = [];
     const broadcasts: Array<{ type: string; sessionId: string }> = [];

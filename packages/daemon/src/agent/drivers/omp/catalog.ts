@@ -1,4 +1,4 @@
-import { type EffortLevel, effortLevelSchema, type SessionModelInfo } from "@colo-design/protocol";
+import { type EffortLevel, effortLevelSchema, type SessionModelInfo } from "@nova-design/protocol";
 
 type Wire = Record<string, unknown>;
 

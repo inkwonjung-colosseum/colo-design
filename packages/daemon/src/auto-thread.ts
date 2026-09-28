@@ -20,7 +20,7 @@
  * 실행 파일 · 프로젝트 지침, 그리고 defaults 의 모델 · 생각 시간(defaults.provider
  * 가 있으면 그 공급자에게만).
  */
-import type { ProjectDefaults } from "@colo-design/protocol";
+import type { ProjectDefaults } from "@nova-design/protocol";
 import type { Diagnostic } from "./agent/driver.js";
 import type { DriverRegistry } from "./agent/registry.js";
 import type { QueueDisk } from "./queue-store.js";

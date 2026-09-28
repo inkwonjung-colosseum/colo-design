@@ -7,7 +7,7 @@
 # 못하면 경고 한 줄만 찍고 서명을 통째로 건너뛰므로(`forceCodeSigning` 이
 # 없을 때), 그 조용한 길을 여기서 막는다: 서명 없는 설치 파일은 만들어지지
 # 않는다.
-#   identity  — 키체인의 자체 서명 인증서(CN "Colo Design Dev"). 인증서가 없는
+#   identity  — 키체인의 자체 서명 인증서(CN "Nova Design Dev"). 인증서가 없는
 #               기계·러너는 진짜 ad-hoc 서명으로 지어야 한다:
 #               `electron-builder -c.mac.identity=-` (릴리스 워크플로가 그렇게
 #               한다). ad-hoc 도 UNNotification 은 받아들인다 — 다만 빌드마다
@@ -20,9 +20,9 @@
 # 실제로 실행해 본 적은 아직 없다.
 #
 # extraResources — 포터블 런타임(DESIGN §7 런타임 번들). resources/bin 을
-# PATH 앞에 붙이는 것은 메인 프로세스가 COLO_DESIGN_EXTRA_PATH 로 넘긴다.
-appId: org.colo-design.desktop
-productName: Colo Design
+# PATH 앞에 붙이는 것은 메인 프로세스가 NOVA_DESIGN_EXTRA_PATH 로 넘긴다.
+appId: org.nova-design.desktop
+productName: Nova Design
 directories:
   output: release
   buildResources: build
@@ -39,7 +39,7 @@ asar: true
 # node 가 읽지 못하므로 풀어 둔다(3단계). 나머지 데몬 코드는 asar 안에서
 # Electron 의 fs 패치로 읽힌다.
 asarUnpack:
-  - "**/node_modules/@colo-design/daemon/dist/browser-mcp.js"
+  - "**/node_modules/@nova-design/daemon/dist/browser-mcp.js"
 extraResources:
   # 빌드 머신의 포터블 node+corepack 번들(스크립트가 채운다). Windows 는
   # MinGit 도 여기에 들어간다(config-complete).
@@ -47,7 +47,7 @@ extraResources:
     to: bin
     filter: ["**/*"]
 mac:
-  identity: "Colo Design Dev"
+  identity: "Nova Design Dev"
   # 서명을 건너뛴 빌드는 여기서 실패한다 — 알림이 죽은 앱을 배포하지 않는다.
   # mac 에만 건다: Windows 잡은 인증서 없이 짓는다.
   forceCodeSigning: true
@@ -58,7 +58,7 @@ mac:
   # artifactName 은 mac 플랫폼 설정이 dmg·zip 모두에 적용된다(${ext} 로
   # 구분). 릴리스 URL(latest.json)이 이 이름을 그대로 쓰므로 명시적으로
   # 고정한다 — 빌더 기본값 변경과 무관하게 URL 이 깨지지 않는다.
-  artifactName: colo-design-${version}-mac-${arch}.${ext}
+  artifactName: nova-design-${version}-mac-${arch}.${ext}
   target:
     - target: dmg
       arch: [arm64]
@@ -72,8 +72,11 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # 개명(D-4)의 짝 — appId 가 바뀌어 옛 GUID 설치가 옆에 남지 않게 설치 맨
+  # 앞(customInit)에서 지운다(build/installer.nsh).
+  include: build/installer.nsh
   # 릴리스 URL 이 이름을 그대로 쓴다 — mac artifactName 과 같은 이유로 고정.
-  artifactName: colo-design-Setup-${version}-win-${arch}.${ext}
+  artifactName: nova-design-Setup-${version}-win-${arch}.${ext}
   # SmartScreen "추가 정보 → 실행" 한 번은 설치 안내 페이지가 담당한다.
   #
   # perMachine 은 일부러 비운다(사용자별 설치): UAC 승격이 없어야 자가 교체가

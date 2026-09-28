@@ -9,7 +9,7 @@
  * 것이 이 표기의 전부다. 드라이버 계약은 그대로 두고(트리를 그대로 돌려주고)
  * 압축은 이 자리에서만 한다.
  */
-import type { ColoDesignCommentTarget } from "@colo-design/protocol";
+import type { NovaDesignCommentTarget } from "@nova-design/protocol";
 import type { IdentityFiles } from "./pin-files.js";
 import type { PreviewAxNode } from "./preview-driver.js";
 
@@ -308,10 +308,10 @@ function identityCap(value: string, max: number): string {
 /**
  * 요소 정체 한 장 — 요소 · testid·경로 · 글자 · 파일 후보 · 발췌 · 스타일 의
  * 줄 단위 표기. 파일 칸은 enrichIdentity(pin-files) 가 채운 재료고, 요소 칸은
- * 핀 봉투의 element(ColoDesignCommentTarget) 그대로다 — 드라이버와 핀이 같은
+ * 핀 봉투의 element(NovaDesignCommentTarget) 그대로다 — 드라이버와 핀이 같은
  * 판정을 냈으므로 여기서 다시 해석하지 않는다.
  */
-export function renderIdentity(element: ColoDesignCommentTarget, files: IdentityFiles): string {
+export function renderIdentity(element: NovaDesignCommentTarget, files: IdentityFiles): string {
   const lines: string[] = [];
   const role = element.a11y?.role ?? element.component;
   const name = element.a11y?.name ?? element.text;

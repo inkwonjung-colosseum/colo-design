@@ -1,4 +1,4 @@
-import type { EffortLevel, LostSend } from "@colo-design/protocol";
+import type { EffortLevel, LostSend } from "@nova-design/protocol";
 import { koreanNoticeWords, LIMIT_WORDS } from "../../lib/error-words.ts";
 import { screenPath } from "../../lib/screen-link.ts";
 import { screenKey } from "../../lib/turn-screens.ts";

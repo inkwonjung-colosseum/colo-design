@@ -3,7 +3,7 @@
 //   node packages/web/test/cold/next-cold.cjs --url <smoke URL> [--first-url <SMOKE_EMPTY URL>]
 //        [--tasks 1,2,4] [--real] [--state <smoke state dir>] [--first-state <dir>]
 //        [--invite <첫 실행 초대 파일>] [--invite2 <다시 받기 초대 파일(프로젝트 둘)>]
-//        [--latest-port 7895] [--shots /tmp/colo-smoke/shots]
+//        [--latest-port 7895] [--shots /tmp/nova-smoke/shots]
 //
 // 과제: 1 처음 한 번 + 초대 · 2 첫 요청 · 3 찍기 · 4 제출 · 5 되돌리기 · 6 홈 ·
 //       7 프로젝트 전환 · 준비 · 8 설정 · 모델 칩 · 9 좁은 창 · 10 AI 답 실패 · 도구가 한 일.
@@ -11,7 +11,7 @@
 // 끝에 PASS / BLOCKED(이유) / SKIPPED(이유) 표를 찍는다.
 //
 // 브라우저 개발 경로에는 데스크톱 브리지가 없다 — 핀(오버레이의 ⌥+클릭)과 초대 파일 지우기는
-// 데스크톱만 가진 면이라, 과제 1 · 3 은 가짜 `window.coloDesignDesktop`(아래 BRIDGE)을 심어
+// 데스크톱만 가진 면이라, 과제 1 · 3 은 가짜 `window.novaDesignDesktop`(아래 BRIDGE)을 심어
 // 웹 쪽 절반(말풍선 · 칩 · 빼기 · 지우기 줄)을 본다. 오버레이 자체는 이 드라이버가 보지 못한다.
 //
 // --real 은 격리 데몬이 SMOKE_REAL_CLAUDE=1 로 떠 있을 때 — 과제 2 · 3 · 5 가 실제 답을 기다린다
@@ -33,10 +33,10 @@ const FIRST_URL = opt("first-url");
 const REAL = has("real");
 const STATE = opt("state");
 const FIRST_STATE = opt("first-state");
-const INVITE = opt("invite", "/tmp/colo-smoke/invite.colo-invite");
-const INVITE2 = opt("invite2", "/tmp/colo-smoke/invite2.colo-invite");
+const INVITE = opt("invite", "/tmp/nova-smoke/invite.colo-invite");
+const INVITE2 = opt("invite2", "/tmp/nova-smoke/invite2.colo-invite");
 const LATEST_PORT = Number(opt("latest-port", "0"));
-const SHOTS = opt("shots", process.env.SHOT_DIR || "/tmp/colo-smoke/shots");
+const SHOTS = opt("shots", process.env.SHOT_DIR || "/tmp/nova-smoke/shots");
 const TASKS = opt("tasks", "1,2,3,4,5,6,7,8,9,10")
   .split(",")
   .map((s) => Number(s.trim()))
@@ -49,7 +49,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
 
 // ---------------------------------------------------------------- 문장 (next/labels.ts)
 const T = {
-  obTitle: "Colo Design 을 시작해요",
+  obTitle: "Nova Design 을 시작해요",
   toolsReady: "필요한 도구 확인됨",
   agentOk: "Claude Code · 로그인됨",
   invitePick: "파일 고르기",
@@ -175,7 +175,7 @@ function bridgeScript({ native, invitePath }) {
     onLocation: on('location'), onPin: on('pin'), onPinFocus: on('pinFocus'), onError: on('error'),
     onZoom: on('zoom'), onClose: on('close'), onKey: on('key'), onLoading: on('loading'), onHost: on('host'),
   };
-  window.coloDesignDesktop = {
+  window.novaDesignDesktop = {
     preview,
     invite: {
       pathOf: () => ${JSON.stringify(invitePath || null)},
@@ -206,11 +206,11 @@ const NOTIFY_HOOK = `(() => {
   N.requestPermission = async () => 'granted';
   window.Notification = N;
   try {
-    localStorage.setItem('colo-design.notification-asked', '1');
+    localStorage.setItem('nova-design.notification-asked', '1');
     // 기본(오래 걸린 답만)은 짧은 실패를 조용히 둔다 — 보는/떠난 대화의 규칙만 보려고 「모든 답」으로.
-    const s = JSON.parse(localStorage.getItem('colo-design.settings') || '{}') || {};
+    const s = JSON.parse(localStorage.getItem('nova-design.settings') || '{}') || {};
     s.notifications = { ...(s.notifications || {}), done: 'all', sound: false };
-    localStorage.setItem('colo-design.settings', JSON.stringify(s));
+    localStorage.setItem('nova-design.settings', JSON.stringify(s));
   } catch {}
 })();`;
 
@@ -528,7 +528,7 @@ TASK[2] = async () => {
 // 3 — 찍기 · 말풍선 · 핀 빼기(U4) — 가짜 브리지
 function fakePin(n, screen = "index") {
   return {
-    type: "colo-design.pin",
+    type: "nova-design.pin",
     pin: {
       id: `cold-${Date.now()}-${n}`,
       screen,

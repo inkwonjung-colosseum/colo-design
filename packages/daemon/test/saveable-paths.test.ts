@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { DiffFile } from "@colo-design/protocol";
+import type { DiffFile } from "@nova-design/protocol";
 import { saveablePaths } from "../src/saveable-paths.ts";
 
 /** 경로만 다른 added 행 — 미추적 파일의 모양. */

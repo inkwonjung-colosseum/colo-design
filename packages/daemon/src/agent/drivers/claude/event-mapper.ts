@@ -1,5 +1,5 @@
-import type { ChatEvent } from "@colo-design/protocol";
-import { toolLabel } from "@colo-design/protocol";
+import type { ChatEvent } from "@nova-design/protocol";
+import { toolLabel } from "@nova-design/protocol";
 
 /** A wire number, or 0 — nothing here invents a count the CLI did not send. */
 function num(value: unknown): number {

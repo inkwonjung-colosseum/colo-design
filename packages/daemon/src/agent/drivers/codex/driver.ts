@@ -4,9 +4,9 @@ import { realpath, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { PlanUsage } from "@colo-design/protocol";
+import type { PlanUsage } from "@nova-design/protocol";
 import { meaningfulFirstLine } from "../../../common-instructions.js";
-import { COLO_DESIGN_DIR } from "../../../environment.js";
+import { NOVA_DESIGN_DATA_DIR } from "../../../environment.js";
 import type {
   AgentDriver,
   AgentSession,
@@ -50,10 +50,10 @@ const CODEX_CAPABILITIES = {
 
 /** Where the installers put the binary, in the order we trust them. */
 function codexCandidates(home: string): string[] {
-  // 맨 앞은 이 도구의 설치 진행기가 내려놓은 자리(~/.colo-design/tools/bin,
+  // 맨 앞은 이 도구의 설치 진행기가 내려놓은 자리(~/.nova-design/tools/bin,
   // 1단계) — 환경 변수 오버라이드 다음으로 먼저 본다.
   const installed = join(
-    COLO_DESIGN_DIR,
+    NOVA_DESIGN_DATA_DIR,
     "tools",
     "bin",
     process.platform === "win32" ? "codex.exe" : "codex",
@@ -78,7 +78,7 @@ let searchedPathHit: string | null = null;
 
 /** 설치 진행기(1단계)가 설치의 성공 판정에 쓰는 같은 규칙. */
 export function resolveCodexExecutable(): string | null {
-  const env = process.env.COLO_DESIGN_CODEX_BIN;
+  const env = process.env.NOVA_DESIGN_CODEX_BIN;
   const candidates = [env, ...codexCandidates(homedir()), searchedPathHit].filter(
     (value): value is string => Boolean(value),
   );

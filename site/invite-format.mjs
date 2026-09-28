@@ -18,7 +18,7 @@ const INVITE_KEY = "8KX6pm1o64K4Vsg7z1uz0wi13POfvA8ddQmH3riPYHw=";
 
 /** 가져오기 확인 카드에 그대로 보이는 한 단락 — 전달 경로와 삭제 안내가 본체다. */
 export const INVITE_README =
-  "이 파일에는 당신의 GitHub 연결 코드가 들어 있습니다. Colo Design 에서 가져오기한 뒤에는 이 파일을 지워 주세요. 다른 사람에게 보내지 마세요.";
+  "이 파일에는 당신의 GitHub 연결 코드가 들어 있습니다. Nova Design 에서 가져오기한 뒤에는 이 파일을 지워 주세요. 다른 사람에게 보내지 마세요.";
 
 /** 바이트 → base64. btoa 바이트 루프 — 브라우저와 Node 22 양쪽에서 돈다. */
 function bytesToBase64(bytes) {

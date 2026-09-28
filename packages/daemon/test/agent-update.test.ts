@@ -74,15 +74,15 @@ test("최신 버전 확인: 환경 변수의 주소를 읽는다 — 실패는 �
     return Response.json({ tag_name: "rust-v0.46.0" });
   }) as typeof fetch;
   const env = {
-    COLO_DESIGN_CLAUDE_LATEST_API: "http://127.0.0.1:1/claude-latest",
-    COLO_DESIGN_CODEX_RELEASE_API: "http://127.0.0.1:1/codex-release",
+    NOVA_DESIGN_CLAUDE_LATEST_API: "http://127.0.0.1:1/claude-latest",
+    NOVA_DESIGN_CODEX_RELEASE_API: "http://127.0.0.1:1/codex-release",
   };
   assert.equal(await fetchLatestVersion("claude", { env, fetchLike }), "2.1.282");
   assert.equal(await fetchLatestVersion("codex", { env, fetchLike }), "0.46.0");
-  assert.deepEqual(seen, [env.COLO_DESIGN_CLAUDE_LATEST_API, env.COLO_DESIGN_CODEX_RELEASE_API]);
+  assert.deepEqual(seen, [env.NOVA_DESIGN_CLAUDE_LATEST_API, env.NOVA_DESIGN_CODEX_RELEASE_API]);
   await assert.rejects(
     fetchLatestVersion("codex", {
-      env: { COLO_DESIGN_CODEX_RELEASE_API: "http://127.0.0.1:1/broken" },
+      env: { NOVA_DESIGN_CODEX_RELEASE_API: "http://127.0.0.1:1/broken" },
       fetchLike,
     }),
   );

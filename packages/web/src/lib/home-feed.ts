@@ -1,4 +1,4 @@
-import type { DeveloperReview, PermissionSuggestion, ProjectSummary } from "@colo-design/protocol";
+import type { DeveloperReview, PermissionSuggestion, ProjectSummary } from "@nova-design/protocol";
 import type { PendingPermission, PendingQuestion, SessionView } from "./daemon-client";
 import { toolLabel } from "./labels";
 

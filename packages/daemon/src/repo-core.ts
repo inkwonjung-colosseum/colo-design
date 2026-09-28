@@ -17,7 +17,7 @@ import {
   type RepoHistory,
   type RepoPhase,
   type RepoStatus,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 import type { CyclePendingOp } from "./cycle-ledger.js";
 import { currentPlatform, resolveGitExecutable } from "./environment.js";
 import { GitLane, gitWriteVerb } from "./git-lane.js";
@@ -35,27 +35,27 @@ import {
   untrackedAsAdded,
 } from "./repo-diff.js";
 import { safeRepoPath } from "./repo-paths.js";
-export const INSTALL_MARKER = "colo-design-install-hash";
+export const INSTALL_MARKER = "nova-design-install-hash";
 /**
  * 실사 결함: fresh clone 의 첫 미리보기 부팅(next dev cold compile)이 30 초를
  * 넘겼다 — 시간 예산 안에 뜨는 fixture 로는 잡히지 않는다. 데드라인은 실제
  * 레포의 첫 부팅이 들어올 만큼 넉넉해야 한다.
  */
-export const READY_TIMEOUT_MS = Number(process.env.COLO_DESIGN_READY_TIMEOUT_MS) || 120_000;
+export const READY_TIMEOUT_MS = Number(process.env.NOVA_DESIGN_READY_TIMEOUT_MS) || 120_000;
 const DETAIL_THROTTLE_MS = 200;
 /** Commit message when the planner approves without writing one. */
-export const DEFAULT_COMMIT_MESSAGE = "Colo Design 화면 변경";
+export const DEFAULT_COMMIT_MESSAGE = "Nova Design 화면 변경";
 /** PR title when the planner sends the handoff without editing it. */
-export const DEFAULT_HANDOFF_TITLE = "Colo Design 화면 전달";
+export const DEFAULT_HANDOFF_TITLE = "Nova Design 화면 전달";
 /** D56: where a handoff's screen captures are committed, relative to the root. */
-export const SHOTS_DIR = ".colo-design/shots";
+export const SHOTS_DIR = ".nova-design/shots";
 /** D56: the captures ride their own commit — the reviewed diff stays the planner's. */
-export const SHOTS_COMMIT_MESSAGE = "Colo Design 화면 미리보기 캡처";
+export const SHOTS_COMMIT_MESSAGE = "Nova Design 화면 미리보기 캡처";
 /**
  * Every branch this tool creates lives under one prefix, so a developer can
  * tell at a glance which branches a planner made and which are theirs.
  */
-export const BRANCH_PREFIX = "colo-design";
+export const BRANCH_PREFIX = "nova-design";
 /** How many output lines a failed gate quotes back to people and the agent. */
 export const GATE_OUTPUT_TAIL_LINES = 30;
 /**
@@ -74,7 +74,7 @@ export const COMMAND_STALL_MS = 300_000;
  * its recovery machinery own) also means the agent Bash gate's open `git
  * stash` verbs cannot reach it.
  */
-export const SHELF_REF = "refs/colo-design/shelf";
+export const SHELF_REF = "refs/nova-design/shelf";
 
 /** How long the save-time memo turn may take before the default message. */
 export const MEMO_TIMEOUT_MS = 8_000;
@@ -116,7 +116,17 @@ export const GATE_STEP: Record<"commit" | "push" | "pr", string> = {
  * Named for the button, so `git stash list` reads like the product, not git.
  * 관찰(cycle-observe)이 도구 태그의 stash 를 찾는 잣대로도 쓰인다(PLAN L3 3행).
  */
-export const STASH_MESSAGE = "Colo Design: 최신화 임시 보관";
+export const STASH_MESSAGE = "Nova Design: 최신화 임시 보관";
+// read-legacy — 0.3.x 의 최신화가 남긴 임시 보관. 찾기는 둘 다, 새로 만드는
+// 태그는 새 이름이다.
+export const LEGACY_STASH_MESSAGES = ["Colo Design: 최신화 임시 보관"]; // read-legacy
+
+/** 이 줄이 도구가 남긴 임시 보관인가 — 옛 이름의 태그도 도구의 것이다. */
+export function isToolStashSubject(subject: string): boolean {
+  return (
+    subject.includes(STASH_MESSAGE) || LEGACY_STASH_MESSAGES.some((old) => subject.includes(old))
+  );
+}
 
 /** What the planner reads when a conflict needs the agent and no thread is open. */
 export const REFRESH_CONFLICT_DETAIL =
@@ -266,7 +276,7 @@ export interface RepoWorkspaceOptions {
   /**
    * 넘긴 요청에 적을 작성자 이름(P1-3) — 온보딩이 machine.json 에 저장한 값.
    * 읽어가는 곳은 커밋 identity(fallback 이름)과 PR 본문의 `> 작성:` 줄 둘뿐.
-   * 없으면 도구 이름(Colo Design)이 지난날처럼 쓰인다.
+   * 없으면 도구 이름(Nova Design)이 지난날처럼 쓰인다.
    */
   authorName?: () => string | null;
   /**
@@ -917,7 +927,7 @@ export class RepoCore {
     for (const row of list.split(/\r?\n/)) {
       if (row.trim() === "") continue;
       const [ref = "", ...subject] = row.split("\x00");
-      if (subject.join("\x00").includes(STASH_MESSAGE)) return ref.trim();
+      if (isToolStashSubject(subject.join("\x00"))) return ref.trim();
     }
     return null;
   }
@@ -994,8 +1004,8 @@ export class RepoCore {
    */
   async identityArgs(): Promise<string[]> {
     const fallback = () => {
-      const name = this.authorName?.() ?? "Colo Design";
-      return ["-c", `user.name=${name}`, "-c", "user.email=colo-design@localhost"];
+      const name = this.authorName?.() ?? "Nova Design";
+      return ["-c", `user.name=${name}`, "-c", "user.email=nova-design@localhost"];
     };
     try {
       return (await this.git(["config", "user.email"])).trim() ? [] : fallback();
@@ -1122,7 +1132,7 @@ export class RepoCore {
     } catch {
       return "none";
     }
-    const parked = list.split(/\r?\n/).find((line) => line.includes(STASH_MESSAGE));
+    const parked = list.split(/\r?\n/).find((line) => isToolStashSubject(line));
     const ref = parked?.match(/^stash@\{\d+\}/)?.[0];
     if (!ref) return "none";
     const conflicted = await this.popStash(ref);
@@ -1172,14 +1182,14 @@ export class RepoCore {
   /**
    * Which GitHub repository the handoff opens a pull request against.
    *
-   * Normally the remote url says so. `COLO_DESIGN_GITHUB_SLUG` (`owner/repo`)
+   * Normally the remote url says so. `NOVA_DESIGN_GITHUB_SLUG` (`owner/repo`)
    * pins it instead, which is what lets the offline suites drive the real
    * handoff path: their remote is a local bare repository, so nothing in the
    * url could name a GitHub project. Same test-seam rule as
-   * `COLO_DESIGN_REPO_URL` — it exists for tests and is documented as such.
+   * `NOVA_DESIGN_REPO_URL` — it exists for tests and is documented as such.
    */
   repoSlug(): { owner: string; repo: string } | null {
-    const pinned = process.env.COLO_DESIGN_GITHUB_SLUG;
+    const pinned = process.env.NOVA_DESIGN_GITHUB_SLUG;
     if (pinned) {
       const [owner, repo] = pinned.split("/");
       if (owner && repo) return { owner, repo };
@@ -1315,7 +1325,7 @@ export class RepoCore {
   /**
    * 차선 위반 판정 (PLAN L1): 클론을 바꾸는 git 이 차선 작업 밖에서 불리면
    * 잡는다. 배포 판에서 빠뜨린 자리 하나가 사용자의 작업을 죽이지 않게
-   * 기본은 동사당 한 번의 경고고, 시험·개발(COLO_DESIGN_LANE_STRICT=1)은
+   * 기본은 동사당 한 번의 경고고, 시험·개발(NOVA_DESIGN_LANE_STRICT=1)은
    * 던진다.
    */
   private guardLane(args: string[]): void {
@@ -1324,7 +1334,7 @@ export class RepoCore {
     const detail =
       `git ${verb} 명령이 차선 밖에서 실행됐습니다 — ` +
       "클론을 바꾸는 git 은 차선 작업 안에서만 돕니다 (PLAN L1).";
-    if (process.env.COLO_DESIGN_LANE_STRICT === "1") throw new Error(detail);
+    if (process.env.NOVA_DESIGN_LANE_STRICT === "1") throw new Error(detail);
     warnLaneViolation(verb, detail);
   }
 

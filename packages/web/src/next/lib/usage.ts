@@ -1,4 +1,4 @@
-import type { PlanPeriod, PlanUsage } from "@colo-design/protocol";
+import type { PlanPeriod, PlanUsage } from "@nova-design/protocol";
 import type { L } from "../labels";
 
 /**

@@ -1,8 +1,8 @@
 import type {
-  ColoDesignPinEnvelope,
-  ColoDesignPinsSync,
+  NovaDesignPinEnvelope,
+  NovaDesignPinsSync,
   UpdateCheckResult,
-} from "@colo-design/protocol";
+} from "@nova-design/protocol";
 
 /**
  * The desktop app's preload bridge (packages/desktop/src/preload.ts) — the
@@ -18,7 +18,7 @@ type Unsubscribe = () => void;
 
 declare global {
   interface Window {
-    coloDesignDesktop?: {
+    novaDesignDesktop?: {
       /** The OS the app runs on — mac and win replace themselves; anything
        * else goes to the releases page. */
       platform: string;
@@ -35,7 +35,7 @@ declare global {
         | { started: boolean; downloadPath: string; steps: string[] } // 재시작 동의됨, 곧 종료
         | { error: string }
       >;
-      /** Opens ~/.colo-design in the OS file manager; `logs` opens
+      /** Opens ~/.nova-design in the OS file manager; `logs` opens
        * the daemon's daily logs instead. */
       openHome?: (target?: "logs") => Promise<unknown>;
       /** 알림 정책(시점·소리)을 메인에 반영 — 창이 닫혀도 정책이 살게. */
@@ -103,7 +103,7 @@ declare global {
         ) => Promise<unknown>;
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
         /** 핀 동기화: the web's whole pin list — the overlay's badges are its projection. */
-        pins?: (sync: ColoDesignPinsSync) => Promise<unknown>;
+        pins?: (sync: NovaDesignPinsSync) => Promise<unknown>;
         /** 칩 클릭: the matching badge on the page flashes. */
         pinFlash?: (id: string) => Promise<unknown>;
         /** 화면 보여 주기: the frame plus the recent console lines. */
@@ -120,7 +120,7 @@ declare global {
             canGoForward: boolean;
           }) => void,
         ) => Unsubscribe;
-        onPin?: (callback: (payload: ColoDesignPinEnvelope) => void) => Unsubscribe;
+        onPin?: (callback: (payload: NovaDesignPinEnvelope) => void) => Unsubscribe;
         onPinFocus?: (callback: (payload: { id: string }) => void) => Unsubscribe;
         onError?: (
           callback: (payload: {

@@ -1,4 +1,4 @@
-import type { AskQuestion, DeveloperReview, RepoStatus, TurnMarker } from "@colo-design/protocol";
+import type { AskQuestion, DeveloperReview, RepoStatus, TurnMarker } from "@nova-design/protocol";
 import { useState } from "react";
 import type { Block, PendingPermission, PendingQuestion } from "../../lib/daemon-client";
 import { composing } from "../../lib/ime";

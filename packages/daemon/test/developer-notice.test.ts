@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { composeAttention } from "@colo-design/protocol";
+import { composeAttention } from "@nova-design/protocol";
 import { MemoryCredentialStore } from "../dist/credentials.js";
 import { emptyLedger, readLedger, writeLedger } from "../dist/cycle-ledger.js";
 import {
@@ -46,7 +46,7 @@ function deps(over: Partial<DeveloperNoticeDeps> = {}): DeveloperNoticeDeps {
   return {
     github: () => null,
     githubAuthExpired: () => false,
-    repoSlug: () => ({ owner: "colo-design", repo: "harness" }),
+    repoSlug: () => ({ owner: "nova-design", repo: "harness" }),
     project: () => ({ name: "앱", reviewers: ["dev1"], openPr: null }),
     authorName: () => "기획자",
     slack:
@@ -88,7 +88,7 @@ test("noticeBody — 네 줄 구조와 details, 생니타이저와 자르기", (
     1,
     new Date("2026-09-24T00:00:00Z"),
   );
-  assert.ok(body.startsWith("[Colo Design] 앱 · 기획자 님의 작업이 막혔습니다"));
+  assert.ok(body.startsWith("[Nova Design] 앱 · 기획자 님의 작업이 막혔습니다"));
   assert.ok(body.includes("무엇이"));
   assert.ok(body.includes("해 본 것"));
   assert.ok(body.includes("부탁"));
@@ -108,12 +108,12 @@ test("clipDetail — 30줄 · 4000자에서 자르고 비밀을 걷는다", () =
 });
 
 test("findIssueMarker · findNoticeIssue — 표식이 같은 열린 이슈를 찾는다", () => {
-  const body = "앞\n<!-- colo-design:problem push:auth -->\n뒤";
+  const body = "앞\n<!-- nova-design:problem push:auth -->\n뒤";
   assert.equal(findIssueMarker(body), "push:auth");
   assert.equal(findIssueMarker("표식 없음"), null);
   const rows = [
-    { number: 3, body: "<!-- colo-design:problem push:auth -->\n…" },
-    { number: 4, body: "<!-- colo-design:problem submit:pr -->\n…" },
+    { number: 3, body: "<!-- nova-design:problem push:auth -->\n…" },
+    { number: 4, body: "<!-- nova-design:problem submit:pr -->\n…" },
   ];
   assert.equal(findNoticeIssue(rows, "submit:pr"), 4);
   assert.equal(findNoticeIssue(rows, "env:git"), null);
@@ -152,7 +152,7 @@ test("PR 이 없으면 이슈를 열고, 다시 raise 는 코멘트만, resolve 
     assert.equal(github.openIssueCount, 1);
     const issue = github.issue(1);
     assert.ok(issue !== undefined);
-    assert.ok(issue.body.includes("<!-- colo-design:problem push:auth -->"));
+    assert.ok(issue.body.includes("<!-- nova-design:problem push:auth -->"));
     // 다시 raise — 같은 이슈에 코멘트만 덧붙인다.
     assert.equal(await notice.raise(PROBLEM), "issue");
     assert.equal(github.openIssueCount, 1);
@@ -238,7 +238,7 @@ test("같은 키는 10분에 한 번만 GitHub 에 쓴다 — 창 안의 raise �
 
 test("프로젝트 알림의 상태는 원장에 남는다 — 새 DeveloperNotice 가 같은 이슈에 덧붙인다", async () => {
   const remote = await makeRemote();
-  const dir = mkdtempSync(join(tmpdir(), "colo-notice-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-notice-"));
   try {
     const github = new MemoryGitHub(remote);
     const client = new GitHubClient("t", github);
@@ -384,7 +384,7 @@ test("넘기기가 성공하면 서 있던 submit:pr 알림을 거둔다", async
     const github = new MemoryGitHub(remote);
     const core = makeCore(clone, remote, { github });
     // 사이클 브랜치에 커밋 하나 — 넘길 것이 있어야 runHandoff 가 돈다.
-    const branch = "colo-design/20260924-1";
+    const branch = "nova-design/20260924-1";
     execFileSync("git", ["checkout", "-b", branch], { cwd: clone.path });
     writeFileSync(join(clone.path, "screen.tsx"), "export default () => null;\n");
     execFileSync("git", ["add", "-A"], { cwd: clone.path });

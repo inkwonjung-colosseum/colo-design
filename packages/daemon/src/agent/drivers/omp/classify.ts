@@ -40,7 +40,7 @@ function editPaths(args: Wire): string[] {
  * 거절)과 UI 의 카드가 공급자 어휘를 모르게 하는 번역이다.
  *
  * 브라우저 도구는 데몬이 host tool 로 실어 보낸 자기 도구라 `mcp` 로 읽는다 —
- * claude 의 `mcp__colo-browser__*` 와 같은 카드, 같은 항상 허용 기억.
+ * claude 의 `mcp__nova-browser__*` 와 같은 카드, 같은 항상 허용 기억.
  */
 export function classifyOmpTool(name: string, args: Wire): ToolClass {
   if (BROWSER_TOOLS.some((tool) => tool.name === name)) {

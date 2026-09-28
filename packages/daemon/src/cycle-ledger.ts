@@ -1,6 +1,6 @@
 /**
  * 사이클 원장 (PLAN L10 · 단계 2a) — 프로젝트의 사이클 상태가 사는
- * `~/.colo-design/projects/<slug>/cycle.json` 의 모양과 읽기 · 원자 쓰기.
+ * `~/.nova-design/projects/<slug>/cycle.json` 의 모양과 읽기 · 원자 쓰기.
  * 메모리에만 있던 것들(끝난 PR · 코멘트 장부 · 밀린 푸시)이 디스크로 옮겨
  * 어디서 끊겨도 다음 시작이 이어받게 한다(I5).
  *
@@ -17,7 +17,7 @@
  */
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { DeveloperReview } from "@colo-design/protocol";
+import type { DeveloperReview } from "@nova-design/protocol";
 import { BUDGETS, type BudgetEntry, backoffDelay } from "./budgets.js";
 
 /** 원장 파일의 자리 — 프로젝트 폴더(<slug>) 아래의 cycle.json. */
@@ -202,7 +202,7 @@ export interface CycleLedger {
   }>;
   /**
    * 위생의 시각 (PLAN 단계 9) — 항목마다 마지막으로 시도한 때. 기한은
-   * cycle-hygiene 의 표가 정한다. assets 는 캡처 브랜치(colo-design-assets)
+   * cycle-hygiene 의 표가 정한다. assets 는 캡처 브랜치(nova-design-assets)
    * 끝 트리의 파일 수 · 대략 크기다 — 정리는 하지 않고 기록만 한다(O4).
    */
   hygiene: {

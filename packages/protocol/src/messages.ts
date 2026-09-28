@@ -22,7 +22,7 @@ const withId = { id: z.string().min(1) };
  * planner reads; this is the same identity as data, so the daemon can find
  * `파일 후보` lines before the turn reaches the agent — the search the
  * agent's first tool calls would otherwise repeat. `id` joins the hint to
- * the turn marker's item rows(2026-09-21 레포 마커 철거 — `data-colo-src`
+ * the turn marker's item rows(2026-09-21 레포 마커 철거 — `data-nova-src`
  * 의 `file` 힌트는 폐지했다; 정체는 글자·owners·testId 뿐이다).
  */
 const sessionPinHintSchema = z.object({
@@ -491,7 +491,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   }),
   /**
    * 저장 (PLAN D5[넘기기]): gate, commit and push the reviewed worktree diff onto the
-   * project's own `colo-design/…` branch, created on the first save of a cycle.
+   * project's own `nova-design/…` branch, created on the first save of a cycle.
    * The base branch is never written to — a developer receives this work as a
    * pull request, not as a push past them.
    */
@@ -542,7 +542,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ ...withId, type: z.literal("repo.handoffStatus") }),
   /**
    * 보낸 화면 동결: read one committed handoff capture —
-   * `.colo-design/shots/<route>.<ext>` — out of the handoff branch
+   * `.nova-design/shots/<route>.<ext>` — out of the handoff branch
    * with `git show`, so the frozen stage shows what was sent even after the
    * worktree moved on. Null when the shot was never committed.
    */

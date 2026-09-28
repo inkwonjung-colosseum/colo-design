@@ -1,4 +1,4 @@
-# Colo Design
+# Nova Design
 
 > **개발 지식이 전혀 없는 사람이, 개발자의 레포에 연결해 채팅으로 화면을 만들고 고치는
 > 도구 — git, 터미널 같은 건 몰라도 쓴다.**
@@ -48,9 +48,9 @@
 
 데스크톱 앱이 쓰는 법이다(mac · Windows).
 
-1. 릴리스 페이지(`inkwonjung-colosseum/colo-design`)에서 컴퓨터에 맞는 파일을 내려받아
-   설치한다 — mac 은 `colo-design-<버전>-mac-arm64.dmg`, Windows 는
-   `colo-design-Setup-<버전>-win-x64.exe`.
+1. 릴리스 페이지(`inkwonjung-colosseum/nova-design`)에서 컴퓨터에 맞는 파일을 내려받아
+   설치한다 — mac 은 `nova-design-<버전>-mac-arm64.dmg`, Windows 는
+   `nova-design-Setup-<버전>-win-x64.exe`.
 2. 서명이 없는 배포라 첫 실행에 한 번 허가가 필요하다 — Windows 는 SmartScreen 의
    `추가 정보` → `실행`, mac 은 시스템 설정 → 개인정보 보호 및 보안 → `확인 없이 열기`.
    같은 안내가 릴리스 노트에도 들어 있다.
@@ -314,8 +314,10 @@ OS 자격 증명 저장소(맥 키체인 등)에만 있다. 연결 코드는 컴
 거치지 않으며, 화면 쪽 코드에는 절대 전달되지 않는다.
 
 **도구가 내 컴퓨터에 남기는 것은 뭔가요?**
-홈의 숨은 폴더 하나 `~/.colo-design/` 전부다 — 설정 파일과 작업 중인 서비스의 복사본.
+홈의 숨은 폴더 하나 `~/.nova-design/` 전부다 — 설정 파일과 작업 중인 서비스의 복사본.
 설정 → `개발자용` 의 `폴더 열기`로 열어 볼 수 있다.
+
+* 옛 버전의 `~/.colo-design/` 폴더는 0.4.0 첫 실행에서 저절로 옮겨진다.
 
 **AI 가 엉뚱한 화면을 만들었어요.**
 말로 고쳐 달라고 하면 된다. 말부터 다시 하고 싶으면 보낸 말의 `고쳐서 다시 보내기`,
@@ -380,7 +382,7 @@ AI 연결 · 초대 파일이 채워지면 저절로 작업 화면으로 넘어�
 pnpm dev:desktop
 
 # 릴리스와 같은 코드 경로 — 전부 빌드해 web-dist 를 스테이징하고 띄운다
-pnpm --filter @colo-design/desktop dev
+pnpm --filter @nova-design/desktop dev
 ```
 
 `pnpm dev:desktop` 은 웹 소스를 고치면 창이 즉시 바뀐다(타입 검사는 건너뛴다 —
@@ -388,7 +390,7 @@ pnpm --filter @colo-design/desktop dev
 경로 모두 다시 빌드해 앱을 재시작한다(빌드가 깨지면 지금 도는 앱을 그대로
 둔다) — 데몬 · 프로토콜을 고치면 다시 실행해야 한다. 창이 다른 origin 을
 여는 문은 `app.isPackaged` 가 아닌 실행에서만 열린다 — 패키징된 앱은
-`COLO_DESIGN_DEV_SERVER` 를 보지 않는다.
+`NOVA_DESIGN_DEV_SERVER` 를 보지 않는다.
 
 **요구 사항** — 로그인된 에이전트 CLI 하나 이상(Claude Code `claude /login` · Codex;
 개발 실행에서는 omp 도 — 아래 **개발용 에이전트**), git, 그리고 Claude 를
@@ -400,7 +402,7 @@ pnpm --filter @colo-design/desktop dev
 **개발용 에이전트** — omp 는 개발 실행에서만 프로바이더 목록에 선다. 실사용자는
 Claude Code · Codex 만 쓴다: 이 도구의 개발자만 omp 를 쓰므로 그 길은 개발
 실행에만 열어 둔다. 켜는 자리는 둘 — `pnpm dev:daemon` 이
-`COLO_DESIGN_DEV_AGENTS=1` 로 켜고, 데스크톱은 `app.isPackaged` 가 아닌 실행에서
+`NOVA_DESIGN_DEV_AGENTS=1` 로 켜고, 데스크톱은 `app.isPackaged` 가 아닌 실행에서
 스스로 켠다. 패키징된 앱은 어느 경로로도 켜지지 않는다. 개발에서 omp 를 고른 설정이
 남아 있어도 실사용 앱은 첫 쓸 수 있는 프로바이더로 옮겨 앉는다.
 
@@ -423,51 +425,64 @@ rpc 에는 모드를 바꿀 명령이 없고, 모든 쓰기·실행이 데몬을
 
 ## 도구가 기계에 남기는 것
 
-도구가 쓰는 모든 것은 홈의 숨은 폴더 하나 `~/.colo-design/` 에 산다.
+도구가 쓰는 모든 것은 홈의 숨은 폴더 하나 `~/.nova-design/` 에 산다.
 
 | 경로 | 무엇이 있는가 |
 | --- | --- |
-| `~/.colo-design/config/` | `daemon.json` (host/port/token), `projects.json` (레지스트리) — 전부 0600, 비밀 없음(그건 OS 저장소로 간다) |
-| `~/.colo-design/logs/` | 데몬의 하루 로그(`daemon-YYYY-MM-DD.log`, 7일 보존) — 값의 비밀·이메일·계정 경로는 `~/{path}` 따위로 눌러 닫힌다. 설정 → `개발자용` 의 `로그 폴더 열기`가 여기를 연다 |
-| `~/.colo-design/logs/turn-stats-YYYY-MM-DD.jsonl` | 턴 통계 — 한 턴의 종류(사람 말 · 핀 · 게이트) · 길이 · 도구 묶음별 호출 수 · 컨텍스트 토큰 · 첫 답까지(`firstDeltaMs`)·첫 편집까지(`firstEditMs`) · 실패 단계(`failure`) · 핀 턴의 payload 크기(`pinBytes`) · 핀 후보 적중 여부(`pinHit` — 파일 경로는 남기지 않는다) · 브라우저 도구에 쓴 시간(`browserMs`)과 op 실패 종류 수(`browserFail` — 낡은 ref · 시간 초과 · 거절 · 창 없음 · 그 밖, 0인 종류는 칸에서 뺀다). 게이트 행(`gateset`)은 판정 상세(빈 화면·콘솔 오류·실패한 요청 수, `rescued`)와 돌지 못한 이유(`skipped`), 바뀐 파일에서 되짚은 화면 수(`fallback`)와 타입 검사(`typeErrors` · `typeMs` — 이번에 바뀐 파일의 오류 수와 검사 시간, 검사가 끝났으면 0도)를 더 남긴다. 무엇이 턴을 느리게 하는지 재는 잣자리로, 사용자의 말도 화면도 남기지 않는다(7일 보존) |
-| `~/.colo-design/projects/<slug>/screen-map.jsonl` | 라우트↔파일 관찰 지도 — 그 화면을 고친 커밋이 건드린 파일(sha 와 함께). 정체 검색이 빈손인 핀의 마지막 후보 길이다(500행 상한) |
-| `~/.colo-design/projects/<slug>/tsc.tsbuildinfo` | 증분 타입 검사(`tsc --noEmit --incremental`)의 빌드 정보 — 클론 밖에 두어 `git status` 를 깨끗하게 한다. 편집 사이사이의 몇 초 답(`repo_diagnostics`)과 게이트의 타입 절이 함께 쓴다 |
-| `~/.colo-design/projects/<slug>/cycle.json` | 사이클 원장 — 제출 의도 · 푸시 밀림 · 코멘트 장부 · 예산 · 끝난 요청. 어디서 끊겨도 다음 시작이 이어받는다 |
-| `~/.colo-design/projects/<slug>/repo/` | 그 프로젝트의 연결 레포 클론 |
+| `~/.nova-design/config/` | `daemon.json` (host/port/token), `projects.json` (레지스트리) — 전부 0600, 비밀 없음(그건 OS 저장소로 간다) |
+| `~/.nova-design/logs/` | 데몬의 하루 로그(`daemon-YYYY-MM-DD.log`, 7일 보존) — 값의 비밀·이메일·계정 경로는 `~/{path}` 따위로 눌러 닫힌다. 설정 → `개발자용` 의 `로그 폴더 열기`가 여기를 연다 |
+| `~/.nova-design/logs/turn-stats-YYYY-MM-DD.jsonl` | 턴 통계 — 한 턴의 종류(사람 말 · 핀 · 게이트) · 길이 · 도구 묶음별 호출 수 · 컨텍스트 토큰 · 첫 답까지(`firstDeltaMs`)·첫 편집까지(`firstEditMs`) · 실패 단계(`failure`) · 핀 턴의 payload 크기(`pinBytes`) · 핀 후보 적중 여부(`pinHit` — 파일 경로는 남기지 않는다) · 브라우저 도구에 쓴 시간(`browserMs`)과 op 실패 종류 수(`browserFail` — 낡은 ref · 시간 초과 · 거절 · 창 없음 · 그 밖, 0인 종류는 칸에서 뺀다). 게이트 행(`gateset`)은 판정 상세(빈 화면·콘솔 오류·실패한 요청 수, `rescued`)와 돌지 못한 이유(`skipped`), 바뀐 파일에서 되짚은 화면 수(`fallback`)와 타입 검사(`typeErrors` · `typeMs` — 이번에 바뀐 파일의 오류 수와 검사 시간, 검사가 끝났으면 0도)를 더 남긴다. 무엇이 턴을 느리게 하는지 재는 잣자리로, 사용자의 말도 화면도 남기지 않는다(7일 보존) |
+| `~/.nova-design/projects/<slug>/screen-map.jsonl` | 라우트↔파일 관찰 지도 — 그 화면을 고친 커밋이 건드린 파일(sha 와 함께). 정체 검색이 빈손인 핀의 마지막 후보 길이다(500행 상한) |
+| `~/.nova-design/projects/<slug>/tsc.tsbuildinfo` | 증분 타입 검사(`tsc --noEmit --incremental`)의 빌드 정보 — 클론 밖에 두어 `git status` 를 깨끗하게 한다. 편집 사이사이의 몇 초 답(`repo_diagnostics`)과 게이트의 타입 절이 함께 쓴다 |
+| `~/.nova-design/projects/<slug>/cycle.json` | 사이클 원장 — 제출 의도 · 푸시 밀림 · 코멘트 장부 · 예산 · 끝난 요청. 어디서 끊겨도 다음 시작이 이어받는다 |
+| `~/.nova-design/projects/<slug>/repo/` | 그 프로젝트의 연결 레포 클론 |
 
 설정의 `개발자용` 폴드 → `폴더 열기` 가 이 폴더를 연다(F1) — 진단 도구는
 기본 설정 화면에서 접혀 있다.
+
+**0.4.0 의 저장 위치 이주와 이중 계약.** 0.4.0 의 첫 실행이 옛 저장 위치를 한 번만
+옮긴다 — 데이터 폴더와 userData 폴더를 각각 새 이름으로 통째로 rename 하고(멱등이라
+두 번째 실행은 아무 것도 하지 않고, 한 단계가 실패해도 앱은 뜬다),
+`config/projects.json` · 프로젝트마다의 `cycle.json` · 클론의 `core.hooksPath` 와
+세 에이전트(Claude · Codex · omp)의 대화 저장소 경로도 따라 고쳐진다
+(`daemon/src/migrate-home.ts`). 이미 저장되어 다시 읽히는 표식(턴 마커 · PR 도구
+구간 · 이슈 표식 · 에셋 브랜치 · 보관 ref · stash 태그 · localStorage 키)은 쓰기를
+nova 로 바꾸되 읽기는 둘 다 둔다 — 그런 줄에는 `// read-legacy` 표식이 붙어 있고
+`nova-names` 시험이 지킨다. 초대 파일 확장자는 0.4.0 도 생성기가 `.colo-invite` 를
+그대로 쓰고, 읽는 쪽만 두 확장자를 다 받는다(2단계는 2주 뒤).
+
+* 옛 데이터 폴더 `~/.colo-design/` 과 userData `…/Colo Design` 은 0.4.0 첫 실행에서 `~/.nova-design/` · `…/Nova Design` 으로 저절로 옮겨진다 — 0.3.x 로 되돌려 깔려면 폴더 이름을 손으로 되돌려야 옛 앱이 대화를 본다.
 
 쓸 만한 환경 변수 오버라이드(모두 선택, 모두 테스트로 검증됨):
 
 | 환경 변수 | 기본값 | 역할 |
 | --- | --- | --- |
-| `COLO_DESIGN_PROJECTS_SETTINGS` | `~/.colo-design/config/projects.json` | 프로젝트 레지스트리 파일 |
-| `COLO_DESIGN_PROJECTS_DIR` | `~/.colo-design/projects` | 프로젝트 폴더의 위치 |
-| `COLO_DESIGN_REPO_DIR` | `<project>/repo` | **활성** 프로젝트의 클론 디렉터리 |
-| `COLO_DESIGN_REPO_URL` | 레지스트리 | **활성** 프로젝트의 레포 url(테스트는 fixture 원격을 쓴다) |
-| `COLO_DESIGN_OPEN_BIN` | `open`/`xdg-open`/`explorer` | 사이드바 프로젝트 카드의 `폴더 열기`가 쓰는 프로그램(테스트는 기록 스텁을 쓴다) |
-| `COLO_DESIGN_CLAUDE_BIN` · `…_CODEX_BIN` · `…_OMP_BIN` | 자동 탐지 | 구동할 각 에이전트 CLI 바이너리 |
-| `COLO_DESIGN_GITHUB_FIXTURE` | unset | 녹화된 GitHub REST 짝(오프라인 넘기기 테스트) |
-| `COLO_DESIGN_GITHUB_SLUG` | 레포 url 에서 | 넘기기가 겨눌 `owner/repo`; 테스트는 로컬 bare 원격을 클론하니 url 에 GitHub 프로젝트가 없다 |
-| `COLO_DESIGN_CREDENTIAL_STORE` | 플랫폼 기본 | `memory` (테스트) 또는 `keychain` |
-| `COLO_DESIGN_EXTRA_PATH` | unset | repo 명령의 PATH 접두어(데스크톱이 설정한다) |
-| `COLO_DESIGN_COMMAND_STALL_MS` | `300000` | 레포 명령이 아무 말도 하지 않아도 기다리는 시간(설치 정지 감시) |
-| `COLO_DESIGN_ENFORCE_REPO_SETTINGS` | unset(신뢰) | `1`(또는 `true`)이면 연결 레포가 실어 보낸 에이전트 설정(Claude Code · omp)의 권한 확장 키를 절단하고 검역 기록과 함께 경고한다 — 외부 레포를 받는 배포용. 기본은 레포 파일을 그대로 두고 절단도 경고도 하지 않는다 |
-| `COLO_DESIGN_DEV_AGENTS` | unset(끔) | `1` 이면 개발용 에이전트(omp)가 프로바이더 목록에 선다. 실사용 앱은 Claude Code · Codex 만 쓴다 — omp 는 이 도구의 개발자만 쓰기 때문이다. `pnpm dev:daemon` 이 켜고, 데스크톱은 `app.isPackaged` 가 아닌 실행에서 스스로 켠다(패키징된 앱은 절대) |
-| `COLO_DESIGN_CLAUDE_INSTALL_CMD` | unset | 설치 스크립트 대신 이 명령을 셸로 돌린다 — 검증용(성공·실패·느린 진행을 흉내 낸다) |
-| `COLO_DESIGN_CODEX_RELEASE_API` | unset | Codex 릴리스 API 주소 — 검증용(로컬 서버가 JSON 을 내어 준다). 설치와 업데이트 확인이 함께 쓴다 |
-| `COLO_DESIGN_CLAUDE_LATEST_API` | downloads.claude.ai 의 `latest` | Claude Code 최신 버전을 읽는 주소 — 검증용(업데이트 줄의 `→ 새 버전 있어요`) |
-| `COLO_DESIGN_PORT` | 임시 포트 | 데몬이 들 포트 — 포트가 막혔을 때 데몬의 안내 문구도 이 이름을 말한다 |
-| `COLO_DESIGN_DEV_SERVER` | unset | 데스크톱 HMR 고리(`pnpm dev:desktop`)가 여는 vite 주소 — 패키징된 앱은 보지 않는다 |
-| `COLO_DESIGN_BENCH_ENDPOINT` | unset | 개발 실행의 데스크톱이 재생 벤치의 접속 파일(ws 주소 · pid)을 적는 자리 — 패키징된 앱은 절대 보지 않는다 |
-| `COLO_DESIGN_GIT_BIN` | 자동 탐지 | git 바이너리를 이 경로로 고정한다 — 탐색을 통째로 건너뛴다(테스트는 스텁을 겨눈다) |
-| `COLO_DESIGN_REPO_PAT` | OS 저장소 | 기계 전체의 GitHub 토큰 — 자격 증명 저장소보다 앞선다 |
-| `COLO_DESIGN_GITHUB_API` | `https://api.github.com` | GitHub REST 주소(테스트는 로컬 서버로) |
-| `COLO_DESIGN_READY_TIMEOUT_MS` | `120000` | 미리보기가 준비될 때까지 기다리는 벽시계 상한 |
-| `COLO_DESIGN_LOG_DIR` | `~/.colo-design/logs` | 하루 로그와 턴 통계가 적히는 폴더 |
-| `COLO_DESIGN_PIN_EFFORT` | unset(끔) | 핀으로 시작하는 턴의 첫 노력 자세 — 턴 통계가 재는 실험줄. 없으면 아무 일도 일어나지 않는다 |
-| `COLO_DESIGN_REPO_SETTINGS` · `…_NPMRC` · `…_RUN_DIR` · `…_UNDO_LOG` · `…_PERMISSION_LOG` · `…_PLAN_USAGE` | 기본 자리 | 각 저장 파일(repo.json · 사용자 `.npmrc` · run · undo · 권한 반복 · 계획 사용량)의 자리 — 테스트가 일회용 파일로 가리킨다 |
+| `NOVA_DESIGN_PROJECTS_SETTINGS` | `~/.nova-design/config/projects.json` | 프로젝트 레지스트리 파일 |
+| `NOVA_DESIGN_PROJECTS_DIR` | `~/.nova-design/projects` | 프로젝트 폴더의 위치 |
+| `NOVA_DESIGN_REPO_DIR` | `<project>/repo` | **활성** 프로젝트의 클론 디렉터리 |
+| `NOVA_DESIGN_REPO_URL` | 레지스트리 | **활성** 프로젝트의 레포 url(테스트는 fixture 원격을 쓴다) |
+| `NOVA_DESIGN_OPEN_BIN` | `open`/`xdg-open`/`explorer` | 사이드바 프로젝트 카드의 `폴더 열기`가 쓰는 프로그램(테스트는 기록 스텁을 쓴다) |
+| `NOVA_DESIGN_CLAUDE_BIN` · `…_CODEX_BIN` · `…_OMP_BIN` | 자동 탐지 | 구동할 각 에이전트 CLI 바이너리 |
+| `NOVA_DESIGN_GITHUB_FIXTURE` | unset | 녹화된 GitHub REST 짝(오프라인 넘기기 테스트) |
+| `NOVA_DESIGN_GITHUB_SLUG` | 레포 url 에서 | 넘기기가 겨눌 `owner/repo`; 테스트는 로컬 bare 원격을 클론하니 url 에 GitHub 프로젝트가 없다 |
+| `NOVA_DESIGN_CREDENTIAL_STORE` | 플랫폼 기본 | `memory` (테스트) 또는 `keychain` |
+| `NOVA_DESIGN_EXTRA_PATH` | unset | repo 명령의 PATH 접두어(데스크톱이 설정한다) |
+| `NOVA_DESIGN_COMMAND_STALL_MS` | `300000` | 레포 명령이 아무 말도 하지 않아도 기다리는 시간(설치 정지 감시) |
+| `NOVA_DESIGN_ENFORCE_REPO_SETTINGS` | unset(신뢰) | `1`(또는 `true`)이면 연결 레포가 실어 보낸 에이전트 설정(Claude Code · omp)의 권한 확장 키를 절단하고 검역 기록과 함께 경고한다 — 외부 레포를 받는 배포용. 기본은 레포 파일을 그대로 두고 절단도 경고도 하지 않는다 |
+| `NOVA_DESIGN_DEV_AGENTS` | unset(끔) | `1` 이면 개발용 에이전트(omp)가 프로바이더 목록에 선다. 실사용 앱은 Claude Code · Codex 만 쓴다 — omp 는 이 도구의 개발자만 쓰기 때문이다. `pnpm dev:daemon` 이 켜고, 데스크톱은 `app.isPackaged` 가 아닌 실행에서 스스로 켠다(패키징된 앱은 절대) |
+| `NOVA_DESIGN_CLAUDE_INSTALL_CMD` | unset | 설치 스크립트 대신 이 명령을 셸로 돌린다 — 검증용(성공·실패·느린 진행을 흉내 낸다) |
+| `NOVA_DESIGN_CODEX_RELEASE_API` | unset | Codex 릴리스 API 주소 — 검증용(로컬 서버가 JSON 을 내어 준다). 설치와 업데이트 확인이 함께 쓴다 |
+| `NOVA_DESIGN_CLAUDE_LATEST_API` | downloads.claude.ai 의 `latest` | Claude Code 최신 버전을 읽는 주소 — 검증용(업데이트 줄의 `→ 새 버전 있어요`) |
+| `NOVA_DESIGN_PORT` | 임시 포트 | 데몬이 들 포트 — 포트가 막혔을 때 데몬의 안내 문구도 이 이름을 말한다 |
+| `NOVA_DESIGN_DEV_SERVER` | unset | 데스크톱 HMR 고리(`pnpm dev:desktop`)가 여는 vite 주소 — 패키징된 앱은 보지 않는다 |
+| `NOVA_DESIGN_BENCH_ENDPOINT` | unset | 개발 실행의 데스크톱이 재생 벤치의 접속 파일(ws 주소 · pid)을 적는 자리 — 패키징된 앱은 절대 보지 않는다 |
+| `NOVA_DESIGN_GIT_BIN` | 자동 탐지 | git 바이너리를 이 경로로 고정한다 — 탐색을 통째로 건너뛴다(테스트는 스텁을 겨눈다) |
+| `NOVA_DESIGN_REPO_PAT` | OS 저장소 | 기계 전체의 GitHub 토큰 — 자격 증명 저장소보다 앞선다 |
+| `NOVA_DESIGN_GITHUB_API` | `https://api.github.com` | GitHub REST 주소(테스트는 로컬 서버로) |
+| `NOVA_DESIGN_READY_TIMEOUT_MS` | `120000` | 미리보기가 준비될 때까지 기다리는 벽시계 상한 |
+| `NOVA_DESIGN_LOG_DIR` | `~/.nova-design/logs` | 하루 로그와 턴 통계가 적히는 폴더 |
+| `NOVA_DESIGN_PIN_EFFORT` | unset(끔) | 핀으로 시작하는 턴의 첫 노력 자세 — 턴 통계가 재는 실험줄. 없으면 아무 일도 일어나지 않는다 |
+| `NOVA_DESIGN_REPO_SETTINGS` · `…_NPMRC` · `…_RUN_DIR` · `…_UNDO_LOG` · `…_PERMISSION_LOG` · `…_PLAN_USAGE` | 기본 자리 | 각 저장 파일(repo.json · 사용자 `.npmrc` · run · undo · 권한 반복 · 계획 사용량)의 자리 — 테스트가 일회용 파일로 가리킨다 |
 
 ## 상세 동작
 
@@ -508,7 +523,7 @@ rpc 에는 모드를 바꿀 명령이 없고, 모든 쓰기·실행이 데몬을
 읽지 않는다 — `저장` · `넘기기` 라는 중간 단어도 없앴다.
 
 - **자동 보관(커밋)** — 답을 낸 턴이 끝날 때마다 데몬이 스스로 커밋한다. 첫 커밋이
-  이번 사이클의 `colo-design/<YYYYMMDD>-<n>` 브랜치를 만들고(번호는 원격에 없는 것을
+  이번 사이클의 `nova-design/<YYYYMMDD>-<n>` 브랜치를 만들고(번호는 원격에 없는 것을
   찾아 올라간다), 베이스 브랜치에는 절대 쓰지 않는다. 커밋 제목은 **그 턴을 연
   사용자의 말** 첫 줄이다 — 제목을 받으려고 모델 턴을 하나 더 돌리지 않는다(매 턴
   돌리면 구독이 두 배로 탄다). 푸시는 백그라운드이고, 실패하면 30 초 간격 세 번 다시 민다(D6): 오프라인에서
@@ -567,7 +582,7 @@ AI 세션은 죽지 않는다 — 다른 프로젝트에서 도는 턴은 끝까
 않고, 멈춰 있던 턴의 상태도 그대로 돌아온다.
 
 **지켜 줄 것** — 이 프로젝트에서 AI 가 늘 따랐으면 하는 규칙을 사용자의 말로 적는
-상자다. 적은 내용은 `~/.colo-design/config/projects.json` 의 그 프로젝트에 저장되고,
+상자다. 적은 내용은 `~/.nova-design/config/projects.json` 의 그 프로젝트에 저장되고,
 **새로 시작하는 대화부터** 세션의 시스템 프롬프트 끝에 붙는다. 데몬 쪽은 그대로이나 새
 셸에는 적는 자리가 아직 없다(PLAN-UI 8 — 옛 사이드바의 행 메뉴와 함께 걷혔다).
 
@@ -606,7 +621,7 @@ id 가 된다. 코멘트 → 수정의 고리는 처음부터 열려 있다.
 
 ### 사용자가 치지 않은 턴
 코멘트 묶음, 화면 스레드를 여는 브리프, 실패한 게이트, 미리보기 오류를 맡긴 고침,
-리뷰 반영 — 모두 AI 를 위해 AI 의 어휘로 쓰인다. 첫 줄에 표식(`<!-- colo-design:<kind> {…} -->`,
+리뷰 반영 — 모두 AI 를 위해 AI 의 어휘로 쓰인다. 첫 줄에 표식(`<!-- nova-design:<kind> {…} -->`,
 AI 가 지나쳐 읽는 HTML 주석 — 종류는 `comments` · `brief` · `gate` · `error` · `review`)을 달고,
 대화록은 그것을 카드로 그린다. 무엇을 물었는지가 사용자의 말로,
 AI 가 실제로 받은 본문은 한 겹 접혀 있다. 표식은 SDK 가 이미 저장하는 문자열의
@@ -703,7 +718,7 @@ page 파일일 때의 두 길뿐이다. 파일 이름에서 주소를 짓지 않
 문장이 된다 — 정책 차단에는 IT 담당자에게 보낼 복사용 한 줄이 딸린다. 시간 상한 15 분,
 진행 방송은 1 초에 한 번 이하(마지막 줄은 반드시 나간다)다. 설치가 성공하면 claude
 실행 경로를 그 자리에서 다시 풀어 재시작 없이 로그인이 이어진다. **Codex 는 공식
-릴리스의 단일 실행 파일**을 골라 sha256(digest) 확인 뒤 `~/.colo-design/tools/bin`
+릴리스의 단일 실행 파일**을 골라 sha256(digest) 확인 뒤 `~/.nova-design/tools/bin`
 에 둔다. 선로 메시지는 `onboarding.install.progress` · `onboarding.install.done`
 둘뿐이다(프로토콜 버전은 올리지 않는다 — 앱과 데몬이 함께 배포된다).
 
@@ -749,7 +764,7 @@ GitHub 에만 간다)과 `node scripts/make-invite.mjs --repo … --token … --
 `?author=이름`. `--author`/`?author=` 는 넘긴 요청의 `> 작성:` 줄에 적힐
 이름이고, 리뷰어(`--reviewer` · `?reviewers=`)는 넘긴 요청의 리뷰를 부탁할
 개발자들이다(E4) — 사용자가 리뷰어를 고르는 일은 없다. URL 스킴을 쓰지 않는
-이유는 하나다 — `colo-design://…?token=…` 은 토큰이 프로세스 argv 와 OS 로그에
+이유는 하나다 — `nova-design://…?token=…` 은 토큰이 프로세스 argv 와 OS 로그에
 남지만, 파일 경로만 argv 에 남는 초대 파일은 비밀이 파일 안에 있다. OS 파일
 연결(단계 B)은 아직 없다.
 
@@ -877,7 +892,7 @@ GitHub 에 밀고, 초대 파일로 추가한다 — `node scripts/make-invite.m
 
 ```mermaid
 flowchart LR
-    subgraph app["Colo Design (Electron · 브라우저 개발 경로 동일)"]
+    subgraph app["Nova Design (Electron · 브라우저 개발 경로 동일)"]
         preview["미리보기<br/>레포의 앱 그대로"]
         daemon["daemon<br/>프로젝트 · 세션 · 자격 증명"]
     end
@@ -943,21 +958,21 @@ v19 에서 더한 것(PLAN-UI 3 · 8): `repo.submit { sessionId?, note? }` 와 �
 
 ```bash
 # 패키징된 코드 경로의 개발 실행 (HMR 고리는 위 "개발 실행" 의 pnpm dev:desktop)
-pnpm --filter @colo-design/desktop dev
+pnpm --filter @nova-design/desktop dev
 
 # 포터블 런타임을 번들한 뒤 언팩 앱
 node packages/desktop/scripts/bundle-runtimes.mjs
-pnpm --filter @colo-design/desktop pack      # release/mac-arm64/Colo Design.app
+pnpm --filter @nova-design/desktop pack      # release/mac-arm64/Nova Design.app
 
 # 설치 파일: dmg + zip (mac, 서명 필수 — 아래), nsis (win)
-pnpm --filter @colo-design/desktop dist
+pnpm --filter @nova-design/desktop dist
 ```
 
-데스크톱 앱은 appId `org.colo-design.desktop`, 제품명 `Colo Design` 이다. mac 경로는
+데스크톱 앱은 appId `org.nova-design.desktop`, 제품명 `Nova Design` 이다. mac 경로는
 **반드시 서명되어 나간다**(`forceCodeSigning: true`) — 서명이 없으면 알림이 죽기
-때문이다. 기본 identity 는 키체인의 자체 서명 인증서 `Colo Design Dev` 이고, 그
+때문이다. 기본 identity 는 키체인의 자체 서명 인증서 `Nova Design Dev` 이고, 그
 인증서가 없는 기계·러너는 진짜 ad-hoc 으로 짓는다:
-`pnpm --filter @colo-design/desktop exec electron-builder -c.mac.identity=-`. 둘 다
+`pnpm --filter @nova-design/desktop exec electron-builder -c.mac.identity=-`. 둘 다
 UNNotification 이 받아들이며, 차이는 cdhash 의 안정성이다 — ad-hoc 은 빌드마다 값이
 바뀌어 업데이트할 때마다 키체인(Safe Storage) 허용을 다시 묻는다. **릴리스 CI 는
 언제나 ad-hoc 으로 짓는다**: 인증서를 시크릿으로 두던 길은 p12 암호가 어긋나면
@@ -966,7 +981,7 @@ UNNotification 이 받아들이며, 차이는 cdhash 의 안정성이다 — ad-
 `codesign -v` 가 깨끗하고, 패키징된 바이너리가 dev 와 같은 스모크를 통과한다.
 Windows 대상(NSIS, MinGit 동반)은 CI 가 릴리스마다 빌드한다. 자가 업데이트는 두
 플랫폼 모두 `app.isPackaged` 가드 안에서 돈다 — mac 은 zip 내려받기 → sha256 →
-`/Applications/Colo Design.app` 교체, Windows 는 설치 파일 내려받기 → sha256 →
+`/Applications/Nova Design.app` 교체, Windows 는 설치 파일 내려받기 → sha256 →
 앱 종료 대기 → NSIS 무인 설치(`/S`) → 다시 실행.
 
 ## 릴리스
@@ -986,13 +1001,13 @@ git push origin v0.3.6
 - 수동 실행(`workflow_dispatch`)은 빌드만 돌린다 — 릴리스는 만들지 않고, 실행
   페이지의 artifacts 에서 설치 파일을 검수한다.
 - 에셋 이름은 `electron-builder.yml` 의 `artifactName` 에 고정돼 있다 —
-  `colo-design-<v>-mac-arm64.dmg`, `colo-design-<v>-mac-arm64.zip`,
-  `colo-design-Setup-<v>-win-x64.exe`.
+  `nova-design-<v>-mac-arm64.dmg`, `nova-design-<v>-mac-arm64.zip`,
+  `nova-design-Setup-<v>-win-x64.exe`.
   `latest.json`(`version`/`notes`/`url`/`sha256`/`winUrl`/`winSha256`)은 앱의 업데이트
   확인이 읽는 피드다 — `url`·`sha256` 은 mac zip, `winUrl`·`winSha256` 은 Windows
   설치 파일이고 둘 다 자가 교체의 검증값이다.
 - 앱의 업데이트 확인(`packages/protocol/src/update.ts`)은
-  `inkwonjung-colosseum/colo-design` 의 릴리스를 읽는다. 확인 요청은 무인증
+  `inkwonjung-colosseum/nova-design` 의 릴리스를 읽는다. 확인 요청은 무인증
   fetch 라 **소스가 private 인 것은 상관없지만 설치 파일을 올린 릴리스는
   공개**여야 읽힌다.
 - 미서명 배포 — Windows 는 SmartScreen 의 추가 정보 → 실행, macOS 는 시스템 설정 →
@@ -1025,6 +1040,11 @@ Windows 11 일반 사용자 계정(관리자 아님)과 mac 새 사용자 계정
 10. 작업 도중 멈추기 — AI 가 명령을 도는 중에 Stop · 창 닫기 · 강제 종료 각각의 앞에
     `node scripts/orphan-check.mjs before`, 뒤에 `after` 를 돌려 0줄인지 본다
     (PLAN-CRASH-PROCESS.md §3.B 의 세 시나리오).
+11. 0.3.x 에서 건너오기 — 마지막 0.3.x(0.3.15)를 깔고 초대 파일로 프로젝트와 대화를
+    하나 만든 뒤 0.4.0 으로 업데이트한다. 대화 · 직접 바꾼 제목 · 테마 · 초안이
+    그대로인지, Windows 는 앱이 저절로 다시 열리지 않으므로 시작 메뉴의
+    `Nova Design` 으로 다시 여는지, mac 은 처음 한 번 `다시 연결이 필요해요` 가 뜨면
+    새 초대 파일을 창에 다시 놓는지를 본다.
 
 ## 테스트
 
@@ -1047,12 +1067,12 @@ node scripts/orphan-check.mjs before|after   # 작업 도중 멈춘 뒤 남은 �
 ```
 
 재생 벤치(`scripts/bench/`)는 화면 작업의 효과를 숫자로 잰다 — 데스크톱 개발 실행을
-접속 파일과 함께 띄우면(`COLO_DESIGN_BENCH_ENDPOINT=/tmp/colo-bench.json
+접속 파일과 함께 띄우면(`NOVA_DESIGN_BENCH_ENDPOINT=/tmp/nova-bench.json
 pnpm dev:desktop`) 시나리오를 실제 세션으로 돌려 턴 통계와 바뀐 파일로 판정하고,
 두 결과를 비교한다.
 
 ```bash
-pnpm bench run --endpoint /tmp/colo-bench.json --project colo-beta-fixture \
+pnpm bench run --endpoint /tmp/nova-bench.json --project nova-beta-fixture \
   --scenarios scripts/bench/scenarios/fixture.json --provider omp --model devin/swe-2 --effort high --label before
 pnpm bench compare bench-results/<앞>.json bench-results/<뒤>.json
 ```
@@ -1078,5 +1098,7 @@ Agent SDK 문서는 사전 승인 없이 서드파티 앱이 자기 앱에서 cl
 
 ## 이름
 
-Colo Design 이 이 도구의 이름이다. 회사 디자인 시스템은 CDS(`@colosseumcoinckr/cds`)이고,
+Nova Design 이 이 도구의 이름이다. 회사 디자인 시스템은 CDS(`@colosseumcoinckr/cds`)이고,
 이 도구는 사용자의 말과 문서를 그 시스템의 컴포넌트로 짜인 화면으로 바꾼다.
+
+* 이 도구는 0.4.0 까지 Colo Design 이라는 이름이었다.

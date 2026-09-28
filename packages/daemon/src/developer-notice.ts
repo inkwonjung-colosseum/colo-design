@@ -12,7 +12,7 @@
  * 접근자(deps.store)를 통해 읽고 쓴다.
  */
 
-import type { AttentionNotice } from "@colo-design/protocol";
+import type { AttentionNotice } from "@nova-design/protocol";
 import { BUDGETS } from "./budgets.js";
 import type { CycleLedger } from "./cycle-ledger.js";
 import type { Escalation } from "./escalation.js";
@@ -69,9 +69,11 @@ export interface DeveloperNoticeDeps {
 }
 
 /** 이슈 본문의 표식 — 같은 문제의 이슈를 다시 찾는 단서 (PLAN L11). */
-export const ISSUE_MARKER = "<!-- colo-design:problem ";
+export const ISSUE_MARKER = "<!-- nova-design:problem ";
+// read-legacy — 0.3.x 가 연 이슈의 표식. 찾기는 둘 다, 쓰기는 새 것.
+const LEGACY_ISSUE_MARKER = "<!-- colo-design:problem "; // read-legacy
 /** 이슈에 붙이는 라벨 — 최선의 노력으로, 실패해도 이슈는 연다. */
-export const ISSUE_LABEL = "colo-design";
+export const ISSUE_LABEL = "nova-design";
 /** `자세히` 의 상한 — 30줄 · 4000자. */
 const DETAIL_MAX_LINES = 30;
 const DETAIL_MAX_CHARS = 4000;
@@ -198,7 +200,7 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
   },
   "disk:low": {
     title: "사용자 컴퓨터의 저장 공간이 모자랍니다",
-    what: "Colo Design 의 폴더가 든 디스크의 여유가 2GB 아래입니다",
+    what: "Nova Design 의 폴더가 든 디스크의 여유가 2GB 아래입니다",
     tried: "도구가 치울 수 있는 것(끝난 브랜치 · 7일 넘은 임시 파일 · git 정리)을 먼저 치웠습니다",
     ask: "사용자와 함께 디스크를 비워 주세요 — 도구가 더 치울 수 있는 것은 없습니다",
   },
@@ -236,7 +238,10 @@ export function isScreenQuietKey(key: string): boolean {
 /** 이슈 목록의 한 줄에서 이 문제의 표식을 찾는다 — 없으면 null. */
 export function findIssueMarker(body: unknown): string | null {
   if (typeof body !== "string") return null;
-  const at = body.indexOf(ISSUE_MARKER);
+  const at =
+    body.indexOf(ISSUE_MARKER) >= 0
+      ? body.indexOf(ISSUE_MARKER)
+      : body.indexOf(LEGACY_ISSUE_MARKER);
   if (at < 0) return null;
   const rest = body.slice(at + ISSUE_MARKER.length);
   const end = rest.indexOf("-->");
@@ -276,7 +281,7 @@ export function noticeBody(
 ): string {
   const who = context.authorName ? `${context.authorName} 님의 ` : "";
   const lines = [
-    `[Colo Design] ${context.projectName} · ${who}작업이 막혔습니다`,
+    `[Nova Design] ${context.projectName} · ${who}작업이 막혔습니다`,
     ``,
     `**무엇이** ${problem.what}`,
     `**해 본 것** ${problem.tried}`,
@@ -307,7 +312,7 @@ function slackText(
 ): string {
   const who = context.authorName ? `${context.authorName} 님의 ` : "";
   const lines = [
-    `[Colo Design] ${context.projectName} · ${who}작업이 막혔습니다`,
+    `[Nova Design] ${context.projectName} · ${who}작업이 막혔습니다`,
     `무엇이: ${problem.what}`,
     `해 본 것: ${problem.tried}`,
     `부탁: ${problem.ask}`,
@@ -428,7 +433,7 @@ export class DeveloperNotice {
         // PR 이 없다 — 이슈. 표식이 같은 열린 이슈가 있으면 코멘트만 덧붙인다.
         const who = await client.whoAmI();
         if (who.ok) {
-          const marked = `<!-- colo-design:problem ${problem.key} -->\n`;
+          const marked = `<!-- nova-design:problem ${problem.key} -->\n`;
           if (existing?.via === "issue" && typeof existing.ref === "number") {
             await client.commentOnIssue({
               ...repoSlug,
@@ -449,7 +454,7 @@ export class DeveloperNotice {
           }
           const number = await client.createIssue({
             ...repoSlug,
-            title: `[Colo Design] ${context.projectName}: ${problem.title}`,
+            title: `[Nova Design] ${context.projectName}: ${problem.title}`,
             body: marked + noticeBody(problem, context, count, new Date(now)),
             labels: [ISSUE_LABEL],
             assignees: project?.reviewers.slice(0, 1) ?? [],

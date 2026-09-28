@@ -1,4 +1,4 @@
-import type { RepoStatus, SessionState } from "@colo-design/protocol";
+import type { RepoStatus, SessionState } from "@nova-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import type { PreviewError, PreviewLocation } from "../../components/preview/types";
 import type { Daemon } from "../../lib/daemon-client";

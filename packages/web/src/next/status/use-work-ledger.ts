@@ -1,4 +1,4 @@
-import type { DeveloperReview, RepoHistoryEntry } from "@colo-design/protocol";
+import type { DeveloperReview, RepoHistoryEntry } from "@nova-design/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { focusReadDue } from "../../lib/quiet-read";
@@ -52,7 +52,7 @@ export function useWorkLedger(daemon: Daemon): WorkLedger {
         })
         .catch((error) => {
           // 원문은 기록으로 — 다음 읽기가 스스로 고친다(옛 readHandoffState 와 같다).
-          console.error("[colo-design] review read", error);
+          console.error("[nova-design] review read", error);
         });
     },
     [api],
@@ -65,7 +65,7 @@ export function useWorkLedger(daemon: Daemon): WorkLedger {
       .then((answer) => {
         if (slugRef.current === asked) setHistory(answer.entries);
       })
-      .catch((error) => console.error("[colo-design] history read", error));
+      .catch((error) => console.error("[nova-design] history read", error));
   }, [api]);
 
   // 대화록에 닿은 코멘트 도착 · 제출 영수증 — 읽기의 방아쇠이자 영수증의 시각.

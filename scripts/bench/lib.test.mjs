@@ -109,10 +109,10 @@ const PIN = {
 
 test("핀 턴 — 마커로 시작하고 items 의 id 가 pinHints 의 id 와 같다", () => {
   const text = pinTurnText(PIN);
-  assert.ok(text.startsWith("<!-- colo-design:comments "));
+  assert.ok(text.startsWith("<!-- nova-design:comments "));
   const firstLine = text.split("\n")[0];
   const marker = JSON.parse(
-    firstLine.replace(/^<!-- colo-design:comments /, "").replace(/ -->$/, ""),
+    firstLine.replace(/^<!-- nova-design:comments /, "").replace(/ -->$/, ""),
   );
   const hints = pinHints(PIN);
   assert.deepEqual(
@@ -141,7 +141,7 @@ test("핀 턴 — 문장 · 안내 한 줄 · 핀 줄 · 메모 한 줄", () => 
 // ---------------------------------------------------------------------------
 
 test("행 모으기 — 이틀 치를 시간 순으로, 남의 것과 깨진 줄은 무시한다", () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-bench-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-bench-"));
   const yesterday = join(dir, "turn-stats-2026-09-27.jsonl");
   const today = join(dir, "turn-stats-2026-09-28.jsonl");
   writeFileSync(

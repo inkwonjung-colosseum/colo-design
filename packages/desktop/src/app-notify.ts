@@ -2,7 +2,7 @@
 // banner, the unread count rides the dock, and the renderer's prefs decide
 // when a notice may interrupt. One object owns the counters so every
 // caller — notice hook, update alerts, the test button — shares the policy.
-import type { DaemonNotice } from "@colo-design/daemon/server";
+import type { DaemonNotice } from "@nova-design/daemon/server";
 import { app, Notification } from "electron";
 import { noticeCopy } from "./notices.js";
 import { DEFAULT_NOTIFICATION_PREFS, shouldNotify } from "./notify-policy.js";

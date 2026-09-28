@@ -19,7 +19,9 @@ import { CONFIG_DIR } from "./environment.js";
 
 const run = promisify(execFile);
 
-export const CREDENTIAL_SERVICE = "Colo Design";
+// read-legacy — 브라우저 개발 경로만 쓰는 키체인 서비스 이름. 개명 때 이주하지
+// 않는다: 개발자 기계의 옛 항목을 그대로 읽어야 개발 경로 로그인이 이어진다.
+export const CREDENTIAL_SERVICE = "Colo Design"; // read-legacy
 /** The credential-store item holding the machine-wide GitHub token. */
 export const REPO_PAT_ITEM = "pat";
 
@@ -37,10 +39,16 @@ export class CredentialStoreUnavailable extends Error {
 }
 
 export interface CredentialStore {
-  /** Stores (or replaces) a secret under the Colo Design service. */
+  /** Stores (or replaces) a secret under the Nova Design service. */
   save(item: string, secret: string): Promise<void>;
   load(item: string): Promise<string | null>;
   delete(item: string): Promise<void>;
+  /**
+   * 암호문은 있는데 풀 수 없은가(RENAME-NOVA-PLAN §5) — 개명으로 저장 키가
+   * 바뀐 기계에서 "없음"과 구분된다. 선택 사항: 못 박는 저장소(safeStorage)만
+   * 알리고, 나머지는 정의하지 않는다(없음과 같게 센다).
+   */
+  undecryptable?(item: string): boolean;
   readonly kind: "memory" | "keychain" | "dpapi";
 }
 
@@ -140,11 +148,11 @@ export class DpapiCredentialStore implements CredentialStore {
 }
 
 /**
- * COLO_DESIGN_CREDENTIAL_STORE forces a backend (tests use memory); otherwise
+ * NOVA_DESIGN_CREDENTIAL_STORE forces a backend (tests use memory); otherwise
  * macOS → Keychain, Windows → the DPAPI stub, everything else → memory.
  */
 export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): CredentialStore {
-  const forced = env.COLO_DESIGN_CREDENTIAL_STORE;
+  const forced = env.NOVA_DESIGN_CREDENTIAL_STORE;
   if (forced === "memory") return new MemoryCredentialStore();
   if (forced === "keychain") return new KeychainCredentialStore();
   if (process.platform === "darwin") return new KeychainCredentialStore();
@@ -157,7 +165,7 @@ export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): Cre
 // ---------------------------------------------------------------------------
 
 /**
- * The machine-wide GitHub token: COLO_DESIGN_REPO_PAT wins over the store. One
+ * The machine-wide GitHub token: NOVA_DESIGN_REPO_PAT wins over the store. One
  * token answers for every project on this machine — the `github` onboarding
  * gate stores it, repo clones authenticate with it, and the project picker's
  * repo list is what it can see.
@@ -166,7 +174,7 @@ export async function loadRepoPat(
   store: CredentialStore,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | null> {
-  return env.COLO_DESIGN_REPO_PAT ?? (await safeLoad(store, REPO_PAT_ITEM));
+  return env.NOVA_DESIGN_REPO_PAT ?? (await safeLoad(store, REPO_PAT_ITEM));
 }
 
 /**
@@ -232,7 +240,7 @@ function plaintextTargets(env: NodeJS.ProcessEnv): PlainTextSettings[] {
       // The pre-projects shape: one repo.json holding one PAT, which lands
       // under the machine-wide item. Projects file theirs under `pat:<slug>`,
       // and projects.ts reads this same file once to migrate the url.
-      file: env.COLO_DESIGN_REPO_SETTINGS ?? join(CONFIG_DIR, "repo.json"),
+      file: env.NOVA_DESIGN_REPO_SETTINGS ?? join(CONFIG_DIR, "repo.json"),
       secretKey: "pat",
       item: REPO_PAT_ITEM,
     },
@@ -276,14 +284,14 @@ export async function migratePlaintextSecrets(
 
 function writeAtomic(file: string, contents: string): void {
   mkdirSync(dirname(file), { recursive: true });
-  const temporary = `${file}.colo-design-${process.pid}`;
+  const temporary = `${file}.nova-design-${process.pid}`;
   writeFileSync(temporary, contents, { mode: 0o600 });
   renameSync(temporary, file);
 }
 
-/** Where the user-level npmrc lives — COLO_DESIGN_NPMRC overrides HOME (tests). */
+/** Where the user-level npmrc lives — NOVA_DESIGN_NPMRC overrides HOME (tests). */
 export function npmrcPath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.COLO_DESIGN_NPMRC) return env.COLO_DESIGN_NPMRC;
+  if (env.NOVA_DESIGN_NPMRC) return env.NOVA_DESIGN_NPMRC;
   const home = env.HOME ?? homedir();
   return join(home, ".npmrc");
 }

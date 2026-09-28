@@ -1,4 +1,4 @@
-import { markTurn } from "@colo-design/protocol";
+import { markTurn } from "@nova-design/protocol";
 import type {
   PreviewCapture,
   PreviewConsoleLine,

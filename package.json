@@ -1,7 +1,7 @@
 {
-  "name": "colo-design",
+  "name": "nova-design",
   "private": true,
-  "version": "0.3.10",
+  "version": "0.4.0",
   "description": "Screen design in a chat for people with zero developer tooling knowledge. Connect your team's repo, ask for a screen in words, a pasted image, or an attached document, verify it against a live preview of the real app, and hand it off to developers. Each user runs their own daemon and signs in with their own Claude subscription.",
   "type": "module",
   "scripts": {
@@ -10,10 +10,10 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r build && node --test packages/daemon/test/*.test.ts packages/web/test/*.test.ts scripts/bench/*.test.mjs",
     "bench": "node scripts/bench/bench.mjs",
-    "dev:daemon": "COLO_DESIGN_DEV_AGENTS=1 pnpm --filter @colo-design/daemon dev",
-    "dev:web": "pnpm --filter @colo-design/web dev",
-    "dev:desktop": "pnpm --filter @colo-design/desktop dev:hmr",
-    "doctor": "pnpm --filter @colo-design/daemon doctor"
+    "dev:daemon": "NOVA_DESIGN_DEV_AGENTS=1 pnpm --filter @nova-design/daemon dev",
+    "dev:web": "pnpm --filter @nova-design/web dev",
+    "dev:desktop": "pnpm --filter @nova-design/desktop dev:hmr",
+    "doctor": "pnpm --filter @nova-design/daemon doctor"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",

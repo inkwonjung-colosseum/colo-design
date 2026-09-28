@@ -1,4 +1,4 @@
-import type { InviteRow, NormalizedInvite } from "@colo-design/protocol";
+import type { InviteRow, NormalizedInvite } from "@nova-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Daemon } from "../lib/daemon-client";
 import { isInviteFile, onInvite } from "../lib/invite-bus";
@@ -79,7 +79,7 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
       if (stateRef.current.phase === "applying") return;
       setState({ phase: "reading" });
       // 데스크톱이 아는 파일의 디스크 위치(PLAN-UI U11) — 브라우저 File 에는 없다.
-      const path = window.coloDesignDesktop?.invite?.pathOf?.(file) ?? null;
+      const path = window.novaDesignDesktop?.invite?.pathOf?.(file) ?? null;
       void readInviteFile(file).then((read) => {
         if (!read.ok) {
           setState({ phase: "error", error: read.error, firstRun: daemon.projects.length === 0 });
@@ -105,7 +105,8 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
     if (stateRef.current.phase === "applying") return;
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".colo-invite";
+    // 개명 1단계(§4.3) — 고르기 창도 두 확장자를 다 받는다.
+    input.accept = ".colo-invite,.nova-invite"; // read-legacy — 옛 확장자도 고를 수 있다
     input.onchange = () => {
       const file = input.files?.[0];
       if (file) takeFile(file);

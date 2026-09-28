@@ -1,4 +1,4 @@
-import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
+import type { NovaDesignPinEnvelope, NovaDesignPinsSync } from "@nova-design/protocol";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 /**
@@ -20,7 +20,7 @@ function subscribe<T>(channel: string): (callback: (payload: T) => void) => Unsu
   };
 }
 
-contextBridge.exposeInMainWorld("coloDesignDesktop", {
+contextBridge.exposeInMainWorld("novaDesignDesktop", {
   /** 설치 문단은 플랫폼을 안다 — mac·win 은 설치 단추, 나머지는 릴리스 페이지로. */
   platform: process.platform,
   updateCheck: () => ipcRenderer.invoke("desktop:update-check"),
@@ -41,9 +41,9 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   /** 직전 렌더러 사망 기록(크래시 방어 층 3) — 부팅 때 한 번 읽는다; 메인은 읽힌 뒤 비운다. */
   lastRendererCrash: () => ipcRenderer.invoke("desktop:last-renderer-crash"),
   /** 알림 클릭 → 그 대화 열기(리뷰 B7): 메인이 세션 아이디를 건넨다. */
-  onOpenSession: subscribe<string>("colodesign:open-session"),
+  onOpenSession: subscribe<string>("novadesign:open-session"),
   /** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — slug 가 건너온다. */
-  onOpenProject: subscribe<string>("colodesign:open-project"),
+  onOpenProject: subscribe<string>("novadesign:open-project"),
   /**
    * 초대 파일(PLAN-UI U11): 끌어다 놓거나 고른 File 의 디스크 위치를 알려 주고
    * (디스크에 없는 File 은 null), 가져온 뒤 그 파일을 OS 휴지통으로 옮긴다.
@@ -78,14 +78,14 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     reload: () => ipcRenderer.invoke("preview:reload"),
     /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단 (PLAN D85 ⓐ). */
     stop: () => ipcRenderer.invoke("preview:stop"),
-    /** 배율 (PLAN D85 ⓔ) — in/out/reset; 뷰가 colo-preview:zoom 으로 되알린다. */
+    /** 배율 (PLAN D85 ⓔ) — in/out/reset; 뷰가 nova-preview:zoom 으로 되알린다. */
     zoom: (kind: "in" | "out" | "reset") => ipcRenderer.invoke("preview:zoom", { kind }),
     commentsMode: (on: boolean, skin?: unknown) =>
       ipcRenderer.invoke("preview:comments-mode", { on, skin }),
     emulate: (width: "mobile" | "tablet" | null) =>
       ipcRenderer.invoke("preview:emulate", { width }),
     /** 핀 동기화 (재설계 C1): the web's whole pin list — the overlay redraws its badges from it. */
-    pins: (sync: ColoDesignPinsSync) => ipcRenderer.invoke("preview:pins", sync),
+    pins: (sync: NovaDesignPinsSync) => ipcRenderer.invoke("preview:pins", sync),
     /** 칩 클릭 (재설계 C1) — the matching badge on the page flashes. */
     pinFlash: (id: string) => ipcRenderer.invoke("preview:pin-flash", { id }),
     /** 화면 보여 주기 (PLAN D89): the whole frame plus the recent console. */
@@ -97,24 +97,24 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       kind: "preview" | "web";
       canGoBack: boolean;
       canGoForward: boolean;
-    }>("colo-preview:location"),
-    onPin: subscribe<ColoDesignPinEnvelope>("colo-preview:pin"),
-    onPinFocus: subscribe<{ id: string }>("colo-preview:pin-focus"),
+    }>("nova-preview:location"),
+    onPin: subscribe<NovaDesignPinEnvelope>("nova-preview:pin"),
+    onPinFocus: subscribe<{ id: string }>("nova-preview:pin-focus"),
     onError: subscribe<{
       kind: string;
       message: string;
       route: string;
-    }>("colo-preview:error"),
+    }>("nova-preview:error"),
     /** main이 loose 페이지(활성 페이지 없이 열린 링크)의 요소를 부탁한다 —
         PreviewFrame이 <webview src=url>을 무대에 세운다. */
-    onHost: subscribe<{ url: string }>("colo-preview:host"),
+    onHost: subscribe<{ url: string }>("nova-preview:host"),
     /** loose 페이지 닫기(주소창의 닫기 버튼) — PreviewFrame이 그 요소를 거둔다. */
-    onClose: subscribe<{ url: string }>("colo-preview:close"),
+    onClose: subscribe<{ url: string }>("nova-preview:close"),
     onKey: subscribe<{ key: string; meta: boolean; shift: boolean; control: boolean }>(
-      "colo-preview:key",
+      "nova-preview:key",
     ),
-    onLoading: subscribe<{ on: boolean }>("colo-preview:loading"),
+    onLoading: subscribe<{ on: boolean }>("nova-preview:loading"),
     /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
-    onZoom: subscribe<{ factor: number }>("colo-preview:zoom"),
+    onZoom: subscribe<{ factor: number }>("nova-preview:zoom"),
   },
 });

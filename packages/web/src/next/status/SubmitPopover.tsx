@@ -1,4 +1,4 @@
-import type { RepoHistoryEntry, RepoStatus } from "@colo-design/protocol";
+import type { RepoHistoryEntry, RepoStatus } from "@nova-design/protocol";
 import { type RefObject, useState } from "react";
 import { composing } from "../../lib/ime";
 import { L } from "../labels";

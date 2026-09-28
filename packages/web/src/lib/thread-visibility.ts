@@ -1,5 +1,5 @@
-import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
-import { BOOTSTRAP_THREAD_TITLE } from "@colo-design/protocol";
+import type { ProjectSummary, ThreadSummary } from "@nova-design/protocol";
+import { BOOTSTRAP_THREAD_TITLE } from "@nova-design/protocol";
 
 /**
  * 대화 지우기의 낙관 상태 (OPTIMISTIC DELETE).

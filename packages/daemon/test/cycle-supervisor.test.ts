@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { composeAttention } from "@colo-design/protocol";
+import { composeAttention } from "@nova-design/protocol";
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-observe.test.ts 와 같은 길).
 import { readLedger } from "../dist/cycle-ledger.js";
@@ -11,7 +11,7 @@ import { GitHubClient } from "../dist/github.js";
 import { STASH_MESSAGE } from "../dist/repo-core.js";
 import { makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
-const BRANCH = "colo-design/20260924-1";
+const BRANCH = "nova-design/20260924-1";
 
 /** 클론에 커밋 — 도구의 자동 보관이 한 차례 지나간 모양. */
 async function commit(scene: SupervisedScene, files: Record<string, string>, message: string) {
@@ -280,7 +280,7 @@ test("S8 사이클 없이 base 에 로컬 커밋 — 사이클 브랜치가 생�
     await commit(scene, { "src/stray.ts": "export const s = 1;\n" }, "길 잃은 커밋");
     await scene.supervisor.tick("manual");
     const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
-    assert.ok(head.startsWith("colo-design/"), "사이클 브랜치가 생겨야 한다");
+    assert.ok(head.startsWith("nova-design/"), "사이클 브랜치가 생겨야 한다");
     const baseTip = (await scene.git(["rev-parse", "main"])).trim();
     const originTip = (await scene.git(["rev-parse", "origin/main"])).trim();
     assert.equal(baseTip, originTip, "로컬 base 는 origin/base 를 가리켜야 한다");
@@ -340,7 +340,7 @@ test("5행 N1 — 미추적 락파일뿐이면 보관하지 않는다 (2026-09-2
       "부산물만 있는 트리에서 커밋이 생기면 안 된다",
     );
     assert.equal(
-      (await scene.git(["branch", "--list", "colo-design/*"])).trim(),
+      (await scene.git(["branch", "--list", "nova-design/*"])).trim(),
       "",
       "사이클 브랜치도 생기면 안 된다",
     );
@@ -426,7 +426,7 @@ test("S4 스쿼시 병합 뒤 남은 커밋 — 새 사이클 브랜치에 그 �
 
     const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
     assert.notEqual(head, BRANCH, "새 사이클 브랜치 위에 있어야 한다");
-    assert.ok(head.startsWith("colo-design/"));
+    assert.ok(head.startsWith("nova-design/"));
     const log = await scene.git(["log", "--format=%s", "origin/main..HEAD"]);
     assert.deepEqual(
       log.trim().split("\n"),
@@ -541,7 +541,7 @@ test("S5 반려 — 브랜치 전체가 새 브랜치로 이어지고 옛 원격
 
     const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
     assert.notEqual(head, BRANCH);
-    assert.ok(head.startsWith("colo-design/"));
+    assert.ok(head.startsWith("nova-design/"));
     const log = await scene.git(["log", "--format=%s", "origin/main..HEAD"]);
     assert.ok(log.includes("작업 1") && log.includes("작업 2"), "옛 커밋 전부가 이어져야 한다");
     assert.ok(
@@ -903,18 +903,18 @@ test("L9 자동 답장 — 턴의 답변 문장에서 코멘트마다 스레드�
     assert.ok(threadReply, "인라인 답장이 스레드에 올라야 한다");
     assert.ok(threadReply.body.includes("문구를 '보관'으로 바꿨습니다."));
     assert.ok(
-      threadReply.body.includes("— Colo Design 이 김기획 님 대신 남김"),
+      threadReply.body.includes("— Nova Design 이 김기획 님 대신 남김"),
       "대리 표기가 답장 끝에 붙는다",
     );
     // 줄이 없는 코멘트 + 보관 커밋 — sha 7자 폴백.
     const issueReply = scene.github.commentsFor(pr).at(-1);
     assert.ok(issueReply, "본문형 코멘트에도 답장이 올라야 한다");
     assert.ok(issueReply.body.includes("반영했습니다 · 0123456"));
-    assert.ok(issueReply.body.includes("— Colo Design 이 김기획 님 대신 남김"));
+    assert.ok(issueReply.body.includes("— Nova Design 이 김기획 님 대신 남김"));
 
     // 같은 코멘트에 두 번 답하지 않는다 — 원장 replied 가 잡는다.
     const mine = (rows: Array<{ login: string }>) =>
-      rows.filter((row) => row.login === "colo-planner").length;
+      rows.filter((row) => row.login === "nova-planner").length;
     const repliesBefore =
       mine(scene.github.pullCommentsFor(pr)) + mine(scene.github.commentsFor(pr));
     await scene.supervisor.settleReviewReplies(
@@ -959,7 +959,7 @@ test("L9 반려 — 닫힘 이유가 있으면 반영 턴 하나가 열리고 �
     assert.ok(scene.briefs[0]?.includes("목록으로 되돌려"), "이유 본문이 실린다");
     assert.ok(ledgerOf(scene).budgets[`review:${pr}`]?.spent === 1, "예산 review:<pr> 를 쓴다");
     assert.equal(
-      scene.github.commentsFor(pr).filter((row) => row.login === "colo-planner").length,
+      scene.github.commentsFor(pr).filter((row) => row.login === "nova-planner").length,
       0,
       "이유가 있으면 청구 코멘트를 남기지 않는다",
     );
@@ -1146,7 +1146,7 @@ test("사이클 밖 갈라짐 — 최신화가 던지지 않고 틱이 사이클
 
     await scene.supervisor.tick("manual");
     const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
-    assert.ok(head.startsWith("colo-design/"), "사이클 브랜치가 생겨야 한다");
+    assert.ok(head.startsWith("nova-design/"), "사이클 브랜치가 생겨야 한다");
     const onCycle = await scene.git(["log", "--format=%s", head]);
     assert.ok(onCycle.includes("길 잃은 커밋"), "커밋이 사이클 브랜치로 옮겨져야 한다");
     const baseTip = (await scene.git(["rev-parse", "main"])).trim();
@@ -1182,7 +1182,7 @@ test("이월의 병합 커밋 — cherry-pick 이 멈추지 않고 일반 커밋
     await scene.supervisor.tick("manual");
     assert.equal(ledgerOf(scene).pendingOp, null, "병합 커밋 때문에 이월이 멈춰서는 안 된다");
     const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
-    assert.ok(head.startsWith("colo-design/"));
+    assert.ok(head.startsWith("nova-design/"));
     const log = await scene.git(["log", "--format=%s", "origin/main..HEAD"]);
     assert.deepEqual(log.trim().split("\n"), ["작업 2"], "병합 커밋 없이 일반 커밋만 옮겨야 한다");
     assert.equal((await remoteHeads(scene, BRANCH)).trim(), "", "옛 원격 브랜치는 지워져야 한다");
@@ -1250,7 +1250,7 @@ test("이월 병합의 옛 원격 브랜치 — 새 브랜치가 올라갈 때�
     await scene.supervisor.tick("manual");
     const ledger = ledgerOf(scene);
     const newBranch = scene.core.branch;
-    assert.ok(newBranch !== null && newBranch.startsWith("colo-design/"));
+    assert.ok(newBranch !== null && newBranch.startsWith("nova-design/"));
     assert.ok(
       ledger.branches.some((b) => b.name === BRANCH && b.deleteRemoteAfterPush === newBranch),
       "원장이 옛 원격 브랜치 삭제를 미뤄 둬야 한다",

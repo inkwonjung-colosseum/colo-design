@@ -7,8 +7,8 @@ import { useSyncExternalStore } from "react";
  * (CrashScreen) — 전역 오류(error · unhandledrejection · boot)는 화면이 살아
  * 있으므로 덮는 것이 유일하게 새로 생기는 피해다.
  *
- * 저장 키는 `lib/settings.ts` 의 `colo-design.*` 규칙을 따른다. 미러
- * (`colo-design.last-crash`)는 번들 밖의 와치독(public/boot-watchdog.js)이
+ * 저장 키는 `lib/settings.ts` 의 `nova-design.*` 규칙을 따른다. 미러
+ * (`nova-design.last-crash`)는 번들 밖의 와치독(public/boot-watchdog.js)이
  * 다음 부팅의 안내줄로 읽는, 죽은 프로세스에서 살아남는 유일한 기록이다.
  */
 
@@ -34,7 +34,7 @@ export interface CrashStorage {
   removeItem(key: string): void;
 }
 
-export const MIRROR_KEY = "colo-design.last-crash";
+export const MIRROR_KEY = "nova-design.last-crash";
 /** 링 상한 — 하루치 전역 오류라도 최근 20개면 문맥에 충분하다. */
 export const RING_LIMIT = 20;
 /** 같은 서명의 재연송(스트림이 한 오류를 여러 번 흘리는 경우)을 접는 창. */

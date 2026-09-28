@@ -37,7 +37,7 @@ function managerWithStore(rows: Array<{ id: string; title: string; lastModified:
 }
 
 test("무효화는 끝난 스캔을 재사용하지 않는다 — 클론에 새 대화록이 생기면 다음 목록이 그것을 본다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-rescan-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-rescan-"));
   try {
     // 스토어는 이 배열을 공유한다 — 밀어 넣으면 다음 스캔이 그것을 본다.
     const rows = [{ id: "first", title: "처음 대화", lastModified: 1 }];
@@ -75,7 +75,7 @@ test("무효화는 끝난 스캔을 재사용하지 않는다 — 클론에 새 
 });
 
 test("살아 있는 스캔 하나는 동시 독자가 나눈다 — 팬아웃이 한 번만 돈다", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "colo-rescan-"));
+  const dir = mkdtempSync(join(tmpdir(), "nova-rescan-"));
   try {
     const { manager, calls } = managerWithStore([{ id: "one", title: "대화", lastModified: 1 }]);
     const cwd = dir;

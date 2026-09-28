@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ProjectSummary } from "@colo-design/protocol";
+import type { ProjectSummary } from "@nova-design/protocol";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
 import { initialNav, navReducer } from "../src/next/lib/nav.ts";
@@ -22,7 +22,7 @@ const handoff = (state: "open" | "changes_requested" | "merged" | "closed") => (
   url: "https://github.com/o/r/pull/7",
   title: "t",
   state,
-  branch: "colo-design/20260925-1",
+  branch: "nova-design/20260925-1",
 });
 
 const note = (patch: Partial<ProjectSummary>, extra = {}) =>

@@ -1,4 +1,4 @@
-import type { DaemonNotice } from "@colo-design/daemon/server";
+import type { DaemonNotice } from "@nova-design/daemon/server";
 
 /**
  * 알림 정책(설정 문서 P0#3)의 결정부. 렌더러의 설정이 여기로 와서, 어떤

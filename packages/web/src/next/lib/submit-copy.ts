@@ -1,4 +1,4 @@
-import type { RepoStatus } from "@colo-design/protocol";
+import type { RepoStatus } from "@nova-design/protocol";
 import type { L } from "../labels";
 
 /**
