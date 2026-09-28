@@ -39,17 +39,19 @@ export interface BrowserRelay {
 }
 
 /**
- * 계약의 17개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
+ * 계약의 18개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
  * op `type`으로, `browser_wait`가 op `waitFor`로, `browser_console`이 op
- * `consoleLines`로 걸리는 것만 이름 차이다. `screen_check`는 op
- * `screenCheck`로 게이트와 같은 판정을 턴 안에서 앞당겨 본다. pane 은
- * 프로젝트당 페이지 하나라 탭 주소는 없다 — 모든 도구는 화면의 페이지를
+ * `consoleLines`로 걸리는 것만 이름 차이다. `browser_find`는 op 가 아니라
+ * 스냅샷의 거름이다(PLAN-MCP §3.C). `screen_check`는 op `screenCheck`로
+ * 게이트와 같은 판정을 턴 안에서 앞당겨 본다. pane 은 프로젝트당 페이지
+ * 하나라 탭 주소는 없다 — 모든 도구는 화면의 페이지를 겨눈다.
  */
 export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: "browser_navigate",
     op: "navigate",
-    description: "화면의 페이지를 주소로 이동하고 새 스냅샷을 돌려준다 — 페이지가 없으면 연다.",
+    description:
+      "화면의 페이지를 주소로 이동하고 바뀐 줄의 요약을 돌려준다 — 페이지가 없으면 연다.",
     properties: {
       url: { type: "string", description: "이동할 주소 (http·https)." },
     },
@@ -59,8 +61,24 @@ export const BROWSER_TOOLS: ToolDef[] = [
     name: "browser_snapshot",
     op: "snapshot",
     description:
-      "페이지의 접근성 스냅샷 — ref가 붙은 요소 트리. 액션 전후에 읽고, 액션에는 그 ref를 쓴다.",
-    properties: {},
+      "페이지의 접근성 스냅샷 — 한 줄 표기 트리(기본 상한 400줄). 액션에는 줄의 ref를 쓴다. " +
+      "ref를 주면 그 요소의 부분 트리만, maxLines로 줄 수를 줄인다.",
+    properties: {
+      ref: { type: "string", description: "그 요소의 부분 트리만 읽을 때의 ref." },
+      maxLines: { type: "number", description: "최대 줄 수 (기본 400)." },
+    },
+  },
+  {
+    name: "browser_find",
+    op: "find",
+    description:
+      "스냅샷에서 조건에 맞는 요소의 줄만 찾는다 — 이름의 부분 일치(대소문자 무시)와 역할. " +
+      "전체를 다시 읽는 것보다 토큰이 싸다.",
+    properties: {
+      text: { type: "string", description: "요소 이름에 포함될 글자 (대소문자 무시)." },
+      role: { type: "string", description: "정확히 맞출 역할 — 예: button, link." },
+      limit: { type: "number", description: "최대 줄 수 (기본 10, 최대 30)." },
+    },
   },
   {
     name: "browser_screenshot",
@@ -74,7 +92,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: "browser_click",
     op: "click",
-    description: "ref 요소를 누르고 새 스냅샷을 돌려준다.",
+    description: "ref 요소를 누르고 바뀐 줄의 요약을 돌려준다.",
     properties: {
       ref: { type: "string", description: "스냅샷의 요소 ref." },
     },
@@ -112,7 +130,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: "browser_scroll",
     op: "scroll",
-    description: "세로로 스크롤하고 새 스냅샷을 돌려준다.",
+    description: "세로로 스크롤하고 바뀐 줄의 요약을 돌려준다.",
     properties: {
       dy: { type: "number", description: "픽셀 단위 세로 이동 (+아래 / −위)." },
       ref: { type: "string", description: "요소 안에서 스크롤할 때 그 ref." },
@@ -122,7 +140,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: "browser_hover",
     op: "hover",
-    description: "ref 요소에 마우스를 올리고 새 스냅샷을 돌려준다.",
+    description: "ref 요소에 마우스를 올리고 바뀐 줄의 요약을 돌려준다.",
     properties: {
       ref: { type: "string", description: "스냅샷의 요소 ref." },
     },
@@ -131,7 +149,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: "browser_select",
     op: "select",
-    description: "select 요소의 값을 고르고 새 스냅샷을 돌려준다.",
+    description: "select 요소의 값을 고르고 바뀐 줄의 요약을 돌려준다.",
     properties: {
       ref: { type: "string", description: "스냅샷의 요소 ref." },
       value: { type: "string", description: "고를 값." },
@@ -141,7 +159,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: "browser_drag",
     op: "drag",
-    description: "ref 요소를 다른 ref 요소 위로 끌어 놓고 새 스냅샷을 돌려준다.",
+    description: "ref 요소를 다른 ref 요소 위로 끌어 놓고 바뀐 줄의 요약을 돌려준다.",
     properties: {
       fromRef: { type: "string", description: "끌 요소의 ref." },
       toRef: { type: "string", description: "놓을 자리 요소의 ref." },
@@ -180,13 +198,13 @@ export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: "browser_back",
     op: "back",
-    description: "뒤로 가고 새 스냅샷을 돌려준다.",
+    description: "뒤로 가고 바뀐 줄의 요약을 돌려준다.",
     properties: {},
   },
   {
     name: "browser_forward",
     op: "forward",
-    description: "앞으로 가고 새 스냅샷을 돌려준다.",
+    description: "앞으로 가고 바뀐 줄의 요약을 돌려준다.",
     properties: {},
   },
   {
@@ -281,5 +299,8 @@ export async function callBrowserTool(
       return { content: [{ type: "image", data: shot.data, mimeType: shot.mediaType }] };
     }
   }
+  // 결과가 이미 문자열이면 그대로 text 로 싣는다 — 스냅샷 렌더 · 액션 요약 ·
+  // 찾기의 한 줄 표기가 따옴표와 \n 이스케이프에 갇혀 모델에게 가지 않게.
+  if (typeof payload.result === "string") return text(payload.result);
   return text(JSON.stringify(payload.result ?? null));
 }

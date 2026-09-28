@@ -20,6 +20,16 @@ import { DriverRegistry } from "./agent/registry.js";
 import { AgentInstall } from "./agent-install.js";
 import { AgentUpdates } from "./agent-update.js";
 import { browserMcpEntry } from "./browser-launch.js";
+import {
+  type FindRender,
+  findInSnapshot,
+  focusLineOf,
+  isWholeSnapshot,
+  renderSnapshot,
+  type SnapshotRender,
+  snapshotLines,
+  summarizeAction,
+} from "./browser-snapshot.js";
 import { CommandDedupe } from "./command-dedupe.js";
 import {
   type CredentialStore,
@@ -45,6 +55,7 @@ import { realpathBestEffort } from "./paths.js";
 import { PlanTracker } from "./plan-tracker.js";
 import { daemonOwnedPorts } from "./preview-claim.js";
 import type {
+  BrowserActionReport,
   BrowserDriver,
   BrowserDriverFactory,
   PreviewDriverFactory,
@@ -67,6 +78,7 @@ export type { DaemonNotice } from "./notices.js";
 // 2단계) — exported here so `@colo-design/daemon/server` stays the one import
 // a host needs.
 export type {
+  BrowserActionReport,
   BrowserDriver,
   BrowserDriverFactory,
   PreviewAxNode,
@@ -99,6 +111,7 @@ const BROWSER_OPS: Record<string, true> = {
   back: true,
   forward: true,
   snapshot: true,
+  find: true,
   screenshot: true,
   click: true,
   type: true,
@@ -130,10 +143,28 @@ const BROWSER_OP_TIMEOUT_MS = 90_000;
  */
 const BROWSER_QUIET_OPS: Record<string, true> = {
   snapshot: true,
+  find: true,
   screenshot: true,
   consoleLines: true,
   waitFor: true,
   screenCheck: true,
+};
+
+/**
+ * 액션 11개 (PLAN-MCP M-3) — 답을 요약으로 줄이는 op. 드라이버는 전체
+ * 스냅샷을 돌려주지만 모델에게 내리는 것은 주소 · 제목 · 포커스 · 바뀐 줄이다.
+ */
+const BROWSER_SUMMARIZE_OPS: Record<string, true> = {
+  navigate: true,
+  back: true,
+  forward: true,
+  click: true,
+  type: true,
+  press: true,
+  scroll: true,
+  hover: true,
+  select: true,
+  drag: true,
 };
 
 /**
@@ -162,6 +193,7 @@ function asNumber(value: unknown): number | undefined {
 /**
  * 와이어의 flat 인자(params)를 BrowserDriver의 위치 인자로 풀어 부른다 —
  * MCP 자식은 하나의 params 객체만 알고, 호출 규약은 드라이버 소유다.
+ * snapshot · find 는 이 자리에서 한 줄 표기로 줄인다(PLAN-MCP M-2).
  */
 async function callBrowserOp(
   driver: BrowserDriver,
@@ -175,8 +207,22 @@ async function callBrowserOp(
       return driver.back();
     case "forward":
       return driver.forward();
-    case "snapshot":
-      return driver.snapshot();
+    case "snapshot": {
+      // 한 줄 표기로 렌더해 내린다 — 압축은 데몬의 몫이고 드라이버 계약은 그대로다.
+      return renderSnapshot(await driver.snapshot(), {
+        ref: asString(params.ref),
+        maxLines: asNumber(params.maxLines),
+      });
+    }
+    case "find": {
+      // 새 op 가 아니라 스냅샷의 거름 — 조건에 맞는 줄만 좁혀 내리므로
+      // 전체 읽기보다 토큰이 싸다.
+      return findInSnapshot(await driver.snapshot(), {
+        text: asString(params.text),
+        role: asString(params.role),
+        limit: asNumber(params.limit),
+      });
+    }
     case "screenshot":
       return driver.screenshot({
         ref: asString(params.ref),
@@ -394,6 +440,12 @@ export class DaemonServer {
    * 세대가 경합한다. 값은 "지금까지의 꼬리"다.
    */
   private readonly browserOps = new Map<string, Promise<unknown>>();
+  /**
+   * 세션의 마지막 렌더 줄 (PLAN-MCP §3.C) — 액션 요약의 before. 데몬
+   * 메모리다: 재시작 뒤 첫 액션은 차이 없이 요약만(§6 O-5). 세션이 닫히거나
+   * 프로젝트가 바뀌면(pane 이 남의 페이지로 옮겨가면) 비운다.
+   */
+  private readonly browserLastRender = new Map<string, string[]>();
   /**
    * Aborted the moment `stop()` begins. Unattended CLI probes ride it: a CLI
    * that never answers must not hold the process open for the probe's full
@@ -712,6 +764,7 @@ export class DaemonServer {
               if (candidate.sessionId === sessionId) this.browserSecrets.delete(secret);
             }
             this.browserOps.delete(sessionId);
+            this.browserLastRender.delete(sessionId);
             // 수명 규칙: the worktree build's life is
             // tied to the conversation that opened it — its close reaps the
             // worktree and the port. The store ignores strangers itself.
@@ -775,6 +828,7 @@ export class DaemonServer {
         for (const [secret, candidate] of this.browserSecrets) {
           if (candidate.sessionId === sessionId) this.browserSecrets.delete(secret);
         }
+        this.browserLastRender.delete(sessionId);
       },
     );
     this.plans = new PlanTracker({
@@ -906,6 +960,8 @@ export class DaemonServer {
       registry: this.registry,
       escalation: this.escalation,
       logger: this.logger,
+      // 프로젝트 전환 직후 — 세션의 브라우저 요약 기억을 비운다(§3.C).
+      afterProjectSwitch: () => this.browserLastRender.clear(),
       broadcast: (m) => this.broadcast(m),
       notice: (n) => this.config.onNotice?.(n),
       claudeExecutable: () => this.claudeExecutable,
@@ -1454,7 +1510,7 @@ export class DaemonServer {
           }
           return { note: BROWSER_EXTERNAL_NOTE };
         }
-        return result;
+        return this.shapeBrowserResult(sessionId, op, params as Record<string, unknown>, result);
       });
       this.browserOps.set(
         sessionId,
@@ -1502,6 +1558,39 @@ export class DaemonServer {
     } finally {
       if (!quiet) this.broadcast({ type: "browser.driving", sessionId, on: false });
     }
+  }
+
+  /**
+   * 스냅샷 다이어트의 결과 가공 (PLAN-MCP §3.C) — onInternalBrowser 의
+   * 가공 줄을 이 한 곳으로 모은다. snapshot 은 렌더된 텍스트를, find 는
+   * 거른 줄을, 액션 11개는 주소 · 제목 · 포커스 · 바뀐 줄의 요약을 내리고
+   * 세션의 마지막 렌더 줄을 갈아둔다(다음 액션 요약의 before). 부분
+   * 트리(ref) 스냅샷은 기준을 갈지 않는다 — 페이지 전체가 아니므로.
+   */
+  private shapeBrowserResult(
+    sessionId: string,
+    op: string,
+    params: Record<string, unknown>,
+    result: unknown,
+  ): unknown {
+    if (op === "snapshot") {
+      const rendered = result as SnapshotRender;
+      if (isWholeSnapshot(params)) this.browserLastRender.set(sessionId, rendered.fullLines);
+      return rendered.text;
+    }
+    if (op === "find") return (result as FindRender).text;
+    if (BROWSER_SUMMARIZE_OPS[op] !== true) return result;
+    const report = result as BrowserActionReport & { settled?: boolean };
+    const after = snapshotLines(report.snapshot);
+    const summary = summarizeAction(this.browserLastRender.get(sessionId) ?? [], after, {
+      url: report.url,
+      title: report.title,
+      focus: focusLineOf(report.snapshot),
+      // 정착은 navigate 만 알린다 — 다른 액션의 드라이버 답에 그 값이 없다.
+      ...(op === "navigate" ? { settled: report.settled === true } : {}),
+    });
+    this.browserLastRender.set(sessionId, after);
+    return summary.text;
   }
   /**
    * `screen_check` 도구의 판정 (빠른 수정, 2026-09-20): 세션이 사는

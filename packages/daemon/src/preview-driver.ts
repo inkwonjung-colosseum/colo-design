@@ -83,9 +83,9 @@ export interface PreviewDriverFactory {
 // ---------------------------------------------------------------------------
 
 /**
- * 접근성 트리 한 노드 (07bd3bf 계승). `ref`(`e12`)는 한 스냅샷 세대 안에서만
- * 산다 — 액션과 다음 스냅샷이 세대를 갈아치우므로, 낡은 ref 는 "다시 읽으라"
- * 는 오류가 된다. 엉뚱한 곳을 누르는 일을 세대가 막는다.
+ * 접근성 트리 한 노드 (07bd3bf 계승). `ref`(`e12`)는 같은 DOM 노드이면
+ * 세대가 바뀌어도 같다 (PLAN-MCP M-4) — 문서가 갈릴 때만 전부 죽는다.
+ * 엉뚱한 곳을 누르는 일은 문서의 경계가 막는다.
  */
 export interface PreviewAxNode {
   ref: string;
@@ -96,20 +96,31 @@ export interface PreviewAxNode {
   children: PreviewAxNode[];
 }
 
+/**
+ * 액션의 답 (PLAN-MCP M-3) — 전체 트리를 모델에게 직접 내리지 않고 요약의
+ * 재료로 쓰라고 넓혔다. 드라이버는 트리를 그대로 돌리고, 줄이는 일은 데몬의
+ * 순수 함수(browser-snapshot.ts)가 한다.
+ */
+export interface BrowserActionReport {
+  url: string;
+  title: string;
+  snapshot: PreviewAxNode[];
+}
+
 /** The browser the agent shares with the user — 화면의 페이지 하나를 겨눈다. */
 export interface BrowserDriver {
-  navigate(url: string): Promise<{ settled: boolean; snapshot: PreviewAxNode[] }>;
-  back(): Promise<PreviewAxNode[]>;
-  forward(): Promise<PreviewAxNode[]>;
+  navigate(url: string): Promise<{ settled: boolean } & BrowserActionReport>;
+  back(): Promise<BrowserActionReport>;
+  forward(): Promise<BrowserActionReport>;
   snapshot(): Promise<PreviewAxNode[]>;
   screenshot(opts?: { ref?: string; longEdge?: number }): Promise<PreviewCapture>;
-  click(target: { ref: string }): Promise<PreviewAxNode[]>;
-  type(input: { ref?: string; text: string; clear?: boolean }): Promise<PreviewAxNode[]>;
-  press(key: string): Promise<PreviewAxNode[]>;
-  scroll(target: { ref?: string; dy: number }): Promise<PreviewAxNode[]>;
-  hover(target: { ref: string }): Promise<PreviewAxNode[]>;
-  select(target: { ref: string; value: string }): Promise<PreviewAxNode[]>;
-  drag(target: { fromRef: string; toRef: string }): Promise<PreviewAxNode[]>;
+  click(target: { ref: string }): Promise<BrowserActionReport>;
+  type(input: { ref?: string; text: string; clear?: boolean }): Promise<BrowserActionReport>;
+  press(key: string): Promise<BrowserActionReport>;
+  scroll(target: { ref?: string; dy: number }): Promise<BrowserActionReport>;
+  hover(target: { ref: string }): Promise<BrowserActionReport>;
+  select(target: { ref: string; value: string }): Promise<BrowserActionReport>;
+  drag(target: { fromRef: string; toRef: string }): Promise<BrowserActionReport>;
   consoleLines(): Promise<PreviewConsoleLine[]>;
   evaluate(fn: string): Promise<unknown>;
   waitFor(target: { text?: string; url?: string; ms?: number }): Promise<boolean>;
