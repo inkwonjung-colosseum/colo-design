@@ -42,9 +42,12 @@ export function SettingsDialog({
   const providers = status?.providers ?? [];
   // 쓸 수 있는 AI — 설치되어 있고 로그인돼 있는 것만 카드로 선다(README B1).
   const usable = providers.filter((provider) => provider.available && provider.loggedIn !== false);
-  const unusable = providers.filter(
-    (provider) => !(provider.available && provider.loggedIn !== false),
+  // 설치는 됐지만 로그인이 없는 AI — 미설치와 갈라 읽는다(2026-09-28): 이 판을
+  // 「설치되지 않았어요」로 말하면 설치 판별을 못 하는 것처럼 보였다.
+  const needsLogin = providers.filter(
+    (provider) => provider.available && provider.loggedIn === false,
   );
+  const missing = providers.filter((provider) => !provider.available);
   const panel = useRef<HTMLDivElement>(null);
   useModalFocus(panel);
   useModalEscape(panel, onClose);
@@ -72,6 +75,27 @@ export function SettingsDialog({
     }
     await daemon.api.refreshStatus();
   };
+
+  /** 로그인 필요 행의 고침 — 데몬이 로그인을 대신 몰고, 주소와 끝은 방송으로 온다. */
+  const loginAgent = async (id: string) => {
+    const kind: OnboardingFixKind = id === "codex" ? "login-codex" : "login-claude";
+    setFixBusy(id);
+    setFixNotice(null);
+    try {
+      const reply = (await daemon.api.onboardingFix(kind)) as { guidance?: unknown };
+      if (reply && typeof reply === "object" && "guidance" in reply) {
+        setFixNotice({ id, text: String(reply.guidance) });
+      }
+    } catch (error) {
+      setFixNotice({ id, text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setFixBusy(null);
+    }
+  };
+  // 로그인이 끝나면 목록이 스스로 바뀌게 — 상태를 다시 읽는다.
+  useEffect(() => {
+    if (daemon.loginDone?.ok) void daemon.api.refreshStatus();
+  }, [daemon.loginDone, daemon.api]);
 
   // ── 알림 — 저장은 옛 대화상자와 같은 곳(settings.notifications).
   const [noticeTest, setNoticeTest] = useState<string | null>(null);
@@ -341,10 +365,10 @@ export function SettingsDialog({
                   </span>
                 </button>
               ))}
-              {unusable.length > 0 && (
+              {(missing.length > 0 || needsLogin.length > 0) && (
                 <details className="nx-sfold">
-                  <summary>{L.settings.unavailable(unusable.length)}</summary>
-                  {unusable.map((provider) => (
+                  <summary>{L.settings.unavailable(missing.length + needsLogin.length)}</summary>
+                  {missing.map((provider) => (
                     <div key={provider.id} className="nx-rcard">
                       <span className="nx-rt">
                         <b>{provider.label}</b>
@@ -368,6 +392,36 @@ export function SettingsDialog({
                         ))}
                     </div>
                   ))}
+                  {needsLogin.map((provider) => (
+                    <div key={provider.id} className="nx-rcard">
+                      <span className="nx-rt">
+                        <b>{provider.label}</b>
+                        <span>{provider.reason ?? L.settings.loginNeeded}</span>
+                      </span>
+                      {(provider.id === "claude" || provider.id === "codex") && (
+                        <button
+                          type="button"
+                          className="nx-btn nx-btn--sm"
+                          disabled={fixBusy !== null}
+                          onClick={() => void loginAgent(provider.id)}
+                        >
+                          {fixBusy === provider.id ? L.update.checking : L.settings.login}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {daemon.login && (
+                    <div className="nx-prog nx-snote">
+                      <button
+                        type="button"
+                        className="nx-btn nx-btn--sm"
+                        onClick={() => window.open(daemon.login?.url, "_blank", "noopener")}
+                      >
+                        {L.settings.loginReopen}
+                      </button>
+                      {daemon.login.wantsCode && <AgentLoginCode daemon={daemon} />}
+                    </div>
+                  )}
                 </details>
               )}
               {fixNotice && <p className="nx-snote">{fixNotice.text}</p>}
@@ -655,5 +709,51 @@ export function SettingsDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+/** 로그인 코드 붙여넣기 — 데몬이 로그인 자식의 stdin 으로 흘려 보낸다(온보딩의 것과 같은 길). */
+function AgentLoginCode({ daemon }: { daemon: Daemon }) {
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const send = async () => {
+    if (code.trim() === "") return;
+    setBusy(true);
+    setError(null);
+    try {
+      await daemon.api.agentLoginCode(code.trim());
+      setCode("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="nx-row">
+      <input
+        type="password"
+        value={code}
+        spellCheck={false}
+        autoComplete="off"
+        placeholder={L.settings.loginCode}
+        aria-label={L.settings.loginCode}
+        disabled={busy}
+        onChange={(event) => setCode(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && code.trim() && !busy) void send();
+        }}
+      />
+      <button
+        type="button"
+        className="nx-btn nx-btn--sm"
+        disabled={!code.trim() || busy}
+        onClick={() => void send()}
+      >
+        {busy ? L.update.checking : L.settings.loginCodeSend}
+      </button>
+      {error && <span className="nx-snote nx-snote--red">{error}</span>}
+    </span>
   );
 }

@@ -18,6 +18,22 @@
   user-select: none;
 }
 
+/* 부팅 표지(shell-pane 의 `boot`) — 첫 상태가 오기 전의 조용한 한 장. 체크리스트를
+   대신 그리지 않으므로 프로젝트가 있는 기계의 다시 열기는 표지에서 곧장 작업 틀로
+   넘어간다. 뿌리 `.nx` 의 격자(사이드바 칸)는 flex 로 완전히 튼다. */
+.nx-boot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.nx-boot img {
+  opacity: 0.9;
+}
+
 .nx-main {
   position: relative;
   display: flex;

@@ -21,6 +21,8 @@ export interface BridgeDeps {
   logsDir: string;
   /** 알림 설정이 영속되는 desktop-settings.json 의 자리. */
   settingsPath(): string;
+  /** 직전 렌더러 사망 기록(크래시 방어 층 3) — 렌더러가 부팅 때 읽는다. */
+  lastRendererCrash(): { reason: string; at: number } | null;
 }
 
 export function registerDesktopBridge(deps: BridgeDeps): void {
@@ -76,6 +78,9 @@ export function registerDesktopBridge(deps: BridgeDeps): void {
       deps.focusMain,
     ),
   );
+
+  // 직전 렌더러 사망(3.A 층 3) — 렌더러가 부팅 때 물으면 알리고 비운다.
+  ipcMain.handle("desktop:last-renderer-crash", () => deps.lastRendererCrash());
 
   /**
    * OS 의 알림 허용 스위치로 데려간다. 앱은 그 스위치를 읽지도 바꾸지도 못한다:

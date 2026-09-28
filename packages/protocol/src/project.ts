@@ -386,6 +386,7 @@ export type OnboardingFixKind =
   | "install-claude"
   | "install-codex"
   | "login-claude"
+  | "login-codex"
   | "install-git"
   | "install-node"
   | "install-pnpm";

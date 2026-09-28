@@ -390,6 +390,9 @@ export class CycleSupervisor {
       phase: view.phase,
       attempts: view.attempts,
       ...(view.lastError ? { lastError: view.lastError } : {}),
+      ...(view.phase === "blocked" && this.ledger.submitTrail?.blockedAt
+        ? { since: this.ledger.submitTrail.blockedAt }
+        : {}),
       // N6 — 잠깐 실패의 다음 시도 순간. 원장의 값 그대로(국면 판정과 별개).
       ...(view.phase === "retrying" && this.ledger.submit?.nextAttemptAt
         ? { nextAttemptAt: this.ledger.submit.nextAttemptAt }

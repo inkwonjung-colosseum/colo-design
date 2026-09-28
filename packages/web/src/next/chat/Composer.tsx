@@ -8,7 +8,7 @@ import { koreanNoticeWords } from "../../lib/error-words";
 import { composing } from "../../lib/ime";
 import { isInviteFile, offerInviteFile } from "../../lib/invite-bus";
 import { L } from "../labels";
-import { sizeText } from "../lib/thread";
+import { fastToast, sizeText } from "../lib/thread";
 import { BoltIcon, ClipIcon, FileIcon, ImageIcon, PinIcon, StopIcon, UpIcon, XIcon } from "./icons";
 import { ModelChip } from "./ModelChip";
 
@@ -359,8 +359,16 @@ export function Composer({
   // 그 답으로 선다(요금제가 막으면 제자리). 다음 정산의 선택자가 오면 그것이 이긴다.
   const activeId = sessions.activeId;
   const modelRow = modelRowOf(sessions.selector.models, sessions.selector.model);
-  const fastShown =
-    variant === "thread" && activeId !== null && modelRow?.supportsFastMode === true;
+  // ⚡ 는 두 자리에서 선다. 태어난 대화에서는 이 모델이 빠르게를 받거나
+  // (modelRow) 몸이 켜 놨을 때(selector.fastMode), 아직 태어나지 않은 새
+  // 대화 자리에서는 다음 세션의 ⚡ 선택(chat pick)이 근거다. 켜진 채 `-fast`
+  // 몸의 행이 접혀 있으면 둘째만 성립한다 — 끌 길을 막는 것보다 켜진 채
+  // 버튼이 사라지는 쪽이 더 나쁘다.
+  const pickMode = activeId === null;
+  const fastShown = pickMode
+    ? (variant === "thread" || variant === "home") && modelRow?.supportsFastMode === true
+    : variant === "thread" &&
+      (modelRow?.supportsFastMode === true || sessions.selector.fastMode === true);
   const [fastAck, setFastAck] = useState<{ sessionId: string; on: boolean } | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 선택자를 새로 읽으면(정산 · 모델 바꿈) 데몬의 답이 이긴다.
   useEffect(() => {
@@ -368,6 +376,9 @@ export function Composer({
   }, [sessions.selector]);
   const fastOn =
     fastAck && fastAck.sessionId === activeId ? fastAck.on : sessions.selector.fastMode === true;
+  // 데몬이 대신 말하는 거절 이유(요금제 · 쿨다운) — 막혀 있으면 칩의 풍선이
+  // 비용 안내 대신 그 이유를 입는다.
+  const fastBlocked = sessions.selector.fastModeBlocked;
   const [fastBusy, setFastBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => {
@@ -376,19 +387,48 @@ export function Composer({
     return () => clearTimeout(timer);
   }, [toast]);
   const toggleFast = () => {
-    if (!activeId || fastBusy) return;
-    setFastBusy(true);
+    if (fastBusy) return;
     const want = !fastOn;
-    void daemon.api
-      .setFastMode(activeId, want)
-      .then(() => daemon.api.selectors(activeId))
-      .then((next) => {
-        const on = next.fastMode === true;
-        setFastAck({ sessionId: activeId, on });
+    // 아직 태어나지 않은 대화의 자리 — 몸이 없으니 다음 세션의 ⚡ 선택을
+    // 바꾼다. 칩의 상태는 폴백 셀렉터가 그 선택으로 답한다.
+    if (pickMode) {
+      sessions.setFastPick(want);
+      setToast(want ? L.composer.fastOn : L.composer.fastOff);
+      return;
+    }
+    if (!activeId) return;
+    setFastBusy(true);
+    // 눌림은 먼저 선다 — 되살림이 답하기 전까지 몇 초를 칩이 꺼진 얼굴로
+    // 서 있는 것은 토글이 아니라 장식이다. 거절이 오면 아래 답이 되돌린다.
+    setFastAck({ sessionId: activeId, on: want });
+    // 세션 몸이 죽어 있으면 되살려 부탁한다 — 닫힌 대화에 부탁이 튕기는 것이
+    // 이 버튼이 눌러도 반응하지 않던 결함이었다(2026-09-28).
+    void sessions
+      .setFastMode(want)
+      .then((target) =>
+        target === null ? null : daemon.api.selectors(target).then((next) => ({ target, next })),
+      )
+      .then((reply) => {
+        if (reply === null) {
+          setToast(L.composer.fastFail);
+          return;
+        }
+        // 되살린 몸은 새 id 일 수 있다 — 답을 준 그 대화가 ack 의 주인이다.
+        const on = reply.next.fastMode === true;
+        setFastAck({ sessionId: reply.target, on });
         setNotice(null);
-        if (on === want) setToast(on ? L.composer.fastOn : L.composer.fastOff);
+        setToast(
+          fastToast(want, on, reply.next.fastModeBlocked, {
+            on: L.composer.fastOn,
+            off: L.composer.fastOff,
+            fail: L.composer.fastFail,
+          }),
+        );
       })
-      .catch(() => setFastAck({ sessionId: activeId, on: fastOn }))
+      .catch(() => {
+        setFastAck({ sessionId: activeId, on: fastOn });
+        setToast(L.composer.fastFail);
+      })
       .finally(() => setFastBusy(false));
   };
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -513,7 +553,6 @@ export function Composer({
         </div>
       )}
       <div className="nx-cmp-tools">
-        {leading}
         <input
           ref={picker}
           type="file"
@@ -533,6 +572,7 @@ export function Composer({
         >
           {editor.attachments.some((att) => att.kind === "image") ? <ImageIcon /> : <ClipIcon />}
         </button>
+        {leading}
         {narrow && onPinMode && (
           <button type="button" className="nx-tbtn" title={L.composer.pinTip} onClick={onPinMode}>
             <PinIcon />
@@ -540,18 +580,24 @@ export function Composer({
           </button>
         )}
         <div className="nx-grow" />
-        <ModelChip daemon={daemon} sessions={sessions} disabledProviders={disabledProviders} />
+        <ModelChip
+          daemon={daemon}
+          sessions={sessions}
+          disabledProviders={disabledProviders}
+          up={variant === "thread"}
+        />
         {fastShown && (
+          // 아이콘만 서는 칩 — 이름은 aria-label이, 비용 안내는 title이 맡는다.
           <button
             type="button"
-            className={`nx-tbtn${fastOn ? " nx-tbtn--on" : ""}`}
-            title={L.composer.fastTip}
+            className={`nx-tbtn nx-fast${fastOn ? " nx-tbtn--on" : ""}`}
+            title={pickMode ? L.composer.fastPickTip : (fastBlocked ?? L.composer.fastTip)}
+            aria-label={L.composer.fast}
             aria-pressed={fastOn}
             disabled={fastBusy}
             onClick={toggleFast}
           >
             <BoltIcon />
-            <span>{L.composer.fast}</span>
           </button>
         )}
         {showStop ? (

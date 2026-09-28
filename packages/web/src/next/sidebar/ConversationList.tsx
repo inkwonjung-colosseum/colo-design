@@ -45,11 +45,15 @@ export function ConversationList({
   onRenameSession: (sessionId: string, title: string) => void;
   onToast: (text: string) => void;
 }) {
-  const threads = project
-    ? visibleThreads(project.threads, daemon.hiddenThreads, project.slug)
-    : [];
-  const planner = threads.filter((thread) => !SYSTEM_THREAD_TITLES[thread.title]);
-  const tool = threads.filter((thread) => SYSTEM_THREAD_TITLES[thread.title]);
+  const threads = useMemo(
+    () => (project ? visibleThreads(project.threads, daemon.hiddenThreads, project.slug) : []),
+    [project, daemon.hiddenThreads],
+  );
+  const planner = useMemo(
+    () => threads.filter((thread) => !SYSTEM_THREAD_TITLES[thread.title]),
+    [threads],
+  );
+  const tool = useMemo(() => threads.filter((thread) => SYSTEM_THREAD_TITLES[thread.title]), [threads]);
 
   // 둘째 줄의 화면 — 이 창이 기록을 읽은 대화만 안다. 읽지 않은 대화는 비워 둔다
   // (모르는 것을 `아직 만든 화면이 없어요` 로 말하지 않는다).
@@ -67,6 +71,31 @@ export function ConversationList({
     }
     return out;
   }, [daemon.sessions, previewUrl]);
+
+  // 읽지 않은 대화의 둘째 줄도 채운다 — 목록 맨 앞(최신) 15개까지, 한 번에 하나씩
+  // 기록을 읽어 온다. 도구가 연 대화는 화면을 말하지 않으니 건너뛴다. 끊겨
+  // 실패한 것은 다음 연결에서 다시 묻고, 다 읽을 때까지 이어지도록 `fetchTick`
+  // 으로 이펙트를 한 박자 더 돌린다.
+  const fetched = useRef(new Set<string>());
+  const fetching = useRef(false);
+  const [, setFetchTick] = useState(0);
+  useEffect(() => {
+    if (daemon.connection !== "open" || fetching.current) return;
+    const next = planner
+      .slice(0, 15)
+      .find((thread) => !screensById.has(thread.id) && !fetched.current.has(thread.id));
+    if (!next) return;
+    fetched.current.add(next.id);
+    fetching.current = true;
+    daemon.api
+      .history(next.id)
+      .then((events) => daemon.hydrate(next.id, events))
+      .catch(() => fetched.current.delete(next.id))
+      .finally(() => {
+        fetching.current = false;
+        setFetchTick((tick) => tick + 1);
+      });
+  }, [daemon.connection, daemon.api, daemon.hydrate, planner, screensById]);
 
   // 줄의 `···` 메뉴와 그 안의 지우기 확인, 이름 바꾸기 입력의 상태.
   const [menuFor, setMenuFor] = useState<string | null>(null);

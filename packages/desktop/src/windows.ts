@@ -5,10 +5,14 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DaemonServer } from "@colo-design/daemon/server";
-import { app, BrowserWindow, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, screen, shell } from "electron";
 
 const OPEN_SESSION_CHANNEL = "colodesign:open-session";
 const OPEN_PROJECT_CHANNEL = "colodesign:open-project";
+
+/** 렌더러 사망의 자동 재열기 상한(PLAN-CRASH-PROCESS 3.A 층 3 · P-4) — 10분 창에 2회. */
+const RENDER_CRASH_WINDOW_MS = 10 * 60 * 1000;
+const RENDER_CRASH_LIMIT = 2;
 
 /** 화면 작업 영역 크기 — 창을 열 때 고정 크기 대신 쓴다. */
 function workAreaSize(): { width: number; height: number } {
@@ -97,6 +101,86 @@ export class MainWindowHost {
    * (미리보기 페이지 주차·덮개 내리기). main.ts 가 한 번 단다.
    */
   onClosed: (() => void) | null = null;
+  /**
+   * 직전 렌더러 사망 기록(3.A 층 3) — 렌더러가 다음 부팅에 한 번 읽고 간다
+   * (`desktop:last-renderer-crash` 다리). 읽히면 비운다.
+   */
+  private rendererCrash: { reason: string; at: number } | null = null;
+
+  /** 부팅하는 렌더러에게 직전 사망을 건넨다 — 건넨 뒤에는 없던 일이 된다. */
+  takeRendererCrash(): { reason: string; at: number } | null {
+    const record = this.rendererCrash;
+    this.rendererCrash = null;
+    return record;
+  }
+
+  /**
+   * 이 창의 렌더러가 죽거나 멈출 때(3.A 층 3 · P-4). 상태는 전부 데몬에
+   * 있으니 회복은 다시 열기 하나다. 사망은 로그 + 자동 reload — 10분 창에
+   * 상한을 넘으면 사람에게 묻는다(에이전트 되살리기의 "10분에 세 번" 과
+   * 같은 결).
+   */
+  private watchRendererHealth(window: BrowserWindow): void {
+    const contents = window.webContents;
+    const crashes: number[] = [];
+    // `responsive` 가 다이얼로그보다 먼저 오면 답을 무시한다 — 네이티브
+    // 다이얼로그는 밖에서 닫을 수 없어서, 회복 뒤에 늦게 온 선택을 없던
+    // 것으로 대신한다.
+    let recovered = false;
+
+    contents.on("render-process-gone", (_event, details) => {
+      if (details.reason === "clean-exit" || window.isDestroyed()) return;
+      console.error("[renderer] gone", details.reason, details.exitCode);
+      this.rendererCrash = { reason: details.reason, at: Date.now() };
+      const at = Date.now();
+      while (crashes.length > 0) {
+        const oldest = crashes[0];
+        if (oldest === undefined || at - oldest <= RENDER_CRASH_WINDOW_MS) break;
+        crashes.shift();
+      }
+      crashes.push(at);
+      if (crashes.length > RENDER_CRASH_LIMIT) {
+        void dialog
+          .showMessageBox({
+            type: "warning",
+            title: "화면이 계속 꺼져요",
+            message: "화면이 10분 안에 여러 번 꺼졌어요. 다시 열면 대화와 작업은 그대로예요.",
+            buttons: ["다시 열기", "끝내기"],
+            defaultId: 0,
+            cancelId: 0,
+          })
+          .then(({ response }) => {
+            if (window.isDestroyed()) return;
+            if (response === 0) window.webContents.reload();
+            else app.quit();
+          });
+        return;
+      }
+      window.webContents.reload();
+    });
+
+    contents.on("unresponsive", () => {
+      if (window.isDestroyed()) return;
+      recovered = false;
+      void dialog
+        .showMessageBox({
+          type: "question",
+          title: "화면이 멈췄어요",
+          message: "잠시 기다리면 저절로 돌아올 수 있어요.",
+          buttons: ["기다리기", "다시 열기"],
+          defaultId: 0,
+          cancelId: 0,
+        })
+        .then(({ response }) => {
+          if (recovered || window.isDestroyed()) return;
+          if (response === 1) window.webContents.reload();
+        });
+    });
+    contents.on("responsive", () => {
+      recovered = true;
+    });
+  }
+
 
   /**
    * The one window recipe, shared by boot and reopen: a window made without it
@@ -132,6 +216,7 @@ export class MainWindowHost {
   adopt(window: BrowserWindow, url: string): void {
     this.window = window;
     this.url = url;
+    this.watchRendererHealth(window);
     window.on("closed", () => {
       if (this.window === window) this.window = null;
       this.onClosed?.();

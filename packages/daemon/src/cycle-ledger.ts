@@ -74,6 +74,12 @@ export interface CycleSubmitTrail {
   phase: SubmitPhase;
   /** 제출 기록 — 오래된 것부터, 최근 몇 줄만. */
   log: Array<{ at: string; text: string }>;
+  /**
+   * 막힘에 들어선 순간 — 화면의 `개발자에게 알렸어요` 줄이 같은 문제를 알아채는
+   * 신원이다(닫힌 줄이 재시도마다 다시 뜨지 않게). 국면이 blocked 를 떠나도
+   * 남긴다 — 기록은 사건의 장부다.
+   */
+  blockedAt?: string;
 }
 
 export interface CyclePushState {
@@ -340,7 +346,8 @@ function parseSubmitTrail(raw: unknown): CycleSubmitTrail | null {
     const text = asString(entry?.text);
     if (at !== null && text !== null) log.push({ at, text });
   }
-  return { phase, log };
+  const blockedAt = asString(record.blockedAt);
+  return { phase, log, ...(blockedAt !== null ? { blockedAt } : {}) };
 }
 
 function parsePush(raw: unknown): CyclePushState | null {

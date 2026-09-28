@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   notifyTest: () => ipcRenderer.invoke("desktop:notify-test"),
   /** 설정의 `시스템 알림 설정 열기` — OS 의 알림 허용 스위치로 데려간다. */
   openNotificationSettings: () => ipcRenderer.invoke("desktop:open-notification-settings"),
+  /** 직전 렌더러 사망 기록(크래시 방어 층 3) — 부팅 때 한 번 읽는다; 메인은 읽힌 뒤 비운다. */
+  lastRendererCrash: () => ipcRenderer.invoke("desktop:last-renderer-crash"),
   /** 알림 클릭 → 그 대화 열기(리뷰 B7): 메인이 세션 아이디를 건넨다. */
   onOpenSession: subscribe<string>("colodesign:open-session"),
   /** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — slug 가 건너온다. */

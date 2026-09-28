@@ -326,6 +326,8 @@ export class Session {
   fastMode = false;
   /** 왜 지금 빠르게를 쓸 수 없는지(CLI 의 사유 문자열). null 이면 막힘 없음. */
   fastModeBlocked: string | null = null;
+  /** 부탁의 도중 드라이버가 스스로 상태를 보고했는가 — 낙관 적기의 간판. */
+  private fastModeAnswered = false;
   model: string | null = null;
   /** Composer chip selections; `null` = the provider's own default. */
   private selectedModel: string | null = null;
@@ -486,6 +488,10 @@ export class Session {
     onFastMode: (on, blocked) => {
       this.fastMode = on;
       this.fastModeBlocked = blocked;
+      // 부탁 안에서 답한 보고다 — setFastMode 의 낙관 적기가 이 사실을 덮지
+      // 못하게 도장을 찍는다(omp 는 티어의 active 와 모델 바꿈의 몸을 그대로
+      // 올린다; 그 뒤를 정정할 fast_mode_state 는 오지 않는다).
+      this.fastModeAnswered = true;
     },
   };
 
@@ -1677,12 +1683,18 @@ export class Session {
 
   /**
    * 빠르게 (fast mode): 같은 모델을 더 빠른 응답으로 돌린다. 켜 달라는 부탁일
-   * 뿐이다 — 받아들여졌는지는 다음 메시지의 `fast_mode_state` 가 말한다.
+   * 뿐이다 — 받아들여졌는지는 드라이버의 보고(티어의 active · 변종의 몸,
+   * claude 는 다음 메시지의 `fast_mode_state`)가 말한다.
    */
   async setFastMode(fast: boolean): Promise<void> {
     if (!this.agent?.setFastMode) throw new Error("이 에이전트는 빠르게를 지원하지 않습니다.");
+    this.fastModeAnswered = false;
     await this.agent.setFastMode(fast);
-    this.fastMode = fast;
+    // 드라이버가 부탁 도중 상태를 보고했으면 그 답이 이긴다 — omp 는 티어의
+    // active 를, 모델 바꿈은 변종의 몸을 보고했고, 그 뒤를 정정하는 메시지는
+    // 없다. 보고가 없던 부탁만(claude 의 빈 응답) 낙관이 채우고, 거절이면
+    // 첫 메시지의 fast_mode_state 가 되돌린다.
+    if (!this.fastModeAnswered) this.fastMode = fast;
     // 켜는 쪽의 사유는 이제 옛말이다. 거절이면 다음 메시지가 다시 적는다.
     if (fast) this.fastModeBlocked = null;
   }

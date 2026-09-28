@@ -8,7 +8,42 @@
   font-size: 13px;
   border-bottom: 1px solid var(--line);
   animation: nx-fade 0.2s;
+}
+
+/* 닫힘 — 한 줄을 그리드 줄째(1fr → 0fr)로 접으며 사라진다. 패딩 · 구분선도 함께
+   0 으로 접어야 끝에 아무것도 남지 않고, 접힘이 끝난 뒤에야 ProblemLine 이 자리를
+   비우므로 0.2s 와 닫기 타이머(240ms)는 함께 움직인다. */
+.nx-problem-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
   flex: none;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.nx-problem-wrap > .nx-problem {
+  min-height: 0;
+  overflow: hidden;
+  transition:
+    opacity 0.16s ease,
+    padding 0.2s ease,
+    border-bottom-width 0.2s ease;
+}
+
+.nx-problem-wrap--closed {
+  grid-template-rows: 0fr;
+}
+
+.nx-problem-wrap--closed > .nx-problem {
+  opacity: 0;
+  padding-block: 0;
+  border-bottom-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-problem-wrap,
+  .nx-problem-wrap > .nx-problem {
+    transition: none;
+  }
 }
 
 .nx-problem b {
@@ -21,6 +56,13 @@
   min-width: 0;
   flex: 1;
   word-break: keep-all;
+}
+
+/* `개발자에게 알렸어요` 의 ✕ — 아이콘 한 칸이라 정사각으로 줄인다. */
+.nx .nx-problem .nx-problem-close {
+  width: 26px;
+  padding: 0;
+  flex: none;
 }
 
 .nx-problem--fixing {

@@ -22,6 +22,12 @@ export interface Problem {
   body: string;
   /** 사람의 손 — 초대 파일 열기 · 브라우저에서 다시 로그인. 없으면 버튼이 없다. */
   action: "invite" | "login" | null;
+  /**
+   * 닫기의 신원 (PLAN-UI U13) — `개발자에게 알렸어요` 줄만 가진다. 문제가
+   * 처음 선 시각(`since`)이 들어 있어 같은 문제는 한 번 닫으면 다시 뜨지
+   * 않고, 풀렸다 새로 막히면 다른 신원으로 다시 선다.
+   */
+  dismissId: string | null;
 }
 
 type RepoLike = Pick<RepoStatus, "phase" | "previewUrl"> &
@@ -54,12 +60,14 @@ export function problemFor(
           title: W.problem.reconnect,
           body: W.problem.reconnectInvite,
           action: "invite",
+          dismissId: null,
         }
       : {
           kind: "reconnect",
           title: W.problem.reconnect,
           body: W.problem.reconnectLogin,
           action: "login",
+          dismissId: null,
         };
   }
   // 제출이 막힌 것은 개발자 몫의 문제다(U13) — 데몬이 알림을 세우기 전에도
@@ -70,6 +78,7 @@ export function problemFor(
       title: W.problem.notified,
       body: W.problem.notifiedSubmit,
       action: null,
+      dismissId: `submit:${repo.submit.since ?? "?"}`,
     };
   }
   if (attention?.kind === "developer-notified") {
@@ -78,6 +87,7 @@ export function problemFor(
       title: W.problem.notified,
       body: W.problem.notifiedOther,
       action: null,
+      dismissId: `notice:${attention.since}`,
     };
   }
   if (attention?.kind === "ai-fixing") {
@@ -88,7 +98,42 @@ export function problemFor(
       title: W.problem.fixing,
       body: previewDown ? W.problem.fixingPreview : W.chat.fixingOther,
       action: null,
+      dismissId: null,
     };
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// `개발자에게 알렸어요` 의 닫기 — 이 탭이 사는 동안만 기억한다
+// ---------------------------------------------------------------------------
+
+/**
+ * 닫은 문제의 신원 목록 — sessionStorage 라 앱을 다시 켜면 다시 선다: 문제는
+ * 아직 서 있고, 하루 걸린 알림을 다시 보여 주는 쪽이 잊히는 것보다 낫다
+ * (레포 경고의 지문은 localStorage 이지만 그것은 영구 소식 — 이 줄은 살아
+ * 있는 문제다). 신원은 `problem.dismissId`(문제가 처음 선 시각)라 같은 문제만
+ * 닫히고, 풀렸다 다시 막힌 제출이나 새 알림은 다른 신원으로 다시 선다.
+ */
+const PROBLEM_DISMISSED_KEY = "colo-design.problem-dismissed";
+const PROBLEM_DISMISSED_MAX = 20;
+
+export function dismissedProblems(): string[] {
+  try {
+    const raw: unknown = JSON.parse(sessionStorage.getItem(PROBLEM_DISMISSED_KEY) ?? "[]");
+    return Array.isArray(raw)
+      ? raw.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function dismissProblem(dismissId: string): void {
+  try {
+    const next = [...new Set([...dismissedProblems(), dismissId])].slice(-PROBLEM_DISMISSED_MAX);
+    sessionStorage.setItem(PROBLEM_DISMISSED_KEY, JSON.stringify(next));
+  } catch {
+    // 사적 모드 등에서 저장이 막혀도 닫기는 이 탭의 몫으로 끝난다.
+  }
 }

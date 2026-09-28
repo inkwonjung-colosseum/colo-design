@@ -16,7 +16,7 @@ import type {
   PermissionVerdict,
   Turn,
 } from "../../driver.js";
-import { ompModelRows } from "./catalog.js";
+import { fastPairs, ompModelRows } from "./catalog.js";
 import { approvalToolName } from "./classify.js";
 import { OmpRpcTransport } from "./transport.js";
 
@@ -167,6 +167,9 @@ export class OmpAgentSession implements AgentSession {
     this.initialModel = this.currentModel;
     this.initialEffort = typeof state.thinkingLevel === "string" ? state.thinkingLevel : null;
     this.noteContext(state.contextUsage as Wire | undefined);
+    // `-fast` 몸으로 이어받은 세션 — 빠르게의 상태는 끝맺는 이름이 전부다
+    // (티어 메시지가 없는 프로바이더라 fast_mode_state 가 오지 않는다).
+    if (this.currentModel?.endsWith("-fast") === true) this.hooks.onFastMode?.(true, null);
 
     this.hooks.onEvent({
       kind: "init",
@@ -321,13 +324,22 @@ export class OmpAgentSession implements AgentSession {
     await this.applyModel(target);
   }
 
+  /** 베이스↔`-fast` 변종의 짝 — models() 가 카탈로그를 읽을 때마다 갱신한다. */
+  private fastSiblings = new Map<string, string>();
+
   private async applyModel(target: string): Promise<void> {
     // 고르개의 값은 카탈로그가 만든 "provider/modelId" 다.
     const slash = target.indexOf("/");
     const provider = slash > 0 ? target.slice(0, slash) : "";
     const modelId = slash > 0 ? target.slice(slash + 1) : target;
     await this.transport.command("set_model", { provider, modelId }, 15_000);
+    // `-fast` 변종이 곧 빠르게의 몸이다 — 그 몸을 드나드는 바꿈만 토글의 상태를
+    // 말한다. 그 외의 모델 바꿈은 service tier 의 상태를 모르는 채 보고하지
+    // 않는다(티어는 set_fast_mode 의 길이고 모델 바꿈이 그것을 건드리지 않는다).
+    const entering = modelId.endsWith("-fast");
+    const leaving = this.currentModel?.endsWith("-fast") === true;
     this.currentModel = target;
+    if (entering || leaving) this.hooks.onFastMode?.(entering, null);
   }
 
   async setEffort(effort: EffortLevel | null): Promise<void> {
@@ -338,13 +350,23 @@ export class OmpAgentSession implements AgentSession {
   }
 
   /**
-   * 빠르게 — 세션의 service tier 설정. 받지 않는 모델 위에서는 omp 가 문장으로
-   * 거절하고, 그 거절이 그대로 올라가 토글이 눌리기 전 자리로 돌아간다.
-   * 성공해도 `active` 는 다를 수 있다(프로바이더 수준 설정) — 에이전트가 말한
-   * 실제 상태를 그대로 코어에 알린다.
+   * 빠르게 — 두 가지 몸을 돌린다. `-fast` 변종이 있는 모델 위에서는 그 변종으로의
+   * 모델 바꿈이 빠르게다(devin 은 service tier 가족 밖이라 `set_fast_mode` 가
+   * 문장으로 거절한다 — 실측). 그 밖에는 omp 의 service tier 부탁이다 —
+   * 받지 않는 모델 위에서는 거절이 그대로 올라가 토글이 눌리기 전 자리로
+   * 돌아간다. 성공해도 `active` 는 다를 수 있다(프로바이더 수준 설정) — 에이전트가
+   * 말한 실제 상태를 그대로 코어에 알린다.
    */
   async setFastMode(on: boolean): Promise<void> {
     await this.ready;
+    const sibling = this.currentModel ? this.fastSiblings.get(this.currentModel) : undefined;
+    if (sibling !== undefined) {
+      if (on !== this.currentModel?.endsWith("-fast")) await this.applyModel(sibling);
+      // applyModel 이 이미 몸이 말하는 상태를 보고했다 — 같은 답을 한 번 더
+      // 뿌리는 것은 비어 있을 때의 안전핀이다.
+      else this.hooks.onFastMode?.(on, null);
+      return;
+    }
     const result = (await this.transport.command("set_fast_mode", { enabled: on }, 15_000)) as Wire;
     this.hooks.onFastMode?.(result?.active === true, null);
   }
@@ -356,8 +378,14 @@ export class OmpAgentSession implements AgentSession {
 
   async models(): Promise<SessionModelInfo[]> {
     await this.ready;
-    const data = (await this.transport.command("get_available_models", undefined, 20_000)) as Wire;
-    return ompModelRows(Array.isArray(data?.models) ? (data.models as Wire[]) : []);
+    const wire = (await this.transport.command("get_available_models", undefined, 20_000)) as Wire;
+    const rows = Array.isArray(wire?.models) ? (wire.models as Wire[]) : [];
+    // 카탈로그를 읽을 때마다 짝 지도를 새로 둔다 — 새 목록에 사라진 변종의
+    // 헌 짝이 남아 죽은 모델로의 바꿈을 이끌지 않게.
+    this.fastSiblings = fastPairs(rows);
+    // 지금 도는 몸이 `-fast` 변종이면 그 행은 접지 않는다 — 칩의 앞말과 ⚡ 의
+    // on 판독이 그 행을 읽는다.
+    return ompModelRows(rows, this.currentModel ?? undefined);
   }
 
   async contextUsage(): Promise<ContextUsage | null> {

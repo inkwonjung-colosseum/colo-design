@@ -8,28 +8,48 @@ import type { L } from "../labels";
  * 필요하면 부르는 쪽이 넘긴다.
  */
 
-/** 생각 시간의 세 칸(목업 `짧게 · 보통 · 길게`) — CLI 의 노력 단계에 얹는다. */
-export type EffortWord = "short" | "normal" | "long";
+/** 생각 시간의 다섯 칸 — CLI 의 노력 단계에 하나씩 얹는다. */
+export type EffortWord = "short" | "normal" | "long" | "longer" | "max";
 
 export const EFFORT_OF: Record<EffortWord, EffortLevel> = {
   short: "low",
   normal: "medium",
   long: "high",
+  longer: "xhigh",
+  max: "max",
 };
 
-/**
- * 지금 노력이 세 칸 중 어디인가. 고른 적이 없으면(null) CLI 의 기본 — 보통이다.
- * xhigh · max 는 이 도구가 고르게 하지 않지만, 그렇게 돌고 있다면 길게로 읽는다.
- */
+/** 지금 노력이 다섯 칸 중 어디인가. 고른 적이 없으면(null) CLI 의 기본 — 보통이다. */
 export function effortWord(effort: EffortLevel | null): EffortWord {
   if (effort === "low") return "short";
-  if (effort === "high" || effort === "xhigh" || effort === "max") return "long";
+  if (effort === "high") return "long";
+  if (effort === "xhigh") return "longer";
+  if (effort === "max") return "max";
   return "normal";
 }
 
-/** 모델 칩의 문양(W6) — `프로바이더 · 생각 시간`. 모델 이름은 팝오버 안에만 산다. */
-export function chipLabel(providerLabel: string, effort: string | null): string {
-  return effort === null ? providerLabel : `${providerLabel} · ${effort}`;
+/**
+ * 모델 칩의 문양(W6) — `모델 · 생각 시간`. 앞말은 부르는 쪽이 고른다: 모델 줄의
+ * 이름이 먼저고, 목록이 아직 오지 않았을 때만 프로바이더가 그 자리를 대신한다.
+ */
+export function chipLabel(leadLabel: string, effort: string | null): string {
+  return effort === null ? leadLabel : `${leadLabel} · ${effort}`;
+}
+
+/**
+ * ⚡ 토글을 누른 뒤의 말 — 부탁이 받아들여지면 켬·끔의 인사를, 받아들여지지
+ * 못했으면 데몬이 대신 말하는 이유(요금제 · 쿨다운)를 그대로 옮긴다. 이유마저
+ * 없으면 못 했다는 말로 대신한다 — 칩이 조용히 제자리에 머무는 것은 고장과
+ * 같은 얼굴이므로, 어느 길로 끝나든 말이 남아야 한다.
+ */
+export function fastToast(
+  want: boolean,
+  on: boolean,
+  blocked: string | null,
+  say: { on: string; off: string; fail: string },
+): string {
+  if (on === want) return want ? say.on : say.off;
+  return blocked ?? say.fail;
 }
 
 /** 한도 문장을 알아보는 단서 — SDK 가 답의 마지막 줄에 스스로 남기는 영어 문장. */

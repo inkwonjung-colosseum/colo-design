@@ -67,11 +67,19 @@ function codexCandidates(home: string): string[] {
   ];
 }
 
+/**
+ * `which codex` 로 한 번 찾아 둔 길 — 고정 후보 어디에도 없는 자리(npm 전역 ·
+ * volta/fnm 같은 버전 관리자의 bin)에 설치된 CLI 를 이 실행에서는 기억한다.
+ * isAvailable 이 채우고, 같은 판의 다른 읽기(createSession · loginCommand —
+ * 동기)도 같은 CLI 를 쓰게 하는 소재다.
+ */
+let searchedPathHit: string | null = null;
+
 /** 설치 진행기(1단계)가 설치의 성공 판정에 쓰는 같은 규칙. */
 export function resolveCodexExecutable(): string | null {
   const env = process.env.COLO_DESIGN_CODEX_BIN;
-  const candidates = [env, ...codexCandidates(homedir())].filter((value): value is string =>
-    Boolean(value),
+  const candidates = [env, ...codexCandidates(homedir()), searchedPathHit].filter(
+    (value): value is string => Boolean(value),
   );
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
@@ -81,6 +89,29 @@ export function resolveCodexExecutable(): string | null {
         return candidate;
       }
     }
+  }
+  return null;
+}
+
+/** 셸의 PATH 에서 codex 를 찾는다 — 고정 후보가 모두 비었을 때의 마지막 길(claude 와 같은 잣대). runLike 는 시험 구멍. */
+export async function searchPathForCodex(runLike: typeof run = run): Promise<string | null> {
+  if (searchedPathHit && existsSync(searchedPathHit)) return searchedPathHit;
+  const lookup =
+    process.platform === "win32"
+      ? { command: "where", args: ["codex.exe"] }
+      : { command: "which", args: ["codex"] };
+  try {
+    const { stdout } = await runLike(lookup.command, lookup.args, { timeout: 5_000 });
+    const found = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (found) {
+      searchedPathHit = found;
+      return found;
+    }
+  } catch {
+    // `which` · `where` 는 못 찾으면 0 이 아닌 코드로 끝난다.
   }
   return null;
 }
@@ -95,6 +126,13 @@ function codexLoggedIn(): boolean {
     return false;
   }
 }
+
+/**
+ * 설치는 됐지만 로그인이 없는 판의 한 마디 — 설정의 「쓸 수 없는 AI」 목록이
+ * reason 없는 행을 「설치되지 않았어요」로 말해, 설치 판별을 못 하는 것처럼
+ * 보이는 세계(2026-09-28 실측)를 고치는 글이다.
+ */
+const CODEX_LOGIN_REASON = "설치는 돼 있어요 — 로그인이 필요해요";
 
 /**
  * The Codex driver: an `codex app-server` subprocess per session, plus the
@@ -124,7 +162,10 @@ export class CodexDriver implements AgentDriver {
   }
 
   async isAvailable(): Promise<Diagnostic> {
-    const executable = this.exe();
+    let executable = this.exe();
+    // 고정 후보가 모두 비었으면 PATH 를 마지막으로 뒤진다 — 찾으면 이 실행에서
+    // 기억해 세션 만들기(동기)도 같은 CLI 를 쓴다.
+    if (!executable) executable = await searchPathForCodex();
     if (!executable) {
       return { ok: false, reason: "Codex CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요." };
     }
@@ -141,6 +182,7 @@ export class CodexDriver implements AgentDriver {
       executable,
       ...(version ? { version } : {}),
       loggedIn,
+      ...(loggedIn ? {} : { reason: CODEX_LOGIN_REASON }),
     };
   }
 

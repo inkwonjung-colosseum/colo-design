@@ -11,6 +11,7 @@ import {
 import { FirstRun } from "./onboarding/FirstRun";
 import { InviteConfirm } from "./onboarding/InviteConfirm";
 import "./next.css";
+import { decideShellPane } from "./lib/shell-pane";
 import { Workspace } from "./Workspace";
 
 /** App 이 셸에 건네는 계약 — 연결 하나와 설정 상태의 저장 손들. */
@@ -25,10 +26,11 @@ export interface NextShellProps {
 }
 
 /**
- * 셸(PLAN-UI 단계 1 · 5) — 갈림길이 하나다. 첫 실행(프로젝트 0개) · 게이트가
- * 막혔을 때는 체크리스트 한 장(FirstRun, U11)이 창을
- * 쓰고, 그 밖에는 작업 틀(Workspace)이 쓴다. `시작하기` 는 없다 — 게이트가 모두
- * 지나가고 프로젝트가 생기면 저절로 넘어간다.
+ * 셸(PLAN-UI 단계 1 · 5) — 갈림길이 셋이다(shell-pane). 첫 상태(hello)가 오기
+ * 전에는 표지(nx-boot)가 창을 지키고, 첫 실행(프로젝트 0개) · 게이트가 막았을
+ * 때는 체크리스트 한 장(FirstRun, U11)이 창을 쓰고, 그 밖에는 작업 틀(Workspace)이
+ * 쓴다. `시작하기` 는 없다 — 게이트가 모두 지나가고 프로젝트가 생기면 저절로
+ * 넘어간다.
  *
  * 초대 파일 가져오기의 컨트롤러는 여기 앱에 하나 둔다(use-invite-import) — 창
  * 어디에 떨어뜨린 파일 · 설정의 열기 · 문제 문장의 안내가 전부 여기로 모이고,
@@ -90,6 +92,9 @@ export function NextShell(props: NextShellProps) {
   // 게이트가 막히면 체크리스트가 창을 쓴다 — 로그인 만료(login-claude)는 프로젝트가
   // 있는 기계에서 막지 않는다: 그 소식은 작업 틀의 문제 문장이 맡는다. 답이 없는
   // 검사(onboarding === null)도 막는다 — 지나가는 작업 틀로 사용자를 흔들지 않는다.
+  // 다만 첫 상태(hello)가 오기 전에는 아무 판정도 하지 않는다 — 상태가 없음을
+  // `프로젝트 0개` 로 읽으면 프로젝트가 있는 기계의 다시 열기마다 체크리스트가
+  // 번쩍였다 넘어간다. 그 사이 창은 표지(nx-boot)가 지킨다.
   const projects = daemon.projects;
   const gatesHold = recheckingProvider
     ? false
@@ -101,7 +106,13 @@ export function NextShell(props: NextShellProps) {
   // 첫 실행의 적용이 도는 동안에도 첫 화면을 지킨다 — 첫 프로젝트가 생기는 순간
   // 넘어가면 나머지 진행과 실패가 안 보인다.
   const applyingFirst = invite.state.phase === "applying" && invite.state.firstRun;
-  const firstRun = daemon.status === null || projects.length === 0 || applyingFirst || gatesHold;
+  const pane = decideShellPane({
+    statusLoaded: daemon.status !== null,
+    projectCount: projects.length,
+    applyingFirst,
+    gatesHold,
+  });
+  const firstRun = pane === "first-run";
 
   // 첫 가져오기(프로젝트 0개)의 행이 모두 `새로` 면 확인판은 되묻는 한 걸음일 뿐이다 —
   // 곧바로 적용하고, 끝나면 첫 프로젝트의 `초대 파일을 가져왔어요` 줄이 파일 지우기를
@@ -169,7 +180,11 @@ export function NextShell(props: NextShellProps) {
 
   return (
     <>
-      {firstRun ? (
+      {pane === "boot" ? (
+        <div className="nx nx-boot" data-testid="next-boot" aria-busy="true">
+          <img src="/colonova-icon.svg" alt="" width={36} height={36} />
+        </div>
+      ) : firstRun ? (
         <FirstRun
           daemon={daemon}
           provider={settings.chat.provider}

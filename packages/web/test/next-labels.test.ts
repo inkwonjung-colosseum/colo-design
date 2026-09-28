@@ -201,3 +201,15 @@ test("labels: L 의 칸은 모두 next/ 어딘가에서 불린다", () => {
   );
   assert.deepEqual([...passed].filter((group) => !(group in WHOLE_GROUP)).sort(), []);
 });
+
+/**
+ * 와치독 문장 동치(PLAN-CRASH-PROCESS 3.A 층 1-4) — `public/boot-watchdog.js`
+ * 는 번들 밖의 클래식 스크립트라 `labels.ts` 를 import 할 수 없어 문장을 파일
+ * 안에 둔다. 같은 문장이 두 벌로 살므로, 이 시험이 글자 동치를 지킨다.
+ */
+test("watchdog: 문장이 L.crash 와 글자 그대로 같다", () => {
+  const source = readFileSync(join(import.meta.dirname, "../public/boot-watchdog.js"), "utf8");
+  for (const text of [L.crash.bootTitle, L.crash.reopen]) {
+    assert.ok(source.includes(text), `boot-watchdog.js 에 이 문장이 없다: ${text}`);
+  }
+});

@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { requestInvitePicker } from "../../lib/invite-bus";
-import { AlertIcon, MailIcon, PlugIcon } from "../chat/icons";
+import { AlertIcon, MailIcon, PlugIcon, XIcon } from "../chat/icons";
 import { L } from "../labels";
-import { problemFor } from "../lib/problem";
+import { dismissedProblems, dismissProblem, problemFor } from "../lib/problem";
 
 /**
  * 문제 문장 한 줄(README「화면의 문제 문장은 셋이다」) — 상태 줄 바로 아래, 대화와
@@ -25,8 +25,37 @@ export function ProblemLine({
 }) {
   const problem = problemFor(daemon.status, daemon.repo, L);
   const [login, setLogin] = useState<"idle" | "busy" | "started">("idle");
+  // 닫은 문제의 신원 — 이 탭이 사는 동안 같은 문제의 줄은 다시 서지 않는다.
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set(dismissedProblems()));
+  // 닫힘 애니메이션 — 줄을 0 높이로 접는 동안은 자리를 곧장 비우지 않는다.
+  const [closing, setClosing] = useState(false);
+  const closeTimers = useRef<number[]>([]);
 
-  if (problem) {
+  useEffect(() => {
+    const pending = closeTimers.current;
+    return () => {
+      for (const t of pending) window.clearTimeout(t);
+    };
+  }, []);
+
+  /** 접어 사라지는 닫기 — 접힘(problem.css 의 0.2s)이 끝난 뒤 마무리를 돌린다.
+      움직임을 줄이기로 둔 탭에선 접힘 없이 곧장 닫는다. */
+  const collapseThen = (after: () => void) => {
+    if (closing) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      after();
+      return;
+    }
+    setClosing(true);
+    closeTimers.current.push(
+      window.setTimeout(() => {
+        setClosing(false);
+        after();
+      }, 240),
+    );
+  };
+
+  if (problem && !(problem.dismissId !== null && closed.has(problem.dismissId))) {
     const icon =
       problem.kind === "fixing" ? (
         <i className="nx-spin" aria-hidden="true" />
@@ -36,40 +65,60 @@ export function ProblemLine({
         <PlugIcon />
       );
     return (
-      <div className={`nx-problem nx-problem--${problem.kind}`} role="status">
-        {icon}
-        <b>{problem.title}</b>
-        <span>{problem.body}</span>
-        {problem.action === "invite" && (
-          <button
-            type="button"
-            className="nx-btn nx-btn--sm nx-btn--pri"
-            onClick={() => requestInvitePicker()}
-          >
-            {L.problem.openInvite}
-          </button>
-        )}
-        {problem.action === "login" && (
-          <button
-            type="button"
-            className="nx-btn nx-btn--sm nx-btn--pri"
-            disabled={login === "busy"}
-            onClick={() => {
-              // 처음은 브라우저 로그인을 몰고, 그 뒤는 다시 확인이다.
-              const first = login === "idle";
-              setLogin("busy");
-              void (first ? daemon.api.onboardingFix("login-claude") : daemon.api.refreshStatus())
-                .then(() => setLogin("started"))
-                .catch(() => setLogin(first ? "idle" : "started"));
-            }}
-          >
-            {login === "busy"
-              ? L.chat.checking
-              : login === "started"
-                ? L.chat.recheck
-                : L.problem.loginInBrowser}
-          </button>
-        )}
+      <div className={`nx-problem-wrap${closing ? " nx-problem-wrap--closed" : ""}`}>
+        <div className={`nx-problem nx-problem--${problem.kind}`} role="status">
+          {icon}
+          <b>{problem.title}</b>
+          <span>{problem.body}</span>
+          {problem.action === "invite" && (
+            <button
+              type="button"
+              className="nx-btn nx-btn--sm nx-btn--pri"
+              onClick={() => requestInvitePicker()}
+            >
+              {L.problem.openInvite}
+            </button>
+          )}
+          {problem.action === "login" && (
+            <button
+              type="button"
+              className="nx-btn nx-btn--sm nx-btn--pri"
+              disabled={login === "busy"}
+              onClick={() => {
+                // 처음은 브라우저 로그인을 몰고, 그 뒤는 다시 확인이다.
+                const first = login === "idle";
+                setLogin("busy");
+                void (first ? daemon.api.onboardingFix("login-claude") : daemon.api.refreshStatus())
+                  .then(() => setLogin("started"))
+                  .catch(() => setLogin(first ? "idle" : "started"));
+              }}
+            >
+              {login === "busy"
+                ? L.chat.checking
+                : login === "started"
+                  ? L.chat.recheck
+                  : L.problem.loginInBrowser}
+            </button>
+          )}
+          {problem.dismissId !== null && (
+            <button
+              type="button"
+              className="nx-btn nx-btn--sm nx-btn--ghost nx-problem-close"
+              aria-label={L.problem.dismiss}
+              title={L.problem.dismiss}
+              onClick={() => {
+                const id = problem.dismissId;
+                if (id === null) return;
+                collapseThen(() => {
+                  dismissProblem(id);
+                  setClosed((prev) => new Set(prev).add(id));
+                });
+              }}
+            >
+              <XIcon />
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -77,27 +126,33 @@ export function ProblemLine({
   if (!invitePath) return null;
   const discard = window.coloDesignDesktop?.invite?.discard;
   return (
-    <div className="nx-problem nx-problem--notified" role="status">
-      <AlertIcon />
-      <b>{L.inviteCleanup.title}</b>
-      <span>{L.inviteCleanup.body}</span>
-      {discard && (
+    <div className={`nx-problem-wrap${closing ? " nx-problem-wrap--closed" : ""}`}>
+      <div className="nx-problem nx-problem--notified" role="status">
+        <AlertIcon />
+        <b>{L.inviteCleanup.title}</b>
+        <span>{L.inviteCleanup.body}</span>
+        {discard && (
+          <button
+            type="button"
+            className="nx-btn nx-btn--sm nx-btn--pri"
+            onClick={() => {
+              void discard(invitePath)
+                .then(() => onToast(L.inviteCleanup.removed))
+                .catch(() => onToast(L.inviteCleanup.removeFailed))
+                .finally(onClearInvite);
+            }}
+          >
+            {L.inviteCleanup.remove}
+          </button>
+        )}
         <button
           type="button"
-          className="nx-btn nx-btn--sm nx-btn--pri"
-          onClick={() => {
-            void discard(invitePath)
-              .then(() => onToast(L.inviteCleanup.removed))
-              .catch(() => onToast(L.inviteCleanup.removeFailed))
-              .finally(onClearInvite);
-          }}
+          className="nx-btn nx-btn--sm nx-btn--ghost"
+          onClick={() => collapseThen(onClearInvite)}
         >
-          {L.inviteCleanup.remove}
+          {L.inviteCleanup.later}
         </button>
-      )}
-      <button type="button" className="nx-btn nx-btn--sm nx-btn--ghost" onClick={onClearInvite}>
-        {L.inviteCleanup.later}
-      </button>
+      </div>
     </div>
   );
 }

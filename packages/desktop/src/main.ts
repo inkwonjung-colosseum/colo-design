@@ -336,6 +336,7 @@ async function bootApp(): Promise<void> {
     bundleId: APP_BUNDLE_ID,
     logsDir: LOGS_DIR,
     settingsPath: desktopSettingsPath,
+    lastRendererCrash: () => host.takeRendererCrash(),
   });
   void updates.reportSwapResult();
   updates.schedule();

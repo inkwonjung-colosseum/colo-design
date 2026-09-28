@@ -19,6 +19,8 @@ const EFFORT_WORDS: Record<EffortWord, string> = {
   short: L.model.thinkShort,
   normal: L.model.thinkNormal,
   long: L.model.thinkLong,
+  longer: L.model.thinkLonger,
+  max: L.model.thinkMax,
 };
 
 /** 이 개수부터는 모델 줄을 눈으로 걷지 않고 거르는 편이 빠르다. */
@@ -39,19 +41,26 @@ function clock(at: string): string {
 }
 
 /**
- * 입력창의 설정 칩 `Claude · 보통 ▾` 과 그 팝오버(목업 `modelPop`) —
- * 프로바이더(쓸 수 있는 것이 둘 이상일 때만) · 모델 · 생각 시간 · 사용량. 부르는
- * 길은 옛 입력창과 같다: `sessions.pickProvider` · `setModel` · `setEffort`.
+ * 입력창의 설정 칩 `Opus 5.5 · 보통 ▾` 과 그 팝오버(목업 `modelPop`) —
+ * 칩은 모델과 생각 시간을 말한다(모델 목록이 오지 않았을 때만 프로바이더가 앞말).
+ * 팝오버는 프로바이더(쓸 수 있는 것이 둘 이상일 때만) · 모델 · 생각 시간 · 사용량.
+ * 부르는 길은 옛 입력창과 같다: `sessions.pickProvider` · `setModel` · `setEffort`.
  * 한도가 가까우면(P6, 70% 넘음) 칩 옆에 사용량 한 단어가 선다.
  */
 export function ModelChip({
   daemon,
   sessions,
   disabledProviders = [],
+  up = true,
 }: {
   daemon: Daemon;
   sessions: Sessions;
   disabledProviders?: string[];
+  /**
+   * 여는 방향 — 입력창이 화면 바닥에 붙는 대화 칸은 위로, 홈처럼 화면 가운데
+   * 있는 입력창은 아래로. 위로만 열면 홈에서 팝의 머리가 창 밖으로 나간다.
+   */
+  up?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
@@ -74,13 +83,16 @@ export function ModelChip({
     needle === ""
       ? models
       : models.filter((row) => `${row.label} ${row.hint ?? ""}`.toLowerCase().includes(needle));
-  const levels = modelRow?.supportedEffortLevels ?? null;
-  const efforts = (Object.keys(EFFORT_OF) as EffortWord[]).filter(
-    (word) => levels === null || levels.includes(EFFORT_OF[word]),
-  );
-  const showEffort = modelRow?.supportsEffort !== false && efforts.length > 0;
+  // 다섯 칸을 모두 내놓는다. CLI 가 알려 준 지원 목록(supportedEffortLevels)으로
+  // 거르면 낡거나 좁은 목록이 실제 단계(xhigh · max)를 가려 두세 개만 남는 수가
+  // 있다 — 생각 시간 자체가 없는 모델(supportsEffort === false)만 칸을 통째로 숨긴다.
+  const efforts = Object.keys(EFFORT_OF) as EffortWord[];
+  const showEffort = modelRow?.supportsEffort !== false;
   const think = effortWord(selector.effort);
-  const label = chipLabel(providerLabel, showEffort ? EFFORT_WORDS[think] : null);
+  const label = chipLabel(
+    modelRow?.displayName ?? providerLabel,
+    showEffort ? EFFORT_WORDS[think] : null,
+  );
   const reading = usageReading(daemon.status?.planUsageByProvider?.[provider]);
 
   return (
@@ -106,7 +118,7 @@ export function ModelChip({
         <ChevIcon />
       </button>
       {open && (
-        <Popover anchor={anchor} onClose={close} align="end" up className="nx-model-pop">
+        <Popover anchor={anchor} onClose={close} align="end" up={up} className="nx-model-pop">
           {usable.length >= 2 && (
             <>
               <div className="nx-mh">{L.model.ai}</div>
@@ -174,6 +186,11 @@ export function ModelChip({
                 ))}
                 {visibleModels.length === 0 && <div className="nx-mempty">{L.model.noMatch}</div>}
               </div>
+              {modelRow?.supportsFastMode === false && (
+                // 번개 칩이 없는 이유를 팝이 대신 대답한다 — 모델이 조용히
+                // 가려진 것을 빠르게의 부재로 오해하는 일이 없게.
+                <div className="nx-mnote">{L.model.fastMissing}</div>
+              )}
             </>
           )}
           {showEffort && (

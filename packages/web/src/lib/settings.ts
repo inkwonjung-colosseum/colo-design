@@ -111,11 +111,17 @@ export interface ChatSettings {
   /** The pinned effort for `provider`; other providers' pins ride `byProvider`. */
   effort: EffortLevel | null;
   /**
+   * The ⚡ pick for `provider`'s next session — the bolt on a conversation
+   * that has not been born yet(새 대화의 빈 자리). 태어난 대화의 빠르게는
+   * 세션의 몸이 답한다(selector.fastMode); 이 자리는 다음 세션의 선택이다.
+   */
+  fastMode: boolean;
+  /**
    * Model/effort pins for providers other than `provider`. Switching the
    * 프로바이더 picker swaps the top-level fields with this map's entry, so a
    * Codex id never reaches a Claude session or vice versa.
    */
-  byProvider?: Record<string, { model: string | null; effort: EffortLevel | null }>;
+  byProvider?: Record<string, { model: string | null; effort: EffortLevel | null; fast?: boolean }>;
   /**
    * 새 대화의 프로바이더 목록에서 숨긴 프로바이더. 설치 여부(`available`)와
    * 별개의 사용자 선택이다 — 끈 프로바이더는 컴포저의 칩에도 나오지 않고,
@@ -155,21 +161,24 @@ export interface ChatSettings {
 export function withChatPick(
   chat: ChatSettings,
   provider: string,
-  pick: { model?: string | null; effort?: EffortLevel | null },
+  pick: { model?: string | null; effort?: EffortLevel | null; fast?: boolean },
 ): Partial<ChatSettings> {
   if (provider === chat.provider) {
     return {
       ...(pick.model !== undefined ? { model: pick.model } : {}),
       ...(pick.effort !== undefined ? { effort: pick.effort } : {}),
+      ...(pick.fast !== undefined ? { fastMode: pick.fast } : {}),
     };
   }
   const current = chat.byProvider?.[provider] ?? { model: null, effort: null };
+  const fast = pick.fast !== undefined ? pick.fast : (current.fast ?? false);
   const next = {
     model: pick.model !== undefined ? pick.model : current.model,
     effort: pick.effort !== undefined ? pick.effort : current.effort,
+    ...(fast ? { fast: true } : {}),
   };
   const byProvider = { ...(chat.byProvider ?? {}) };
-  if (next.model || next.effort) byProvider[provider] = next;
+  if (next.model || next.effort || next.fast) byProvider[provider] = next;
   else delete byProvider[provider];
   return { byProvider };
 }
@@ -182,15 +191,20 @@ export function withChatPick(
  */
 export function switchProviderPatch(chat: ChatSettings, next: string): Partial<ChatSettings> {
   const byProvider = { ...(chat.byProvider ?? {}) };
-  if (chat.model || chat.effort)
-    byProvider[chat.provider] = { model: chat.model, effort: chat.effort };
+  if (chat.model || chat.effort || chat.fastMode)
+    byProvider[chat.provider] = {
+      model: chat.model,
+      effort: chat.effort,
+      ...(chat.fastMode ? { fast: true } : {}),
+    };
   else delete byProvider[chat.provider];
-  const incoming = byProvider[next] ?? { model: null, effort: null };
+  const incoming = byProvider[next] ?? { model: null, effort: null, fast: false };
   delete byProvider[next];
   return {
     provider: next,
     model: incoming.model,
     effort: incoming.effort,
+    fastMode: incoming.fast === true,
     byProvider,
   };
 }
@@ -222,6 +236,7 @@ const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   provider: "claude",
   model: null,
   effort: null,
+  fastMode: false,
   disabledProviders: [],
   showTools: false,
   showThinking: false,
@@ -384,6 +399,8 @@ function loadChat(raw: unknown): ChatSettings {
     effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
       ? (stored.effort as EffortLevel)
       : (legacy.effort ?? null),
+    // ⚡ 선택 — 없던 시절의 블롭은 꺼진 것이다.
+    fastMode: stored.fastMode === true,
     ...(byProvider ? { byProvider } : {}),
     // 손으로 고친 기록의 쓰레기 값(문자열 아닌 항목, 중복)은 목록에 들어오지
     // 못한다 — 이 필드는 '숨김'이므로 오염된 값은 프로바이더를 조용히 지운다.
@@ -404,9 +421,12 @@ function loadChat(raw: unknown): ChatSettings {
  */
 function loadByProvider(
   raw: unknown,
-): Record<string, { model: string | null; effort: EffortLevel | null }> | undefined {
+):
+  | Record<string, { model: string | null; effort: EffortLevel | null; fast?: boolean }>
+  | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const out: Record<string, { model: string | null; effort: EffortLevel | null }> = {};
+  const out: Record<string, { model: string | null; effort: EffortLevel | null; fast?: boolean }> =
+    {};
   for (const [provider, entry] of Object.entries(raw as Record<string, unknown>)) {
     if (!entry || typeof entry !== "object") continue;
     const row = entry as Record<string, unknown>;
@@ -414,7 +434,8 @@ function loadByProvider(
     const effort = EFFORT_LEVELS.includes(row.effort as EffortLevel)
       ? (row.effort as EffortLevel)
       : null;
-    if (model || effort) out[provider] = { model, effort };
+    const fast = row.fast === true;
+    if (model || effort || fast) out[provider] = { model, effort, ...(fast ? { fast: true } : {}) };
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

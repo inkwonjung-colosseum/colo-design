@@ -99,6 +99,15 @@ export interface Sessions {
   /** The /command palette rows of the active thread. */
   commands: SessionCommand[];
   setModel: (model: string | null) => Promise<void>;
+  /**
+   * 빠르게 칩 — 같은 모델을 더 빠른 응답으로 돌린다. 살아 있는 대화 id 를
+   * 돌려준다(데몬이 다시 일으킨 몸의 id 와 같을 수 있다): 누른 뒤 선택자를
+   * 다시 읽는 쪽이 그 id 로 묻는다. 되살리지 못한 대화면 null — 칩은
+   * 제자리로 돌아간다.
+   */
+  setFastMode: (on: boolean) => Promise<string | null>;
+  /** 새 대화 빈 자리의 ⚡ 선택 — 다음 세션이 켜진 채로 태어난다. */
+  setFastPick: (on: boolean) => void;
   setEffort: (effort: EffortLevel | null) => Promise<void>;
   /**
    * 새 대화가 어느 프로바이더로 돌지 골라 둔다 — 설정의 프로바이더 목록과 같은
@@ -273,6 +282,10 @@ export function useSessions(
   const [historyFailed, setHistoryFailed] = useState(false);
 
   const active = activeId ? (sessions[activeId] ?? EMPTY_SESSION) : null;
+  // 버튼의 비동기 콜백(칩 부탁)이 읽는 지금의 activeId — 클릭과 답 사이에
+  // 대화가 바뀌었는지 아는 유일한 길이다.
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
   const running = active?.state === "running";
   /**
    * 데몬이 아직 말하기 전의 대기 — 보내기 수락(running 방송)을 기다리는 낙관
@@ -367,6 +380,9 @@ export function useSessions(
         ...(resume ? { resume } : {}),
         ...(!resume && picked.model ? { model: picked.model } : {}),
         ...(!resume && picked.effort ? { effort: picked.effort } : {}),
+        // 새 대화 자리에서 미리 켠 ⚡ — 태어난 대화의 빠르게가 아니라 다음
+        // 세션의 선택이다. 이어 든 대화는 태어날 때의 상태를 가진다.
+        ...(!resume && picked.fastMode ? { fastMode: true } : {}),
         ...(title ? { title } : {}),
       });
       ensureSession(sessionId);
@@ -732,6 +748,23 @@ export function useSessions(
     return id;
   };
 
+  /**
+   * 칩의 버튼이 말할 대화의 산 몸 — 죽은 대화(데몬 재시작이 거둔 몸 · 크래시가
+   * 남긴 error)는 보내기와 같은 길로 되살린다. 되살리지 못하면 null 이라
+   * 칩의 부탁은 죽은 몸에 닿지 않는다(실사 결함 2026-09-28: 데몬 재시작 뒤
+   * ⚡·모델 칩이 닫힌 세션 id 를 두드려 눌러도 무응답이었다).
+   */
+  const liveTarget = async (): Promise<string | null> => {
+    const id = activeId;
+    if (!id) return null;
+    const view = sessions[id];
+    if (view?.live && view.state !== "error") return id;
+    const revived = await startSession(id).catch(() => null);
+    // 되살리는 사이에 다른 대화로 옮겼으면 그 칩의 부탁은 옛 대화에 낸 것이다 —
+    // 새로 연 대화의 몸으로는 답을 읽지 않는다.
+    return revived === null || activeIdRef.current !== id ? null : revived;
+  };
+
   const dropped = active?.dropped ?? [];
   const queue = active?.queue ?? [];
 
@@ -932,7 +965,9 @@ export function useSessions(
     setSelector((current) => (current ? { ...current, model } : current));
     if (!activeId) return;
     try {
-      await api.setModel(activeId, model);
+      const target = await liveTarget();
+      if (target === null) return;
+      await api.setModel(target, model);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSelector((current) => (current ? { ...current, model: prev } : current));
@@ -945,11 +980,34 @@ export function useSessions(
     setSelector((current) => (current ? { ...current, effort } : current));
     if (!activeId) return;
     try {
-      await api.setEffort(activeId, effort);
+      const target = await liveTarget();
+      if (target === null) return;
+      await api.setEffort(target, effort);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSelector((current) => (current ? { ...current, effort: prev } : current));
     }
+  };
+
+  /**
+   * ⚡ 칩 — 컴포저의 토글 버튼이 부른다. 되살린 대화의 몸은 새 id 일 수 있으므로
+   * 선택자를 다시 읽을 대상 id 를 돌려준다(버튼이 그 답으로 선다 — 요금제가
+   * 막으면 제자리).
+   */
+  const switchFast = async (on: boolean): Promise<string | null> => {
+    const target = await liveTarget();
+    if (target === null) return null;
+    await api.setFastMode(target, on);
+    return target;
+  };
+
+  /**
+   * 아직 태어나지 않은 대화의 ⚡ — 새 대화 빈 자리의 칩이 부른다. 세션 몸이
+   * 없으므로 다음 세션의 선택(chat pick)으로 남는다. startSession 이 그 선택을
+   * 실어 다음 세션을 켜진 채로 태어나게 한다.
+   */
+  const setFastPick = (on: boolean) => {
+    onChatChange(withChatPick(chat, chat.provider, { fast: on }));
   };
 
   /**
@@ -1068,8 +1126,9 @@ export function useSessions(
       provider: chat.provider,
       model: chat.model,
       effort: chat.effort,
-      // 빠르게는 세션이 태어날 때 꺼진 채 시작한다.
-      fastMode: false,
+      // 빠르게 — 아직 태어나지 않은 대화의 자리에서는 다음 세션의 ⚡ 선택이
+      // 이 값이 된다(태어난 대화는 데몬의 답이 이 견적을 덮는다).
+      fastMode: chat.fastMode === true,
       fastModeBlocked: null,
       // Local cache first (it matches what this planner last saw), then the
       // daemon's own copy so a fresh browser still gets a real picker —
@@ -1080,6 +1139,8 @@ export function useSessions(
     commands,
     setModel: switchModel,
     setEffort: switchEffort,
+    setFastMode: switchFast,
+    setFastPick,
     pickProvider,
     chatProvider: chat.provider,
     remove,

@@ -14,8 +14,25 @@
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 8px;
   padding: 0 10px 0 18px;
+}
+/* 브랜드 — 사이드바의 유일한 색이 든 자리. colonova 마크가 이름 앞에 선다. */
+.nx-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.nx-brand img {
+  flex: none;
+  filter: drop-shadow(0 2px 6px var(--accent-glow));
 }
 
 .nx-side-nav {

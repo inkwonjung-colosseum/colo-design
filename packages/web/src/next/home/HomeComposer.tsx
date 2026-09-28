@@ -65,7 +65,8 @@ export function HomeComposer({
         <ChevronDownIcon />
       </button>
       {pickOpen && (
-        <Popover anchor={chip} onClose={() => setPickOpen(false)} up>
+        /* 모델 칩과 같은 줄 — 홈에서는 아래로 열어 팝이 창 위로 나가지 않게. */
+        <Popover anchor={chip} onClose={() => setPickOpen(false)}>
           <div className="nx-mh">{L.home.whichService}</div>
           {projects.map((project) => (
             <button

@@ -9,6 +9,7 @@ import {
   EFFORT_OF,
   effortWord,
   failureCards,
+  fastToast,
   handoffOpen,
   noteAllowed,
   noticeKind,
@@ -21,13 +22,20 @@ import {
   usageReading,
 } from "../src/next/lib/thread.ts";
 
-test("effortWord: 세 칸과 CLI 의 단계", () => {
+test("effortWord: 다섯 칸과 CLI 의 단계 — 하나씩 대응", () => {
   assert.equal(effortWord(null), "normal");
   assert.equal(effortWord("low"), "short");
   assert.equal(effortWord("medium"), "normal");
   assert.equal(effortWord("high"), "long");
-  assert.equal(effortWord("max"), "long");
-  assert.deepEqual(EFFORT_OF, { short: "low", normal: "medium", long: "high" });
+  assert.equal(effortWord("xhigh"), "longer");
+  assert.equal(effortWord("max"), "max");
+  assert.deepEqual(EFFORT_OF, {
+    short: "low",
+    normal: "medium",
+    long: "high",
+    longer: "xhigh",
+    max: "max",
+  });
 });
 
 const plan = (five: number | null, week: number | null, models: number[] = []): PlanUsage => ({
@@ -117,11 +125,22 @@ test("splitDuration · sizeText", () => {
   assert.equal(sizeText(2.4 * 1024 * 1024), "2.4MB");
 });
 
-test("chipLabel: 칩은 프로바이더와 생각 시간만(W6) — 모델 이름은 팝오버 안", () => {
+test("chipLabel: 칩은 모델과 생각 시간을 말한다(W6) — 목록이 오지 않았을 때만 프로바이더", () => {
+  assert.equal(chipLabel("Opus 5.5", "보통"), "Opus 5.5 · 보통");
+  assert.equal(chipLabel("GPT-5.2", "짧게"), "GPT-5.2 · 짧게");
+  // 생각 시간을 고르지 않았으면 모델만.
+  assert.equal(chipLabel("Opus 5.5", null), "Opus 5.5");
+  // 모델 목록이 아직 오지 않았을 때의 프로바이더 폴백.
   assert.equal(chipLabel("Claude", "보통"), "Claude · 보통");
-  assert.equal(chipLabel("Codex", "짧게"), "Codex · 짧게");
-  // 생각 시간을 고르지 않았으면 프로바이더만.
-  assert.equal(chipLabel("Claude", null), "Claude");
+});
+
+test("fastToast: 받아들여지면 켬·끔 인사, 거절되면 이유, 이유가 없으면 못했어요", () => {
+  const say = { on: "켜졌어요", off: "꺼졌어요", fail: "못했어요" };
+  assert.equal(fastToast(true, true, null, say), "켜졌어요");
+  assert.equal(fastToast(false, false, null, say), "꺼졌어요");
+  // 데몬이 대신 말하는 이유(요금제 · 쿨다운)는 그대로 옮겨진다.
+  assert.equal(fastToast(true, false, "요금제가 빠르게를 막아요", say), "요금제가 빠르게를 막아요");
+  assert.equal(fastToast(false, true, null, say), "못했어요");
 });
 
 test("rawErrorLine: 원문 → 문장 매핑(W3) — 한국어 고지 · 영문 원문 · 한도", () => {

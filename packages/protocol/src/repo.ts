@@ -216,6 +216,11 @@ export interface RepoStatus {
      * 싣는다. 웹은 아직 읽지 않는다.
      */
     nextAttemptAt?: string;
+    /**
+     * 막힘에 들어선 순간 (PLAN-UI U13) — blocked 일 때만 싣는다. `개발자에게
+     * 알렸어요` 줄의 닫기가 같은 문제를 알아채는 신원이다.
+     */
+    since?: string;
     log: Array<{ at: string; text: string }>;
   };
 }
