@@ -48,10 +48,49 @@ export interface PlanTrackerDeps {
   onChanged: () => void;
   /**
    * Session-less model catalogs a driver can answer without a thread —
-   * `omp models --json`. Each is read once per run; the
-   * disk cache covers the rest.
+   * `omp models --json`, Claude's probe. A failed or empty read is asked
+   * again after the gate's retry window, not on every status broadcast.
    */
   catalogSources: Array<{ provider: string; read: () => Promise<SessionModelInfo[]> }>;
+}
+
+/**
+ * Whether a session-less catalog read may start now — the pure timekeeper
+ * behind `PlanTracker.refreshModels`, whose constructor reads and writes
+ * `~/.colo-design/config`, so the tests measure this instead. The rules it
+ * keeps for every provider: a read already running is not doubled; one that
+ * answered with rows is never asked again this run (the cache owns the rest);
+ * one that failed or came back empty waits out `retryMs` — a machine without
+ * a logged-in CLI must not boot one on every status broadcast; the first ask
+ * is always allowed.
+ */
+export class CatalogGate {
+  private readonly entries: Record<string, { reading: boolean; ok: boolean; failedAt: number }> =
+    {};
+
+  constructor(private readonly retryMs = 5 * 60_000) {}
+
+  shouldRead(provider: string, now: number): boolean {
+    const entry = this.entries[provider];
+    if (!entry) return true;
+    if (entry.reading) return false;
+    if (entry.ok) return false;
+    return now >= entry.failedAt + this.retryMs;
+  }
+
+  started(provider: string): void {
+    const entry = this.entries[provider] ?? { reading: false, ok: false, failedAt: 0 };
+    entry.reading = true;
+    this.entries[provider] = entry;
+  }
+
+  settled(provider: string, ok: boolean, now: number): void {
+    const entry = this.entries[provider] ?? { reading: false, ok: false, failedAt: 0 };
+    entry.reading = false;
+    entry.ok = ok;
+    if (!ok) entry.failedAt = now;
+    this.entries[provider] = entry;
+  }
 }
 
 /**
@@ -78,8 +117,8 @@ export class PlanTracker {
   private readonly planReadingOwed = new Set<string>(["claude"]);
   /** Each provider's model rows, cached so the picker works before any thread. */
   private modelRows: Record<string, SessionModelInfo[]>;
-  /** Providers whose session-less catalog this run already asked for. */
-  private readonly catalogRead = new Set<string>();
+  /** Per-provider session-less catalog reads, gated by `CatalogGate`. */
+  private readonly catalogGate = new CatalogGate();
 
   constructor(private readonly deps: PlanTrackerDeps) {
     this.planUsage = this.loadPlanUsage();
@@ -94,20 +133,29 @@ export class PlanTracker {
 
   /**
    * The picker's rows before any thread: drivers that can answer without a
-   * session are read once per run — the same "one fresh reading" rule the
-   * plan limits follow — and land in the same cache a live session feeds.
-   * A provider the disk cache already holds is still read: that cache is
-   * only as complete as the build that wrote it. Failures stay silent and
+   * session are asked the same "one fresh reading" rule the plan limits
+   * follow, and land in the same cache a live session feeds. A provider the
+   * disk cache already holds is still read: that cache is only as complete
+   * as the build that wrote it. `refreshModels` runs on every status
+   * broadcast, so the gate decides who is asked — an in-flight read is not
+   * doubled, a read that returned rows is never repeated this run, and a
+   * failed or empty one waits out the gate's retry window before the next
+   * ask (an empty answer is a failure: a daemon woken before its CLI was
+   * logged in must ask again once the login lands). Failures stay silent and
    * the cache keeps serving whatever it still has.
    */
   refreshModels(): void {
     for (const source of this.deps.catalogSources) {
-      if (this.catalogRead.has(source.provider)) continue;
-      this.catalogRead.add(source.provider);
+      if (!this.catalogGate.shouldRead(source.provider, Date.now())) continue;
+      this.catalogGate.started(source.provider);
       void source
         .read()
-        .then((rows) => this.rememberModels(source.provider, rows))
-        .catch(() => undefined);
+        .then((rows) => {
+          const ok = rows.length > 0;
+          if (ok) this.rememberModels(source.provider, rows);
+          this.catalogGate.settled(source.provider, ok, Date.now());
+        })
+        .catch(() => this.catalogGate.settled(source.provider, false, Date.now()));
     }
   }
 
