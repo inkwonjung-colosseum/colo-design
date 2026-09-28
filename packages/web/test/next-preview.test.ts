@@ -3,9 +3,11 @@ import { test } from "node:test";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import {
   bubblePlacement,
+  bubbleRect,
   elapsedParts,
   prepProgress,
   prepStep,
+  zoomButtons,
 } from "../src/next/lib/preview-geometry.ts";
 
 const BOX = { width: 800, height: 600 };
@@ -102,4 +104,25 @@ test("흐른 시간 — 분과 초", () => {
   assert.deepEqual(elapsedParts(12_400), { minutes: 0, seconds: 12 });
   assert.deepEqual(elapsedParts(65_000), { minutes: 1, seconds: 5 });
   assert.deepEqual(elapsedParts(-1), { minutes: 0, seconds: 0 });
+});
+
+test("말풍선 상자 — 영역 핀은 화면 좌표(rectView), 없으면 rect 그대로", () => {
+  const page = { x: 120, y: 900, width: 100, height: 60 };
+  const view = { x: 120, y: 140, width: 100, height: 60 };
+  assert.deepEqual(bubbleRect({ rect: page, rectView: view }), view);
+  assert.deepEqual(bubbleRect({ rect: page }), page);
+  // 요소 핀은 rectView 를 싣지 않으므로 언제나 rect 가 말한다.
+  const el = { x: 10, y: 20, width: 30, height: 40 };
+  assert.deepEqual(bubbleRect({ rect: el }), el);
+});
+
+test("줌 막대 — 100% 는 배율이 1 일 때만 켜지고, 한계에서 바깥 단추는 멈춘다", () => {
+  assert.deepEqual(zoomButtons(1), { out: false, in: false, reset: true });
+  assert.deepEqual(zoomButtons(1.25), { out: false, in: false, reset: false });
+  assert.deepEqual(zoomButtons(0.5), { out: true, in: false, reset: false });
+  assert.deepEqual(zoomButtons(2), { out: false, in: true, reset: false });
+  // 경계 바로 안쪽은 살아 있어야 한다 — 이르면 줌이 한 칸 일찍 잠긴다.
+  assert.deepEqual(zoomButtons(0.51), { out: false, in: false, reset: false });
+  // 이상한 값은 1로 읽는다(main 이 보내기 전의 빈 상태).
+  assert.deepEqual(zoomButtons(Number.NaN), { out: false, in: false, reset: true });
 });

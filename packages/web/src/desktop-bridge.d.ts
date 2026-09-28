@@ -96,7 +96,11 @@ declare global {
         stop?: () => Promise<unknown>;
         /** 배율. */
         zoom?: (kind: "in" | "out" | "reset") => Promise<unknown>;
-        commentsMode?: (on: boolean) => Promise<unknown>;
+        /** 찍기 모드와 오버레이가 입는 말·색(모드 선로). */
+        commentsMode?: (
+          on: boolean,
+          skin?: { accent?: string; words?: Record<string, string> },
+        ) => Promise<unknown>;
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
         /** 핀 동기화: the web's whole pin list — the overlay's badges are its projection. */
         pins?: (sync: ColoDesignPinsSync) => Promise<unknown>;

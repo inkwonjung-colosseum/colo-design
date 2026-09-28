@@ -45,39 +45,50 @@ export function PrepareCard({
   const step = prepStep(phase) ?? 0;
   const names = [L.prepare.stepDownload, L.prepare.stepInstall, L.prepare.stepPreview];
   return (
-    <div className="nx-prep-card" role="status">
-      <i className="nx-spin nx-spin--lg" aria-hidden="true" />
-      <h3>{first ? L.prepare.title : L.preview.prepAgainTitle}</h3>
-      <p>{first ? L.prepare.body : L.preview.prepAgainBody}</p>
-      <ul className="nx-prep-steps">
-        {names.map((name, index) => {
-          const state = index < step ? "ok" : index === step ? "run" : "wait";
-          return (
-            <li key={name} className={`nx-prep-step nx-prep-step--${state}`}>
-              {state === "ok" ? (
-                <span className="nx-sic nx-sic--ok">
-                  <SmallCheckIcon />
-                </span>
-              ) : state === "run" ? (
-                <span className="nx-sic nx-sic--run">
-                  <i className="nx-spin" aria-hidden="true" />
-                </span>
-              ) : (
-                <span className="nx-sic nx-sic--wait" />
-              )}
-              {name}
-              {state === "run" && (
-                <em>
-                  {index === 1
-                    ? L.preview.stepEta(L.prepare.aboutTwoMinutes, elapsedText(elapsed))
-                    : elapsedText(elapsed)}
-                </em>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-      <div className="nx-prep-bar">
+    <div className="nx-prep-card">
+      {/* 소리내는 자리는 제목과 걸음 이름뿐 — 카드 전체가 live region 이면
+          경과 글자가 매초 바뀌며 화면 낭독기를 쉬지 않게 한다. */}
+      <div role="status">
+        <i className="nx-spin nx-spin--lg" aria-hidden="true" />
+        <h3>{first ? L.prepare.title : L.preview.prepAgainTitle}</h3>
+        <p>{first ? L.prepare.body : L.preview.prepAgainBody}</p>
+        <ul className="nx-prep-steps">
+          {names.map((name, index) => {
+            const state = index < step ? "ok" : index === step ? "run" : "wait";
+            return (
+              <li key={name} className={`nx-prep-step nx-prep-step--${state}`}>
+                {state === "ok" ? (
+                  <span className="nx-sic nx-sic--ok">
+                    <SmallCheckIcon />
+                  </span>
+                ) : state === "run" ? (
+                  <span className="nx-sic nx-sic--run">
+                    <i className="nx-spin" aria-hidden="true" />
+                  </span>
+                ) : (
+                  <span className="nx-sic nx-sic--wait" />
+                )}
+                {name}
+                {state === "run" && (
+                  <em aria-hidden="true">
+                    {index === 1
+                      ? L.preview.stepEta(L.prepare.aboutTwoMinutes, elapsedText(elapsed))
+                      : elapsedText(elapsed)}
+                  </em>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <div
+        className="nx-prep-bar"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={prepProgress(phase, elapsed)}
+        aria-valuetext={names[step]}
+      >
         <i style={{ width: `${prepProgress(phase, elapsed)}%` }} />
       </div>
       <p className="nx-prep-hint">{L.prepare.hint}</p>

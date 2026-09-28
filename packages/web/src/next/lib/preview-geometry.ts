@@ -49,6 +49,31 @@ export function bubblePlacement(input: {
   return { left: Math.round(left), top: Math.round(top), up };
 }
 
+/**
+ * 말풍선이 볼 핀의 상자 — 요소 핀의 `rect` 는 찍은 순간의 화면 좌표지만,
+ * 영역 핀의 `rect` 는 스크롤이 남아 있는 페이지 좌표(재설계 C9)라 찍은
+ * 순간의 화면 좌표(`rectView`)를 함께 싣는다. 없는 봉투(옛 클라이언트)는
+ * `rect` 로 돌아간다.
+ */
+export function bubbleRect(element: { rect: Rect; rectView?: Rect }): Rect {
+  return element.rectView ?? element.rect;
+}
+
+/** 줌의 한계 — main 이 배율을 조이는 값(preview-view.ts 의 setZoom)과 같다. */
+export const ZOOM_MIN = 0.5;
+export const ZOOM_MAX = 2;
+
+/** 줌 막대의 진실 — 100% 칸은 배율이 1 일 때만 켜지고, 한계에서는 바깥
+ *  단추(− · +)가 더 갈 데가 없어 꺼진다. */
+export function zoomButtons(zoom: number): { out: boolean; in: boolean; reset: boolean } {
+  const value = Number.isFinite(zoom) ? zoom : 1;
+  return {
+    out: value <= ZOOM_MIN + 1e-9,
+    in: value >= ZOOM_MAX - 1e-9,
+    reset: Math.abs(value - 1) < 1e-9,
+  };
+}
+
 /** 준비의 세 걸음 — `내려받기 · 설치하기 · 미리보기 켜기`. 준비가 아니면 null. */
 export function prepStep(phase: string): 0 | 1 | 2 | null {
   switch (phase) {

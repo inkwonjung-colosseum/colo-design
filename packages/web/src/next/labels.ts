@@ -430,6 +430,7 @@ export const L = {
     elapsedSec: (s: number) => `${s}초`,
     elapsedMin: (m: number, s: number) => `${m}분 ${s}초`,
     stepEta: (eta: string, elapsed: string) => `${eta} · ${elapsed}`,
+    addrNoScreens: "아직 화면이 없어요",
     /** 아래는 AI 가 읽는 기계의 말 — 화면에는 서지 않는다. */
     stalledReport: "미리보기 화면이 새로 고친 뒤에도 30초 넘게 뜨지 않았어요.",
     lookAsk: "이 화면이 이렇게 보여요. 무엇이 잘못됐는지 보고 고쳐 주세요.",
@@ -450,6 +451,17 @@ export const L = {
     lockedPreparing: "준비가 끝나면 화면을 찍을 수 있어요",
     area: "영역",
     bubble: "핀 메모",
+    /** 아래는 게스트 안 오버레이가 입는 말 — 선로(colo-overlay:mode)로 건너간다. */
+    unnamed: "이름 없음",
+    hint: "클릭은 요소, 끌면 영역을 가리켜요. 여러 개 찍고 한 번에 말하세요.",
+    badgeWord: "핀",
+    badgeSentMark: "(보냄)",
+    badgeDoneMark: "(고침)",
+    kindButton: "버튼",
+    kindLink: "링크",
+    kindImage: "그림",
+    kindInput: "입력칸",
+    kindOther: "화면 부분",
   },
   history: {
     title: "작업 기록",

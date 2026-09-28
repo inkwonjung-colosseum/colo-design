@@ -27,6 +27,17 @@ import type { PreviewLocation, PreviewTarget } from "./types";
  * zoom, and the key replay (the guest holds focus while the planner's own
  * chords must still fire).
  */
+
+/**
+ * 오버레이가 게스트 안에서 입는 말과 색 — 문장의 주인은 웹의 labels 이고
+ * 데스크톱 preload 는 그 파일을 읽지 못하므로, 이 값이 선로
+ * (`colo-overlay:mode`)를 타고 게스트로 간다.
+ */
+export interface PreviewOverlaySkin {
+  accent?: string;
+  words?: Record<string, string>;
+}
+
 export function PreviewFrame({
   url,
   epoch,
@@ -34,6 +45,7 @@ export function PreviewFrame({
   reloadKey,
   width,
   commentsOn,
+  overlaySkin,
   onLocation,
   sync,
   onPin,
@@ -54,6 +66,8 @@ export function PreviewFrame({
   reloadKey: number;
   width: "mobile" | "tablet" | "desktop";
   commentsOn: boolean;
+  /** 오버레이가 입는 말과 색 — 모드 선로를 타고 게스트로 간다. */
+  overlaySkin: PreviewOverlaySkin;
   onLocation: (location: PreviewLocation | null) => void;
   /**
    * The badge projection — the web's ghosts-then-pins list as
@@ -160,8 +174,8 @@ export function PreviewFrame({
   }, [reloadKey]);
 
   useEffect(() => {
-    void window.coloDesignDesktop?.preview?.commentsMode?.(commentsOn);
-  }, [commentsOn]);
+    void window.coloDesignDesktop?.preview?.commentsMode?.(commentsOn, overlaySkin);
+  }, [commentsOn, overlaySkin]);
 
   // 폭 is emulation on the guest, not CSS names — the element narrows with
   // the stage's own width, the guest believes it is the device.
@@ -220,9 +234,15 @@ export function PreviewFrame({
       bridge.onClose?.(() => setLooseSrc(null)),
       // The guest holds the keys while focused — replayed here so the
       // window's own listeners (⌘K, ⌘,) fire as if the planner never left.
+      // Esc rides the same boat: the column's close paths (pin mode off, the
+      // frozen view closed) must answer while the pointer is in the page. The replay
+      // is dispatched on the DOCUMENT so both listener kinds hear it — a
+      // window dispatch never reaches document-level ears (a popover's Esc).
+      // The old code dropped Esc for fear of a loop; the fear was unfounded:
+      // a synthetic event ends inside this renderer's DOM, and the guest (a
+      // separate process) never sees it again, so nothing replays twice.
       bridge.onKey?.((payload) => {
-        if (payload.key === "Escape") return;
-        window.dispatchEvent(
+        document.dispatchEvent(
           new KeyboardEvent("keydown", {
             key: payload.key,
             metaKey: payload.meta,
