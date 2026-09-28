@@ -30,6 +30,24 @@ export interface Problem {
   dismissId: string | null;
 }
 
+/** 문제 문장 줄의 몸통 — ProblemLine 의 감싸개가 기억한다(문제 한 줄 또는 초대 파일 줄). */
+export type ProblemLineBody =
+  | { kind: "problem"; problem: Problem }
+  | { kind: "invite"; path: string };
+
+/**
+ * 줄의 신원 — 같은 줄이면 같은 문자열, 다른 줄이면 다른 문자열. 감싸개의
+ * 효과는 이 신원에만 기대므로, 같은 문제가 계속 서 있는 동안(몸통 객체는
+ * 렌더마다 새로 지어져도) 효과가 다시 돌지 않는다.
+ */
+export function problemLineId(line: ProblemLineBody | null): string | null {
+  if (line === null) return null;
+  if (line.kind === "problem") {
+    return `problem:${line.problem.kind}:${line.problem.title}:${line.problem.dismissId}`;
+  }
+  return `invite:${line.path}`;
+}
+
 type RepoLike = Pick<RepoStatus, "phase" | "previewUrl"> &
   Partial<Pick<RepoStatus, "attention" | "submit">>;
 

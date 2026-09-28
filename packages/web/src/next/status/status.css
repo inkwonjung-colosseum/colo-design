@@ -44,25 +44,88 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
+/* 만드는 중 조각 — 나타나고 사라질 때 폭이 grid 줄(1fr ↔ 0fr)로 부드럽게
+   접힌다. 안쪽(.nx-making-in)이 잰 폭의 몸통이다. */
 .nx-making {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 1fr;
   color: var(--accent);
   font-weight: 600;
   margin-right: 10px;
   padding-right: 10px;
   border-right: 1px solid var(--line);
+  transition:
+    grid-template-columns 0.3s ease,
+    margin 0.3s ease,
+    padding 0.3s ease,
+    border-color 0.3s ease,
+    opacity 0.2s ease;
+}
+
+.nx-making--off {
+  grid-template-columns: 0fr;
+  margin-right: 0;
+  padding-right: 0;
+  border-right-color: transparent;
+  opacity: 0;
+}
+
+.nx-making-in {
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 답이 끝난 뒤의 체크 — 600ms 동안 돌던 자리에 산다. */
+.nx-making-check {
+  display: inline-flex;
+  color: var(--green);
+}
+
+/* 단계 말의 교체 — 나가는 말은 위로, 들어오는 말은 아래에서 온다. */
+.nx-roll {
+  display: grid;
+}
+
+.nx-roll-word {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+
+.nx-roll-in {
+  animation: nx-word-in 0.2s ease-out;
+}
+
+.nx-roll-out {
+  animation: nx-word-out 0.2s ease-out both;
+}
+
+@keyframes nx-word-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.6em);
+  }
+}
+
+@keyframes nx-word-out {
+  to {
+    opacity: 0;
+    transform: translateY(-0.6em);
+  }
 }
 
 .nx-since {
   font-variant-numeric: tabular-nums;
 }
 
+/* 60초 안내는 페이드로 붙는다. */
 .nx-since-hint {
   margin-left: 6px;
   font-weight: 400;
   color: var(--ink3);
+  animation: nx-fade 0.25s ease-out;
 }
 
 .nx-jwrap {
@@ -83,6 +146,12 @@
   border: 1.5px solid var(--line2);
   background: var(--card);
   flex: none;
+  /* 국면이 바뀌어도 점은 버려지지 않는다(줄의 key 가 번호다) — 색이 옷을
+     갈아입듯 이어진다. */
+  transition:
+    background 0.3s ease,
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
 }
 
 .nx-jstep--done {
@@ -99,12 +168,29 @@
   font-weight: 600;
 }
 
+/* 점 사이의 막대 — 트랙과 채움을 나눠, 앞 점이 지나가면 왼쪽부터 찬다. */
 .nx-jbar {
   width: 16px;
   height: 1.5px;
   background: var(--line2);
   margin: 0 7px;
   flex: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.nx-jbar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--ink3);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.4s ease;
+}
+
+.nx-jbar--full::after {
+  transform: scaleX(1);
 }
 
 .nx--narrow .nx-jbar {
@@ -112,25 +198,68 @@
   margin: 0 5px;
 }
 
+/* 지금 점이 한 번 맥동하는 고리 — 색은 국면의 것(--jdot)을 따른다. */
+.nx-jstep--pulse i {
+  animation: nx-jpulse 0.55s ease-out;
+}
+
+/* 성공 이야기에 잠깐 켜지는 둘째 점 — 다음 국면(개발자 확인)의 색으로. */
+.nx-jstep--lit i {
+  --jdot: var(--amber);
+  background: var(--amber);
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+/* 새 글자 — 아래에서 짧게 떠오른다. */
+.nx-jl {
+  animation: nx-jl-in 0.18s ease-out;
+}
+
+@keyframes nx-jl-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@keyframes nx-jpulse {
+  0% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--jdot, var(--ink3)) 14%, transparent);
+  }
+
+  55% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--jdot, var(--ink3)) 14%, transparent);
+  }
+
+  100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--jdot, var(--ink3)) 14%, transparent);
+  }
+}
+
 .nx-cycle--draft .nx-jstep--cur i {
+  --jdot: var(--blue);
   background: var(--blue);
   border-color: var(--blue);
   box-shadow: 0 0 0 3px var(--blue-soft);
 }
 
 .nx-cycle--review .nx-jstep--cur i {
+  --jdot: var(--amber);
   background: var(--amber);
   border-color: var(--amber);
   box-shadow: 0 0 0 3px var(--amber-soft);
 }
 
 .nx-cycle--merged .nx-jstep--cur i {
+  --jdot: var(--green);
   background: var(--green);
   border-color: var(--green);
   box-shadow: 0 0 0 3px var(--green-soft);
 }
 
 .nx-blocked .nx-jstep--cur i {
+  --jdot: var(--red);
   background: var(--red);
   border-color: var(--red);
   box-shadow: 0 0 0 3px var(--red-soft);
@@ -144,11 +273,70 @@
   color: var(--bg);
   font-weight: 600;
   font-size: 13px;
+  /* 다섯 얼굴을 한 자리에 겹친다 — 폭이 가장 넓은 얼굴에 고정되어 왼쪽의
+     여정이 밀리지 않는다. */
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.nx-submit-face {
+  grid-area: 1 / 1;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  white-space: nowrap;
-  transition: background 0.2s;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.nx-submit-face[aria-hidden="false"] {
+  opacity: 1;
+}
+
+/* 답하는 체크 — 선이 그 길을 그리듯 나타난다. */
+.nx-draw-check path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+}
+
+.nx-submit--sent .nx-draw-check path {
+  animation: nx-draw 0.3s ease-out forwards;
+}
+
+@keyframes nx-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* 실패는 붉어지기 전에 잠깐 흔들린다. */
+.nx .nx-submit--shaking {
+  animation: nx-shake 0.2s ease-in-out;
+}
+
+@keyframes nx-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+
+  20% {
+    transform: translateX(-3px);
+  }
+
+  40% {
+    transform: translateX(3px);
+  }
+
+  60% {
+    transform: translateX(-3px);
+  }
+
+  80% {
+    transform: translateX(3px);
+  }
 }
 
 .nx .nx-submit:hover {
@@ -221,6 +409,7 @@
 }
 
 .nx-wp-step {
+  position: relative;
   font-size: 11.5px;
   color: var(--ink3);
   border-top: 3px solid var(--line);
@@ -228,9 +417,26 @@
   line-height: 1.4;
 }
 
+/* 윗선도 점 사이의 막대와 같은 채움 — 트랙 위에 왼쪽부터 찬다. */
+.nx-wp-step::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--ink3);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.4s ease;
+}
+
 .nx-wp-step--done {
-  border-color: var(--ink3);
   color: var(--ink2);
+}
+
+.nx-wp-step--done::after {
+  transform: scaleX(1);
 }
 
 .nx-wp-step--cur {
@@ -238,16 +444,20 @@
   font-weight: 600;
 }
 
-.nx-cycle--draft .nx-wp-step--cur {
-  border-color: var(--blue);
+.nx-wp-step--cur::after {
+  transform: scaleX(1);
 }
 
-.nx-cycle--review .nx-wp-step--cur {
-  border-color: var(--amber);
+.nx-cycle--draft .nx-wp-step--cur::after {
+  background: var(--blue);
 }
 
-.nx-cycle--merged .nx-wp-step--cur {
-  border-color: var(--green);
+.nx-cycle--review .nx-wp-step--cur::after {
+  background: var(--amber);
+}
+
+.nx-cycle--merged .nx-wp-step--cur::after {
+  background: var(--green);
 }
 
 .nx-wp-sec {

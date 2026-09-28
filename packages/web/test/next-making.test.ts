@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import type { Block } from "../src/lib/daemon-client.ts";
-import { FIRST_TURN_HINT_MS, firstTurn, makingPhase } from "../src/next/lib/making.ts";
+import {
+  FIRST_TURN_HINT_MS,
+  firstTurn,
+  heldPhase,
+  MAKING_CHECK_MS,
+  MAKING_HOLD_MS,
+  makingPhase,
+} from "../src/next/lib/making.ts";
 
 let seq = 0;
 const nextSeq = () => (seq += 1);
@@ -102,4 +109,34 @@ test("firstTurn: 사용자의 말이 정확히 하나일 때만 첫 턴이다", 
 
 test("FIRST_TURN_HINT_MS: 첫 답의 안내는 60초 뒤에 붙는다", () => {
   assert.equal(FIRST_TURN_HINT_MS, 60_000);
+});
+
+test("heldPhase: 첫 말은 곧장 보인다 — 기억이 없으면 시계를 지금으로 시작한다", () => {
+  assert.deepEqual(heldPhase(null, "read", 5_000), { phase: "read", at: 5_000 });
+  assert.deepEqual(heldPhase(null, null, 7_000), { phase: null, at: 7_000 });
+});
+
+test("heldPhase: 입던 말은 최소 유지 시간을 채울 때까지 산다", () => {
+  const shown = { phase: "read" as const, at: 1_000 };
+  assert.deepEqual(heldPhase(shown, "file", 2_000), shown);
+  assert.deepEqual(heldPhase(shown, "file", 1_000 + MAKING_HOLD_MS - 1), shown);
+});
+
+test("heldPhase: 시간이 차면 지금의 단계로 곧장 갈아입는다 — 그 사이는 건너뛴다", () => {
+  const shown = { phase: "read" as const, at: 1_000 };
+  assert.deepEqual(heldPhase(shown, "command", 1_000 + MAKING_HOLD_MS), {
+    phase: "command",
+    at: 1_000 + MAKING_HOLD_MS,
+  });
+  // read → file 로 바뀐 참이지만 이미 command 시대 — file 은 거치지 않는다.
+  assert.deepEqual(heldPhase(shown, "command", 9_999), { phase: "command", at: 9_999 });
+});
+
+test("heldPhase: 같은 말이면 시계를 다시 못 박지 않는다", () => {
+  const shown = { phase: "file" as const, at: 4_000 };
+  assert.deepEqual(heldPhase(shown, "file", 9_000), shown);
+});
+
+test("MAKING_CHECK_MS: 답이 끝난 뒤 체크는 600ms 를 보인다", () => {
+  assert.equal(MAKING_CHECK_MS, 600);
 });

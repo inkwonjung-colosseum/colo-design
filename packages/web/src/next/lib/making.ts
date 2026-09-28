@@ -14,6 +14,32 @@ type ToolBlock = Extract<Block, { type: "tool" }>;
 
 /** 첫 턴의 안개가 걷히는 시간 — 첫 답은 레포를 읽느라 유난히 늦게 온다. */
 export const FIRST_TURN_HINT_MS = 60_000;
+/** 단계 말이 갈아 입기 전에 입던 옷을 입는 최소 시간 — 몇 초 사이의 말 바꿈이
+ * 상태 줄 알약을 흔들지 않게. */
+export const MAKING_HOLD_MS = 1500;
+
+/** 답이 끝난 뒤 체크를 보이는 시간 — 조각이 곧장 사라지지 않게. */
+export const MAKING_CHECK_MS = 600;
+
+/** 단계 말의 종류 — `null` 은 묶음을 모르는 지금의 `만드는 중`. */
+export type MakingPhase = "file" | "command" | "read" | null;
+
+/**
+ * 지금 보여야 할 단계 말 — 보이던 말은 최소 `MAKING_HOLD_MS` 동안 산다. 그보다
+ * 빨리 밑의 단계가 바뀌면 입던 말을 계속 입고, 시간이 차면 지금의 단계로 곧장
+ * 갈아입는다(그 사이의 단계는 건너뛴다). 첫 말은 곧장 보인다.
+ */
+export function heldPhase(
+  shown: { phase: MakingPhase; at: number } | null,
+  next: MakingPhase,
+  now: number,
+  holdMs: number = MAKING_HOLD_MS,
+): { phase: MakingPhase; at: number } {
+  if (shown === null) return { phase: next, at: now };
+  if (shown.phase === next) return shown;
+  if (now - shown.at < holdMs) return shown;
+  return { phase: next, at: now };
+}
 
 /**
  * 지금 도는 도구의 묶음. 마지막 사용자 말 뒤의 도구(하위 에이전트의 것도
@@ -22,7 +48,7 @@ export const FIRST_TURN_HINT_MS = 60_000;
  * 걸음이 무엇이었는지 말하게. 도구가 없거나(생각 중 · 막 보낸 참) 이름을
  * 모르면 null — 상태 줄은 지금의 `만드는 중` 을 쓴다.
  */
-export function makingPhase(blocks: Block[]): "file" | "command" | "read" | null {
+export function makingPhase(blocks: Block[]): MakingPhase {
   let start = 0;
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     if (blocks[index]?.type === "user") {

@@ -21,6 +21,32 @@ function make(Glyph: LucideIcon, size: number, strokeWidth = 1.8) {
 }
 
 export const SentIcon = make(Check, 14, 2.2);
+
+/**
+ * 그려지는 체크 — 제출이 답하는 순간 선이 길을 그리듯 나타난다(status.css 의
+ * `nx-draw`). `pathLength` 를 24 로 못 박아 대시의 셈이 길과 상관없게 한다.
+ */
+export function DrawnCheck() {
+  return (
+    <svg
+      className="nx-i nx-draw-check"
+      viewBox="0 0 14 14"
+      width={14}
+      height={14}
+      aria-hidden="true"
+    >
+      <path
+        d="M2.5 7.5 L5.5 10.5 L11.5 3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        pathLength={24}
+      />
+    </svg>
+  );
+}
 export const FailIcon = make(CircleAlert, 14);
 export const ExtIcon = make(ExternalLink, 12);
 export const ClockIcon = make(Clock, 13);

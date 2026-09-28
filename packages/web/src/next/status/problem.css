@@ -8,11 +8,19 @@
   font-size: 13px;
   border-bottom: 1px solid var(--line);
   animation: nx-fade 0.2s;
+  /* 종류가 바뀔 때 배경이 옷을 갈아입는다 — 같은 줄 안에서 색만 이어진다. */
+  transition: background 0.25s ease;
 }
 
-/* 닫힘 — 한 줄을 그리드 줄째(1fr → 0fr)로 접으며 사라진다. 패딩 · 구분선도 함께
-   0 으로 접어야 끝에 아무것도 남지 않고, 접힘이 끝난 뒤에야 ProblemLine 이 자리를
-   비우므로 0.2s 와 닫기 타이머(240ms)는 함께 움직인다. */
+/* 고침이 저절로 풀린 뒤의 초록 체크 — 접히기 전에 잠깐 선다. */
+.nx-problem-fixed {
+  display: inline-flex;
+  color: var(--green);
+}
+
+/* 닫힘 — 한 줄을 그리드 줄째(1fr → 0fr)로 접으며 사라진다. 감싸개는 자리를
+   지키므로 들어올 때도 같은 길의 반대로 열리고, 사용자가 닫을 때의 240ms
+   타이머가 이 접힘이 끝나기를 기다린다. */
 .nx-problem-wrap {
   display: grid;
   grid-template-rows: 1fr;
@@ -26,7 +34,8 @@
   transition:
     opacity 0.16s ease,
     padding 0.2s ease,
-    border-bottom-width 0.2s ease;
+    border-bottom-width 0.2s ease,
+    visibility 0s;
 }
 
 .nx-problem-wrap--closed {
@@ -37,6 +46,13 @@
   opacity: 0;
   padding-block: 0;
   border-bottom-width: 0;
+  /* 접힌 몸통은 건너뛰지 못하게 한다 — 접힘이 끝나는 길이와 같이 사라진다. */
+  visibility: hidden;
+  transition:
+    opacity 0.16s ease,
+    padding 0.2s ease,
+    border-bottom-width 0.2s ease,
+    visibility 0s 0.2s;
 }
 
 @media (prefers-reduced-motion: reduce) {

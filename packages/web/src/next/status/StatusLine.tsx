@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { L } from "../labels";
-import { FIRST_TURN_HINT_MS } from "../lib/making";
+import {
+  FIRST_TURN_HINT_MS,
+  heldPhase,
+  MAKING_CHECK_MS,
+  MAKING_HOLD_MS,
+  type MakingPhase,
+} from "../lib/making";
 import type { SubmitCopy } from "../lib/submit-copy";
+import {
+  SUBMIT_SHAKE_MS,
+  SUBMIT_STORY_BAR_MS,
+  SUBMIT_STORY_POINT_MS,
+  submitStoryPhase,
+} from "../lib/submit-story";
 import type { StatusLineProps } from "../slots";
 import { MenuIcon, PanelIcon, Spin } from "../ui/icons";
 import { Elapsed } from "./Elapsed";
-import { FailIcon, SentIcon } from "./parts";
+import { DrawnCheck, FailIcon, SentIcon } from "./parts";
 import { SubmitPopover } from "./SubmitPopover";
 import type { WorkLedger } from "./use-work-ledger";
 import { WorkPopover } from "./WorkPopover";
@@ -71,13 +83,47 @@ export function StatusLine({
     return () => clearTimeout(timer);
   }, [why]);
   const { submit } = journey;
-  // 단계 말 — 묶음을 모르거나(생각 중) 도구가 없으면 지금의 `만드는 중`.
-  const makingWord =
-    makingPhase === "read"
+  // 답이 끝나면 조각을 곧장 떼지 않는다 — 600ms 체크를 보인 뒤 접는다.
+  // 타이머는 동작을 줄이는 탭에서도 돈다(움직임만 줄어든다).
+  const [makingState, setMakingState] = useState<"off" | "on" | "check">("off");
+  useEffect(() => {
+    if (journey.making) {
+      setMakingState("on");
+      setWord(null);
+      return;
+    }
+    setMakingState((prev) => (prev === "on" ? "check" : "off"));
+  }, [journey.making]);
+  useEffect(() => {
+    if (makingState !== "check") return;
+    const timer = window.setTimeout(() => setMakingState("off"), MAKING_CHECK_MS);
+    return () => window.clearTimeout(timer);
+  }, [makingState]);
+
+  // 단계 말은 최소 1.5초 산다(making.ts 의 heldPhase) — 몇 초 사이에 묶음이
+  // 바뀌어도 알약이 흔들리지 않게. 시간이 차면 지금의 단계로 곧장 갈아입는다.
+  const [word, setWord] = useState<{ phase: MakingPhase; at: number } | null>(null);
+  useEffect(() => {
+    if (makingState !== "on") return;
+    setWord((prev) => heldPhase(prev, makingPhase, Date.now()));
+  }, [makingPhase, makingState]);
+  useEffect(() => {
+    if (makingState !== "on" || word === null || word.phase === makingPhase) return;
+    const wait = Math.max(0, MAKING_HOLD_MS - (Date.now() - word.at));
+    const timer = window.setTimeout(
+      () => setWord((prev) => heldPhase(prev, makingPhase, Date.now())),
+      wait,
+    );
+    return () => window.clearTimeout(timer);
+  }, [word, makingPhase, makingState]);
+  // 보이는 말 — 갈아입는 사이에는 입던 말을 계속 입는다.
+  const wordPhase = word?.phase ?? makingPhase;
+  const makingText =
+    wordPhase === "read"
       ? L.journey.makingRead
-      : makingPhase === "file"
+      : wordPhase === "file"
         ? L.journey.makingFile
-        : makingPhase === "command"
+        : wordPhase === "command"
           ? L.journey.makingCheck
           : L.journey.making;
 
@@ -118,6 +164,57 @@ export function StatusLine({
       setFlash("done");
     }
   }, [submitCopy.phase, daemon.repo?.handoff]);
+
+  // 제출의 성공 이야기 — 순서는 submit-story.ts 의 판정이 정한다: 그려지는
+  // 체크 → 첫 막대 → 둘째 점. 타이머만 돌리고 모양은 클래스가 입는다.
+  const [story, setStory] = useState<"draw" | "bar" | "point" | null>(null);
+  useEffect(() => {
+    if (flash !== "done") {
+      setStory(null);
+      return;
+    }
+    setStory(submitStoryPhase(0));
+    const atBar = window.setTimeout(
+      () => setStory(submitStoryPhase(SUBMIT_STORY_BAR_MS)),
+      SUBMIT_STORY_BAR_MS,
+    );
+    const atPoint = window.setTimeout(
+      () => setStory(submitStoryPhase(SUBMIT_STORY_POINT_MS)),
+      SUBMIT_STORY_POINT_MS,
+    );
+    return () => {
+      window.clearTimeout(atBar);
+      window.clearTimeout(atPoint);
+    };
+  }, [flash]);
+
+  // 실패는 붉어지기 전에 잠깐 흔들린다 — 동작을 줄이는 탭에서는 곧장 붉어진다.
+  const [redOn, setRedOn] = useState(false);
+  useEffect(() => {
+    if (flash !== "failed") {
+      setRedOn(false);
+      return;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setRedOn(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setRedOn(true), SUBMIT_SHAKE_MS);
+    return () => window.clearTimeout(timer);
+  }, [flash]);
+
+  // 지금 점이 앞으로 오르면 새 점이 한 번 맥동한다 — 점은 국면이 바뀌어도
+  // 버려지지 않으므로(key 를 번호로) 전환으로 이어진다.
+  const seenCurrent = useRef(journey.current);
+  const [pulseAt, setPulseAt] = useState<number | null>(null);
+  useEffect(() => {
+    const rose = journey.current > seenCurrent.current;
+    seenCurrent.current = journey.current;
+    if (!rose) return;
+    setPulseAt(journey.current);
+    const timer = window.setTimeout(() => setPulseAt(null), 700);
+    return () => window.clearTimeout(timer);
+  }, [journey.current]);
 
   const busy = submit.busy ?? (sending ? "running" : null);
   const reviewers =
@@ -175,11 +272,20 @@ export function StatusLine({
             setWorkOpen((open) => !open);
           }}
         >
-          {journey.making && (
-            <span className="nx-making" aria-hidden="true">
-              <Spin />
-              {makingWord}
-              {turnStartedAt !== null && !narrow && (
+          <span
+            className={`nx-making${makingState === "off" ? " nx-making--off" : ""}`}
+            aria-hidden="true"
+          >
+            <span className="nx-making-in">
+              {makingState === "check" ? (
+                <span className="nx-making-check">
+                  <SentIcon />
+                </span>
+              ) : makingState === "on" ? (
+                <Spin />
+              ) : null}
+              <RollingWord text={makingText} />
+              {makingState === "on" && turnStartedAt !== null && !narrow && (
                 <Elapsed
                   startedAt={turnStartedAt}
                   hintAfterMs={firstTurn ? FIRST_TURN_HINT_MS : undefined}
@@ -187,18 +293,36 @@ export function StatusLine({
                 />
               )}
             </span>
-          )}
-          {journey.points.map((point, index) => (
-            <span key={point.label} className="nx-jwrap" aria-hidden="true">
-              {index > 0 && <span className="nx-jbar" aria-hidden="true" />}
-              <span className={`nx-jstep nx-jstep--${point.state}`}>
-                <i aria-hidden="true" />
-                {(!narrow || index === journey.current) && (
-                  <span className="nx-jl">{point.label}</span>
+          </span>
+          {journey.points.map((point, index) => {
+            // 성공 이야기의 둘째 점 — 지금 점이 되기 전에 잠깐 켜진다.
+            const storyLit = story === "point" && index === 1;
+            const pulsing = index === (pulseAt ?? -1) || storyLit;
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: 점의 자리가 곧 정체다 — 글자를 key 로 쓰면 국면이 바뀔 때 점이 버려져 전환이 끊긴다.
+              <span key={index} className="nx-jwrap" aria-hidden="true">
+                {index > 0 && (
+                  <span
+                    className={`nx-jbar${
+                      journey.points[index - 1]?.state === "done" || (story !== null && index === 1)
+                        ? " nx-jbar--full"
+                        : ""
+                    }`}
+                  />
                 )}
+                <span
+                  className={`nx-jstep nx-jstep--${point.state}${storyLit ? " nx-jstep--lit" : ""}${pulsing ? " nx-jstep--pulse" : ""}`}
+                >
+                  <i aria-hidden="true" />
+                  {(!narrow || index === journey.current) && (
+                    <span className="nx-jl" key={point.label}>
+                      {point.label}
+                    </span>
+                  )}
+                </span>
               </span>
-            </span>
-          ))}
+            );
+          })}
         </button>
         {workOpen && (
           <WorkPopover
@@ -225,7 +349,9 @@ export function StatusLine({
             flash === "done"
               ? " nx-submit--sent"
               : flash === "failed"
-                ? " nx-submit--failed"
+                ? redOn
+                  ? " nx-submit--failed"
+                  : " nx-submit--shaking"
                 : busy
                   ? " nx-submit--busy"
                   : submit.enabled
@@ -250,24 +376,28 @@ export function StatusLine({
             setConfirmOpen((open) => !open);
           }}
         >
-          {flash === "done" ? (
-            <>
-              <SentIcon />
-              {L.submit.done}
-            </>
-          ) : flash === "failed" ? (
-            <>
-              <FailIcon />
-              {submitCopy.label}
-            </>
-          ) : busy ? (
-            <>
-              <Spin />
-              {busy === "retrying" ? L.submit.retrying : L.submit.running}
-            </>
-          ) : (
-            L.submit.idle
-          )}
+          {/* 다섯 얼굴을 한 자리에 겹쳐 둔다 — 단추 폭이 가장 넓은 얼굴에 맞아
+              고정되고, 얼굴은 150ms 교차 페이드로 갈아입는다(왼쪽 여정이 밀리지
+              않게). 잠긴 얼굴은 쉬는 얼굴과 같은 글자다. */}
+          <span className="nx-submit-face" aria-hidden={busy !== null || flash !== null}>
+            {L.submit.idle}
+          </span>
+          <span className="nx-submit-face" aria-hidden={busy !== "running"}>
+            <Spin />
+            {L.submit.running}
+          </span>
+          <span className="nx-submit-face" aria-hidden={busy !== "retrying"}>
+            <Spin />
+            {L.submit.retrying}
+          </span>
+          <span className="nx-submit-face" aria-hidden={flash !== "done"}>
+            <DrawnCheck />
+            {L.submit.done}
+          </span>
+          <span className="nx-submit-face" aria-hidden={flash !== "failed"}>
+            <FailIcon />
+            {submitCopy.label}
+          </span>
         </button>
         {confirmOpen && (
           <SubmitPopover
@@ -288,5 +418,34 @@ export function StatusLine({
         )}
       </div>
     </header>
+  );
+}
+
+/**
+ * 세로로 굴러가는 단어 한 개 — 갈아입는 순간에 나가는 말은 위로, 들어오는
+ * 말은 아래에서 온다(status.css 의 `nx-roll`). 잠깐 둘 다 그려지는 동안 폭은
+ * 넓은 쪽을 지킨다.
+ */
+function RollingWord({ text }: { text: string }) {
+  const [pair, setPair] = useState<{ cur: string; prev: string | null }>({ cur: text, prev: null });
+  useEffect(() => {
+    setPair((prev) => (prev.cur === text ? prev : { cur: text, prev: prev.cur }));
+  }, [text]);
+  useEffect(() => {
+    if (pair.prev === null) return;
+    const timer = window.setTimeout(() => setPair((prev) => ({ ...prev, prev: null })), 240);
+    return () => window.clearTimeout(timer);
+  }, [pair]);
+  return (
+    <span className="nx-roll">
+      {pair.prev !== null && (
+        <span key={pair.prev} className="nx-roll-word nx-roll-out">
+          {pair.prev}
+        </span>
+      )}
+      <span key={pair.cur} className="nx-roll-word nx-roll-in">
+        {pair.cur}
+      </span>
+    </span>
   );
 }
