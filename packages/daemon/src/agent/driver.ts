@@ -274,12 +274,13 @@ export interface AgentDriver {
   store?: TranscriptStore;
   /**
    * The CLI's model rows without a thread — a driver whose CLI can list
-   * models on its own (`omp models --json`) answers here, so the
-   * daemon's per-provider cache fills before any session exists. Absent = a
-   * live session is the only source (Claude, Codex); the cache then waits
-   * for the first session's report as before.
+   * models on its own (`omp models --json`) or whose SDK can probe one
+   * (`probeModels`, Claude) answers here, so the daemon's per-provider cache
+   * fills before any session exists. Absent = a live session is the only
+   * source (Codex); the cache then waits for the first session's report as
+   * before.
    */
-  listModels?(): Promise<SessionModelInfo[]>;
+  listModels?(opts: { cwd: string; signal?: AbortSignal }): Promise<SessionModelInfo[]>;
   /**
    * 기계 잔일의 단답 턴 (저장 메모 · 넘기기 초안) — machine-provider.ts 가
    * 담당을 골라 여기로 온다. 계약의 전부는 세 보장이다: ① 도구는 절대

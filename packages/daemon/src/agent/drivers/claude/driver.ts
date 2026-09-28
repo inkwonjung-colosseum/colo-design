@@ -7,6 +7,7 @@ import {
   getSessionMessages,
   listSessions,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { SessionModelInfo } from "@colo-design/protocol";
 import { readAuthStatus, readClaudeVersion } from "../../../environment.js";
 import type {
   AgentDriver,
@@ -19,7 +20,7 @@ import type {
 import { HISTORY_LIMIT, isPrompt, resolveBranchCutoff } from "./cutoff.js";
 import { replayHistory } from "./import.js";
 import { claudeOneShot } from "./one-shot.js";
-import { ClaudeAgentSession, type ClaudeLaunch } from "./session.js";
+import { ClaudeAgentSession, type ClaudeLaunch, probeModels } from "./session.js";
 
 /**
  * A transcript's summary can be the conversation's own first line — and the
@@ -122,6 +123,15 @@ export class ClaudeDriver implements AgentDriver {
   loginCommand(): { command: string; args: string[] } | null {
     const executable = this.executable();
     return executable ? { command: executable, args: ["auth", "login"] } : null;
+  }
+
+  /**
+   * The picker's rows before any thread — the daemon's probe machine, the
+   * same one plan limits ride. A CLI that never answers reads as an empty
+   * list; the catalog gate's five-minute wait keeps that off the status path.
+   */
+  listModels(opts: { cwd: string; signal?: AbortSignal }): Promise<SessionModelInfo[]> {
+    return probeModels({ cwd: opts.cwd, executable: this.executable(), signal: opts.signal });
   }
 
   createSession(launch: ClaudeLaunch, hooks: DriverHooks): AgentSession {

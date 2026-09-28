@@ -777,6 +777,12 @@ export class DaemonServer {
         }
       },
     );
+    // One cwd for both probe readers — plan limits and the session-less
+    // model catalog — so the two cannot disagree about where a probe runs.
+    const probeCwd = () => {
+      const active = this.activeOrNull();
+      return active?.repo.isCloned() ? realpathBestEffort(active.paths.repoRoot) : homedir();
+    };
     this.plans = new PlanTracker({
       idleSession: (provider) =>
         [...this.manager.all()]
@@ -784,10 +790,7 @@ export class DaemonServer {
           .filter((candidate) => candidate.provider === provider)
           .sort((a, b) => b.lastActivity - a.lastActivity)[0] ?? null,
       claudeExecutable: () => this.claudeExecutable,
-      probeCwd: () => {
-        const active = this.activeOrNull();
-        return active?.repo.isCloned() ? realpathBestEffort(active.paths.repoRoot) : homedir();
-      },
+      probeCwd,
       signal: this.closing.signal,
       onChanged: () =>
         void this.status().then((status) => this.broadcast({ type: "status", status })),
@@ -796,7 +799,7 @@ export class DaemonServer {
         .filter((driver) => typeof driver.listModels === "function")
         .map((driver) => ({
           provider: driver.id,
-          read: () => driver.listModels!(),
+          read: () => driver.listModels!({ cwd: probeCwd(), signal: this.closing.signal }),
         })),
     });
     this.drivers = new PreviewDrivers({
