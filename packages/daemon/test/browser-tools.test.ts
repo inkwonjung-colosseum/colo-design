@@ -256,3 +256,16 @@ test("classifyBrowserFailure — 다섯 종류로 나뉜다", () => {
   );
   assert.equal(classifyBrowserFailure("뜻밖의 오류"), "other");
 });
+
+test("BROWSER_TOOLS — 배열 인자는 모두 items 를 선언한다", () => {
+  for (const tool of BROWSER_TOOLS) {
+    for (const [name, property] of Object.entries(tool.properties)) {
+      if (property.type !== "array") continue;
+      assert.equal(
+        property.items?.type,
+        "string",
+        `${tool.name}.${name} — items 없는 배열은 OpenAI·Gemini 계열이 도구 전체를 거절한다`,
+      );
+    }
+  }
+});

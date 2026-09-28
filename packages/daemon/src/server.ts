@@ -48,6 +48,7 @@ import { daemonOwnedPorts } from "./preview-claim.js";
 import type {
   BrowserDriver,
   BrowserDriverFactory,
+  PreviewCapture,
   PreviewDriverFactory,
 } from "./preview-driver.js";
 import { gateOutcomeStats, PreviewDrivers } from "./preview-drivers.js";
@@ -55,7 +56,7 @@ import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
 import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
 import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
-import { MAX_LINES_PER_SCREEN, TROUBLE_LEVELS } from "./screen-gate.js";
+import { judgeScreen, normalizeScreenCheckArgs } from "./screen-gate.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { TurnStats } from "./turn-stats.js";
@@ -1558,11 +1559,16 @@ export class DaemonServer {
   }
   /**
    * `screen_check` 도구의 판정 (빠른 수정, 2026-09-20): 세션이 사는
-   * 프로젝트의 미리보기 주소에서 그 화면을 검증 창으로 열어 본다 —
+   * 프로젝트의 미리보기 주소에서 그 화면들을 검증 창으로 열어 본다 —
    * 게이트(runGate)와 같은 드라이버, 같은 기준(자리 잡음 + error·실패한
-   * 요청), 같은 상한. 돌려주는 것은 정확히 그 두 사실뿐이라 스냅샷 수천
-   * 토큰을 태우지 않는다. 레포 바깥 주소는 원천 봉쇄 — 검증 창이 열 수
-   * 있는 것은 이 세션의 미리보기뿐이다.
+   * 요청), 같은 상한. 판정 자체는 화면 하나 도우미(judgeScreen) 하나에서
+   * 난다 — 두 기계의 말이 어긋나지 않게. 돌려주는 것은 화면마다 자리
+   * 잡음 · 빈 화면 · 콘솔 오류뿐이라 스냅샷 수천 토큰을 태우지 않는다.
+   * capture 면 문제 화면의 그림 한 장(긴 변 640)이 더 간다 — base64 를
+   * 텍스트에 싣지 않게 callBrowserTool 이 MCP image 블록으로 내린다.
+   * 인자의 정규화(합집합 · 중복 접기 · origin · 상한)는
+   * normalizeScreenCheckArgs 의 몫이다. 레포 바깥 주소는 원천 봉쇄 —
+   * 검증 창이 열 수 있는 것은 이 세션의 미리보기뿐이다.
    */
   private async runScreenCheck(
     sessionId: string,
@@ -1574,10 +1580,6 @@ export class DaemonServer {
         status: 404,
         body: { ok: false, error: "브라우저 드라이버가 없습니다 — 데스크톱 앱에서만 동작합니다." },
       };
-    }
-    const route0 = typeof params.route === "string" ? params.route : "";
-    if (route0.trim() === "") {
-      return { status: 400, body: { ok: false, error: "확인할 화면 주소(route)가 필요합니다." } };
     }
     // 게이트와 같은 겨냥 — 세션이 사는 프로젝트의 미리보기. 활성 프로젝트가
     // 아니라 이 세션의 것이다(전환 뒤 끝난 턴과 같은 이유).
@@ -1593,62 +1595,70 @@ export class DaemonServer {
         },
       };
     }
-    let target: URL;
-    try {
-      target = new URL(route0, previewUrl);
-    } catch {
-      return { status: 400, body: { ok: false, error: `화면 주소를 읽지 못했습니다: ${route0}` } };
-    }
-    const origin = new URL(previewUrl).origin;
-    if (target.origin !== origin) {
-      return {
-        status: 200,
-        body: { ok: false, error: "미리보기 안의 화면만 확인할 수 있습니다." },
-      };
-    }
+    const normalized = normalizeScreenCheckArgs(params, previewUrl);
+    if (!normalized.ok) return { status: 400, body: { ok: false, error: normalized.error } };
+    // 창은 한 번 세운다 — 화면마다 open 을 이어 부르고 마지막에 거둔다.
+    // 게이트(inspectScreens)가 창 하나로 여러 화면을 보는 것과 같은 모양이다.
     const driver = factory.forIsolated(previewUrl);
+    const origin = new URL(previewUrl).origin;
+    const screens: Array<{
+      url: string;
+      settled: boolean;
+      blank: boolean;
+      errors: string[];
+      capture?: PreviewCapture;
+    }> = [];
     try {
-      const opened = await driver
-        .open(target.pathname + target.search + target.hash)
-        .catch(() => null);
-      if (opened === null || opened.ok !== true) {
-        return {
-          status: 200,
-          body: {
-            ok: false,
-            error:
-              opened !== null && opened.ok === false ? opened.reason : "화면을 열지 못했습니다.",
-          },
+      for (const route of normalized.routes) {
+        const verdict = await judgeScreen(driver, route, { viewport: normalized.viewport });
+        // 2026-09-21: 화면의 전체 주소 — 답변의 하이퍼링크가 이 주소로
+        // 맺어진다. 경로만 아는 패인에게 미리보기 서버의 주소를 가르쳐
+        // 주는 유일한 자리다.
+        const url = new URL(route, origin).toString();
+        if (!verdict.opened) {
+          // 열지 못한 것도 화면 하나의 답이다 — 이유를 실어 AI 가 읽게
+          // 한다. 창이 그림으로 답할 상태가 아니므로 그림은 찍지 않는다.
+          screens.push({
+            url,
+            settled: false,
+            blank: false,
+            errors: [verdict.reason ?? "화면을 열지 못했습니다."],
+          });
+          continue;
+        }
+        // screen_check 로만 확인한 화면도 이번 작업의 장부에 적는다 —
+        // notePinned 가 게이트 · screen-map.jsonl · 「이번 작업」의 바뀐 화면
+        // (project-fleet 의 screensOfTurn)의 유일한 재료라, navigate 없이
+        // screen_check 만으로 확인한 화면은 장부에서 빠졌다. navigate 가
+        // 남기는 것과 같은 전체 주소다.
+        this.drivers.notePinned(sessionId, url);
+        const errors = verdict.lines.map((line) => `${line.level}: ${line.text}`);
+        const screen: (typeof screens)[number] = {
+          url,
+          settled: !verdict.unsettled,
+          blank: verdict.blank,
+          errors,
         };
+        // 그림은 문제 화면에만 — 멀쩡한 화면의 그림은 토큰만 태운다.
+        if (normalized.capture && (verdict.unsettled || verdict.blank || errors.length > 0)) {
+          const shot = await driver.screenshot({ longEdge: 640 }).catch(() => null);
+          if (shot !== null) screen.capture = shot;
+        }
+        screens.push(screen);
       }
-      const errors = (await driver.consoleLines().catch(() => []))
-        .filter((line) => TROUBLE_LEVELS[line.level.toLowerCase()] === true)
-        .slice(0, MAX_LINES_PER_SCREEN)
-        .map((line) => `${line.level}: ${line.text}`);
-      // screen_check 로만 확인한 화면도 이번 작업의 장부에 적는다 —
-      // notePinned 가 게이트 · screen-map.jsonl · 「이번 작업」의 바뀐 화면
-      // (project-fleet 의 screensOfTurn)의 유일한 재료라, navigate 없이
-      // screen_check 만으로 확인한 화면은 장부에서 빠졌다. navigate 가
-      // 남기는 것과 같은 전체 주소다.
-      this.drivers.notePinned(sessionId, target.toString());
-      return {
-        status: 200,
-        body: {
-          ok: true,
-          // 2026-09-21: 화면의 전체 주소 — 답변의 하이퍼링크가 이 주소로
-          // 맺어진다. 경로만 아는 패인에게 미리보기 서버의 주소를 가르쳐
-          // 주는 유일한 자리다. D2: 빈 화면 판정도 실어 나간다.
-          result: {
-            settled: opened.settled,
-            blank: opened.blank === true,
-            errors,
-            url: target.toString(),
-          },
-        },
-      };
     } finally {
       await driver.destroy().catch(() => undefined);
     }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        result: {
+          screens,
+          ...(normalized.truncated > 0 ? { truncated: normalized.truncated } : {}),
+        },
+      },
+    };
   }
 
   private async status() {

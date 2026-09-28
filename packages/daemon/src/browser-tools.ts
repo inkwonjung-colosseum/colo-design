@@ -29,7 +29,16 @@ export interface ToolDef {
   name: string;
   description: string;
   op: string;
-  properties: Record<string, { type: string; description: string }>;
+  /**
+   * 인자 스키마. 배열 인자는 `items` 를, 고른 칸은 `enum` 을 선언한다 —
+   * OpenAI 계열(숫자만 있는 배열을 거절)과 Gemini 계열의 함수 스키마가
+   * 이 두 칸을 요구하고, 정의 하나가 거절되면 그 세션의 브라우저 도구
+   * 목록 전체가 막힌다. 시험이 이 계약을 지킨다.
+   */
+  properties: Record<
+    string,
+    { type: string; description: string; items?: { type: string }; enum?: string[] }
+  >;
   required?: string[];
 }
 
@@ -194,16 +203,31 @@ export const BROWSER_TOOLS: ToolDef[] = [
     name: "screen_check",
     op: "screenCheck",
     description:
-      "화면을 확인한다 — 주소로 열어 자리 잡음과 콘솔 오류만 돌려준다. " +
-      "돌려오는 `url` 이 그 화면의 전체 주소다 — 답변의 하이퍼링크에 그대로 쓴다. " +
+      "화면들을 확인한다 — 주소로 열어 자리 잡음과 콘솔 오류만 돌려준다. " +
+      "돌려오는 각 화면의 `url` 이 그 화면의 전체 주소다 — 답변의 하이퍼링크에 그대로 쓴다. " +
+      "viewport 로 휴대폰 폭도 본다 — 휴대폰에서만 깨지는 화면을 잡는다. " +
+      "capture 면 문제가 있는 화면의 그림만 돌려준다. " +
       "스냅샷은 없다. 화면을 고친 뒤 답하기 전에 부른다 — 미리보기 안의 화면 경로만 받는다.",
     properties: {
       route: {
         type: "string",
-        description: "확인할 화면의 경로 — 예: /member/MemberList",
+        description: "확인할 화면의 경로 — 예: /member/MemberList. routes 와 합쳐진다.",
+      },
+      routes: {
+        type: "array",
+        items: { type: "string" },
+        description: "확인할 화면 경로의 목록 — route 와 합쳐 한 번에 최대 6개까지 본다.",
+      },
+      viewport: {
+        type: "string",
+        enum: ["mobile", "tablet", "desktop"],
+        description: "화면 폭 — mobile | tablet | desktop (기본 desktop).",
+      },
+      capture: {
+        type: "boolean",
+        description: "true 면 문제가 있는 화면의 그림(긴 변 640)을 돌려준다.",
       },
     },
-    required: ["route"],
   },
   {
     name: "submit_for_review",
@@ -351,6 +375,36 @@ export async function callBrowserTool(
     const shot = payload.result as { data?: unknown; mediaType?: unknown } | null;
     if (shot && typeof shot.data === "string" && typeof shot.mediaType === "string") {
       return { content: [{ type: "image", data: shot.data, mimeType: shot.mediaType }] };
+    }
+  }
+  // screen_check 의 문제 화면 그림도 같은 길로 내려간다 — 첫 블록은 그림
+  // 칸을 뗀 screens 의 JSON, 그 뒤가 그림 블록들이다.
+  if (tool.op === "screenCheck") {
+    const report = payload.result as { screens?: unknown[]; truncated?: unknown } | null;
+    if (report && Array.isArray(report.screens)) {
+      const images: Array<{ data: string; mimeType: string }> = [];
+      const screens = report.screens.map((entry) => {
+        const screen = { ...((entry ?? {}) as Record<string, unknown>) };
+        const capture = screen.capture as { data?: unknown; mediaType?: unknown } | undefined;
+        if (capture && typeof capture.data === "string" && typeof capture.mediaType === "string") {
+          images.push({ data: capture.data, mimeType: capture.mediaType });
+        }
+        delete screen.capture;
+        return screen;
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              typeof report.truncated === "number" && report.truncated > 0
+                ? { screens, truncated: report.truncated }
+                : { screens },
+            ),
+          },
+          ...images.map((image) => ({ type: "image" as const, ...image })),
+        ],
+      };
     }
   }
   return text(JSON.stringify(payload.result ?? null));
