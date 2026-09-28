@@ -4,6 +4,7 @@ import type { ChatEvent, SessionSummary, ThreadSummary } from "@colo-design/prot
 import type { AgentDriver, ImportableSession } from "./agent/driver.js";
 import type { DriverRegistry } from "./agent/registry.js";
 import type { BrowserMcpEntry } from "./browser-launch.js";
+import { closeReplayTurns } from "./replay-turns.js";
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 
 /** A bounded handshake wait's tick — resolvers kept, no executor nesting. */
@@ -620,7 +621,11 @@ export class SessionManager {
     // An ACP session/new answer names the agent's own uuid — the transcript
     // on disk is keyed by THAT, so a live session's lookup asks with it.
     const storeId = live?.vendorSessionId ?? sessionId;
-    return (await driver.store?.import?.(storeId, cwd, 1000)) ?? [];
+    // 저장된 대화록에는 턴 끝이 없다 (PLAN-THREAD T-1) — 정산 줄과 `고친
+    // 화면` 카드가 서는 `turn.end` 를 재생에 한 번 입힌다. `open` 은 그 세션의
+    // 턴이 지금 도는 중인가 — 도는 턴을 끝난 것처럼 그리지 않게.
+    const replayed = (await driver.store?.import?.(storeId, cwd, 1000)) ?? [];
+    return closeReplayTurns(replayed, { open: live !== undefined && this.busyState(live) });
   }
 
   /**
