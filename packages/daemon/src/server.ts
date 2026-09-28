@@ -88,7 +88,7 @@ import { observedFilesFor, readScreenMap } from "./screen-map.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { TurnStats } from "./turn-stats.js";
-import { diagnosticsAnswer, TypeChecker } from "./type-check.js";
+import { diagnosticsAnswer, isTypeScriptFile, TypeChecker, typeTroublesOf } from "./type-check.js";
 import { serveWeb } from "./web-static.js";
 
 // The host's notice type (notices.ts) — re-exported so
@@ -205,6 +205,13 @@ const BROWSER_SUMMARIZE_OPS: Record<string, true> = {
  * 거절로 정산된다(무응답 = 안 함).
  */
 const BROWSER_ASK_TIMEOUT_MS = 55_000;
+
+/**
+ * 게이트가 타입 검사를 기다리는 예산 (PLAN-HARNESS §3.D D-4) — 첫 검사는
+ * 레포에 따라 수십 초라 완료 알림이 그만큼 늦어지므로, 그 안에 답이 오지
+ * 않으면 이번 게이트는 타입을 보지 않은 것으로 한다.
+ */
+const GATE_TYPE_BUDGET_MS = 30_000;
 
 /**
  * 이동(navigate·back·forward)이 레포 바깥에 내려앉았을 때 스냅샷 대신
@@ -770,8 +777,8 @@ export class DaemonServer {
             // 그 파일이 Next.js 의 고정 경로 page 파일일 때만(H-5 — 파일
             // 이름에서 주소를 지어내지 않는다).
             void this.gateFromChangedFiles(sessionId).then(
-              () => this.gateAfterFallback(sessionId, turnDurationMs),
-              () => this.gateAfterFallback(sessionId, turnDurationMs),
+              ({ tsChanged }) => this.gateAfterFallback(sessionId, turnDurationMs, tsChanged),
+              () => this.gateAfterFallback(sessionId, turnDurationMs, false),
             );
           } else {
             this.finishWithoutGate(sessionId, state, turnDurationMs);
@@ -904,6 +911,36 @@ export class DaemonServer {
         // 게이트가 턴을 다시 열었다는 사실이 그 턴의 통계에 새겨진다.
         if (n.kind === "gate") this.stats.noteGate(n.sessionId);
         this.config.onNotice?.(n);
+      },
+      // (PLAN-HARNESS §3.D D-4) 게이트 브리프의 타입 절 — 이 턴이 바꾼 파일에
+      // TypeScript 가 없으면 검사를 돌리지 않고 null(게이트마다 tsc 를 돌리지
+      // 않는다). 검사가 무사히 끝났는데 오류가 없으면 줄이 빈 채로 돌아간다 —
+      // 통계가 그 사실을 남긴다.
+      typeTroubles: async (sessionId) => {
+        const workspaces = this.workspaceOfSession(sessionId);
+        if (workspaces === null) return null;
+        const changed = await workspaces.repo
+          .diff()
+          .then((files) => files.map((file) => file.path))
+          .catch(() => [] as string[]);
+        if (!changed.some((path) => isTypeScriptFile(path))) return null;
+        // 첫 검사는 레포에 따라 수십 초라 완료 알림이 그만큼 늦어진다 — 게이트는
+        // 예산 안에 답이 오지 않으면 이번은 타입을 보지 않은 것으로 한다(검사는
+        // 계속 돌아 다음 번을 데운다).
+        const result = await Promise.race([
+          this.typeChecker.check(
+            workspaces.paths.repoRoot,
+            workspaces.paths.root,
+            repoCommandEnv(process.env),
+          ),
+          new Promise<null>((resolve) => {
+            const timer = setTimeout(() => resolve(null), GATE_TYPE_BUDGET_MS);
+            timer.unref();
+          }),
+        ]);
+        if (result === null || result.status !== "ok") return null;
+        const troubles = typeTroublesOf(result, changed);
+        return { lines: troubles?.lines ?? [], errors: troubles?.errors ?? 0, ms: result.ms };
       },
     });
     // 턴 통계 — 서버가 아는 것만 좁은 창으로 내어준다. 사건은 onEvent 에서
@@ -1419,20 +1456,23 @@ export class DaemonServer {
   /**
    * (§3.B B-4) 바뀐 파일에서 화면을 되짚어 이 턴의 게이트 입력에 담는다 —
    * screenMapDue 스냅샷이 그대로 관찰 지도에 적는다 — 지도가 스스로 자란다.
-   * 실패는 조용하다(0개).
+   * 실패는 조용하다(0개). 되짚는 김에 바꾼 파일에 TypeScript 가 있었는지도
+   * 돌려준다(§3.D D-4) — 화면이 되짚아지지 않아도 타입 오류로 게이트가
+   * 설 수 있으므로.
    */
-  private async gateFromChangedFiles(sessionId: string): Promise<void> {
+  private async gateFromChangedFiles(sessionId: string): Promise<{ tsChanged: boolean }> {
     const workspaces = this.workspaceOfSession(sessionId);
-    if (workspaces === null) return;
+    if (workspaces === null) return { tsChanged: false };
     const changed = await workspaces.repo
       .diff()
       .then((files) => files.map((file) => file.path))
       .catch(() => [] as string[]);
-    if (changed.length === 0) return;
+    if (changed.length === 0) return { tsChanged: false };
     const rows = await readScreenMap(workspaces.paths.root).catch(() => []);
     const routes = routesForFiles(changed, rows);
     for (const route of routes) this.drivers.notePinned(sessionId, route);
     this.gateFallbackCount.set(sessionId, routes.length);
+    return { tsChanged: changed.some((path) => isTypeScriptFile(path)) };
   }
 
   /**
@@ -1442,10 +1482,17 @@ export class DaemonServer {
    * finishWithoutGate 를 부르지 않는다. 자동 보관의 표(autoSaveDue)는 남아
    * 다음 idle 이 치른다(runAutoSave 는 도는 턴을 스스로 거르지 않으므로 표가
    * 세션에 남는 한 반드시 치러진다).
+   *
+   * (§3.D D-4) 되짚은 화면이 없어도 이 턴이 TypeScript 파일을 고쳤으면
+   * startGate 로 간다 — runGate 가 타입 절만으로 게이트를 세운다.
    */
-  private gateAfterFallback(sessionId: string, turnDurationMs: number | undefined): void {
+  private gateAfterFallback(
+    sessionId: string,
+    turnDurationMs: number | undefined,
+    tsChanged: boolean,
+  ): void {
     if (this.manager.get(sessionId)?.state !== "idle") return;
-    if (this.drivers.gatePossible(sessionId)) {
+    if (this.drivers.gatePossible(sessionId) || tsChanged) {
       this.startGate(sessionId, turnDurationMs);
     } else {
       this.gateFallbackCount.delete(sessionId);

@@ -139,6 +139,36 @@ export function diagnosticsAnswer(result: TypeCheckResult, changed: string[]): s
   ].join("\n");
 }
 
+/** 게이트 브리프의 타입 절 상한 (PLAN-HARNESS §3.D D-1). */
+export const MAX_TYPE_LINES = 10;
+
+/** 이 턴이 바꾼 TypeScript 파일인가 — `.ts` · `.tsx` · `.mts` · `.cts`(`.d.ts` 포함). */
+export function isTypeScriptFile(rel: string): boolean {
+  return /\.(ts|tsx|mts|cts)$/.test(rel.replace(/\\/g, "/"));
+}
+
+/**
+ * 게이트가 브리프에 실을 타입 오류 — result 가 ok 이고 changed 안의 파일에
+ * 오류가 있을 때만. lines 는 바뀐 파일의 진단을 `- <file>:<line>:<col> <code>
+ * <message 200자>` 로 MAX_TYPE_LINES 까지, 넘으면 끝에 `… 나머지 K건`.
+ * errors 는 changed 안의 오류 전체 수다. 없으면 null.
+ */
+export function typeTroublesOf(
+  result: TypeCheckResult,
+  changed: string[],
+): { lines: string[]; errors: number } | null {
+  if (result.status !== "ok") return null;
+  const changedSet = new Set(changed.map((path) => path.replace(/\\/g, "/")));
+  const mine = result.diagnostics.filter((d) => d.file !== "" && changedSet.has(d.file));
+  if (mine.length === 0) return null;
+  const lines = mine
+    .slice(0, MAX_TYPE_LINES)
+    .map((d) => `- ${d.file}:${d.line}:${d.col} ${d.code} ${d.message.slice(0, REASON_MAX_CHARS)}`);
+  const omitted = mine.length - lines.length;
+  if (omitted > 0) lines.push(`… 나머지 ${omitted}건`);
+  return { lines, errors: mine.length };
+}
+
 /** 한 repoRoot 의 검사 차선 — 도는 것과 줄 선 것 하나. */
 interface Lane {
   running: Promise<TypeCheckResult>;
