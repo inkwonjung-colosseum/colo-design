@@ -80,11 +80,13 @@ import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
 import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
 import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
+import { repoCommandEnv } from "./repo-bringup.js";
 import { judgeScreen, normalizeScreenCheckArgs } from "./screen-gate.js";
 import { observedFilesFor } from "./screen-map.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { TurnStats } from "./turn-stats.js";
+import { diagnosticsAnswer, TypeChecker } from "./type-check.js";
 import { serveWeb } from "./web-static.js";
 
 // The host's notice type (notices.ts) — re-exported so
@@ -122,7 +124,8 @@ const HANDOFF_POLL_MS = 2 * 60_000;
  * 없이 감독자에 의도만 적는다 — 브라우저가 없는 세계에서도 대화로 제출은
  * 된다(도구 실림은 lifecycle.submitFromChat 이 정한다). `screenFiles` ·
  * `notifyDeveloper` (PLAN-MCP §3.E) 도 pane 이 없다 — 전자는 관찰 지도와
- * 클론 사냥만, 후자는 DeveloperNotice 의 기존 길만 쓴다.
+ * 클론 사냥만, 후자는 DeveloperNotice 의 기존 길만 쓴다. `repoDiagnostics`
+ * (PLAN-HARNESS §3.C) 도 마찬가지로 클론에서만 돈다.
  */
 const BROWSER_OPS: Record<string, true> = {
   navigate: true,
@@ -146,6 +149,7 @@ const BROWSER_OPS: Record<string, true> = {
   submitForReview: true,
   screenFiles: true,
   notifyDeveloper: true,
+  repoDiagnostics: true,
 };
 
 /** 요청 본문 한도 — evaluate 식·콘솔 요청 등을 다 담는 충분한 크기. */
@@ -170,10 +174,11 @@ const BROWSER_QUIET_OPS: Record<string, true> = {
   consoleLines: true,
   waitFor: true,
   screenCheck: true,
-  // pane 을 겨누지 않는 두 도구도 관찰이다 — 쪽지(쓰기)는 GitHub 으로 가지,
-  // 사용자의 미리보기 화면은 건드리지 않는다.
+  // pane 을 겨누지 않는 도구도 관찰이다 — 쪽지(쓰기)는 GitHub 으로 가고, 타입
+  // 검사는 클론에서만 돈다. 사용자의 미리보기 화면은 건드리지 않는다.
   screenFiles: true,
   notifyDeveloper: true,
+  repoDiagnostics: true,
 };
 
 /**
@@ -569,6 +574,11 @@ export class DaemonServer {
   private readonly loginWatchers = new Map<string, NodeJS.Timeout>();
   /** 턴 통계 (AI 작업 시간 측정) — 종류와 숫자만 남기는 하루 JSONL. */
   private readonly stats: TurnStats;
+  /**
+   * 증분 타입 검사 (PLAN-HARNESS §3.C) — `repo_diagnostics` 의 몸. 첫 턴의
+   * prewarm 이 가장 느린 첫 검사를 AI 가 생각하는 동안 끝낸다.
+   */
+  private readonly typeChecker = new TypeChecker();
 
   constructor(private readonly config: DaemonConfig) {
     this.credentials = config.credentialStore ?? createCredentialStore();
@@ -829,6 +839,16 @@ export class DaemonServer {
         // 조용히 생략됐다. 턴의 시작을 아는 것은 deliver 뿐이므로 그것만이 비운다.
         onTurnStart: (sessionId) => {
           this.drivers.pinnedThisTurn.delete(sessionId);
+          // 첫 턴이 시작될 때 한 번 미리 덴다 (PLAN-HARNESS H-8) — 첫 검사는
+          // 가장 느린 한 번이므로 AI 가 생각하는 동안 끝나 둔다.
+          const workspaces = this.workspaceOfSession(sessionId);
+          if (workspaces) {
+            this.typeChecker.prewarm(
+              workspaces.paths.repoRoot,
+              workspaces.paths.root,
+              repoCommandEnv(process.env),
+            );
+          }
         },
         onPinned: (sessionId, pins) => {
           for (const pin of pins) this.drivers.notePinned(sessionId, pin.screen);
@@ -1247,6 +1267,8 @@ export class DaemonServer {
     this.agentLogin.stop();
     this.agentInstall.stop();
     this.agentUpdates.stop();
+    // 도는 증분 타입 검사의 자식도 이 데몬의 것 — 내려갈 때 함께 끊는다.
+    this.typeChecker.dispose();
     clearInterval(this.handoffTimer ?? undefined);
     this.handoffTimer = null;
     this.logger.info("데몬 종료");
@@ -1609,6 +1631,30 @@ export class DaemonServer {
         via === "none" ? "other" : undefined,
       );
       reply(200, { ok: true, result: notifyDeveloperAnswer(via) });
+      return;
+    }
+    // repo_diagnostics (PLAN-HARNESS §3.C) — 증분 tsc 를 클론에서 돌려 이번에
+    // 바뀐 파일의 타입 오류부터 답한다. 빌드 정보 파일은 클론 밖(프로젝트
+    // 폴더의 뿌리)에 쓰므로 git status 는 깨끗하고, 미리보기와는 무관하다.
+    // 답은 어느 상태든 사실을 알리는 텍스트다 — 오류가 있어도 isError 가 아니다.
+    if (op === "repoDiagnostics") {
+      const workspaces = this.workspaceOfSession(sessionId);
+      if (workspaces === null) {
+        this.observeBrowserOp(sessionId, op, Date.now() - opStart, "other");
+        reply(200, { ok: false, error: "이 세션의 프로젝트를 찾지 못했습니다." });
+        return;
+      }
+      const changed = await workspaces.repo
+        .diff()
+        .then((files) => files.map((file) => file.path))
+        .catch(() => [] as string[]);
+      const result = await this.typeChecker.check(
+        workspaces.paths.repoRoot,
+        workspaces.paths.root,
+        repoCommandEnv(process.env),
+      );
+      this.observeBrowserOp(sessionId, op, Date.now() - opStart);
+      reply(200, { ok: true, result: diagnosticsAnswer(result, changed) });
       return;
     }
     const factory = this.config.browserDriverFactory;

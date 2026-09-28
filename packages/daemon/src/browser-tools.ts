@@ -49,14 +49,14 @@ export interface BrowserRelay {
 }
 
 /**
- * 계약의 22개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
+ * 계약의 23개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
  * op `type`으로, `browser_wait`가 op `waitFor`로, `browser_console`이 op
  * `consoleLines`로 걸리는 것만 이름 차이다. `browser_find`는 op 가 아니라
  * 스냅샷의 거름이고(PLAN-MCP §3.C), `browser_inspect`는 핀의 정체 조사를
  * 핀 없이 돌리는 op(§3.E-1)다. `screen_check`는 op `screenCheck`로 게이트와
  * 같은 판정을 턴 안에서 앞당겨 본다. pane 이 필요한 도구는 화면의 페이지를
  * 겨누고(pane 은 프로젝트당 페이지 하나라 탭 주소는 없다),
- * `screen_files` · `notify_developer` 는 pane 없이 데몬만으로 답한다.
+ * `screen_files` · `notify_developer` · `repo_diagnostics` 는 pane 없이 데몬만으로 답한다.
  */
 export const BROWSER_TOOLS: ToolDef[] = [
   {
@@ -259,6 +259,15 @@ export const BROWSER_TOOLS: ToolDef[] = [
         description: "true 면 문제가 있는 화면의 그림(긴 변 640)을 돌려준다.",
       },
     },
+  },
+  {
+    name: "repo_diagnostics",
+    op: "repoDiagnostics",
+    description:
+      "레포의 타입 검사를 돌려 이번에 바뀐 파일의 오류부터 돌려준다 — 두 번째부터는 바뀐 곳만 다시 보므로 " +
+      "몇 초 안에 끝난다. 편집 사이사이의 확인은 이것으로 하고, 레포의 검사 명령 전체는 답하기 전에 한 번만 " +
+      "돌린다. 미리보기가 없어도 돈다.",
+    properties: {},
   },
   {
     name: "submit_for_review",
