@@ -59,7 +59,12 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...withId,
     type: z.literal("session.create"),
-    /** Which agent provider runs the thread; omitted = the daemon default. */
+    /**
+     * 새 대화의 공급자다. 재개(resume)에서는 대화의 주인 — 살아 있는 세션이
+     * 먼저, 없으면 대화록 저장소 — 이 드라이버를 정하므로 이 값은 무시된다
+     * (대화의 AI 는 태어날 때 정해진다). 주인을 아무도 모르는 id 에서만
+     * 이 값이 드라이버를 가리킨다.
+     */
     provider: z.string().min(1).optional(),
     /** Model the query starts on (SDK alias or id); omitted = CLI default. */
     model: z.string().min(1).optional(),
