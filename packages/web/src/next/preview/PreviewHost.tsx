@@ -1,6 +1,6 @@
 import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
-import { PreviewFrame } from "../../components/preview/PreviewFrame";
+import { PreviewFrame, type PreviewOverlaySkin } from "../../components/preview/PreviewFrame";
 import type { PreviewLocation, PreviewTarget } from "../../components/preview/types";
 import { L } from "../labels";
 
@@ -39,6 +39,7 @@ export function PreviewHost({
   reloadKey,
   device,
   commentsOn,
+  overlaySkin,
   sync,
   location,
   onPin,
@@ -57,6 +58,8 @@ export function PreviewHost({
   reloadKey: number;
   device: PreviewDevice;
   commentsOn: boolean;
+  /** 오버레이가 입는 말과 색 — 게스트 preload 는 웹의 문장을 못 읽어 선로로 건넨다. */
+  overlaySkin: PreviewOverlaySkin;
   sync: ColoDesignPinsSync;
   location: PreviewLocation | null;
   onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
@@ -148,6 +151,7 @@ export function PreviewHost({
             reloadKey={reloadKey}
             width={device}
             commentsOn={commentsOn}
+            overlaySkin={overlaySkin}
             onLocation={onLocation}
             sync={sync}
             onPin={onPin}

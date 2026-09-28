@@ -80,7 +80,8 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     stop: () => ipcRenderer.invoke("preview:stop"),
     /** 배율 (PLAN D85 ⓔ) — in/out/reset; 뷰가 colo-preview:zoom 으로 되알린다. */
     zoom: (kind: "in" | "out" | "reset") => ipcRenderer.invoke("preview:zoom", { kind }),
-    commentsMode: (on: boolean) => ipcRenderer.invoke("preview:comments-mode", { on }),
+    commentsMode: (on: boolean, skin?: unknown) =>
+      ipcRenderer.invoke("preview:comments-mode", { on, skin }),
     emulate: (width: "mobile" | "tablet" | null) =>
       ipcRenderer.invoke("preview:emulate", { width }),
     /** 핀 동기화 (재설계 C1): the web's whole pin list — the overlay redraws its badges from it. */

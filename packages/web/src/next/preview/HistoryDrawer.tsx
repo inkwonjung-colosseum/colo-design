@@ -1,5 +1,5 @@
 import type { RepoHistoryEntry, RepoStatus } from "@colo-design/protocol";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
 import { entryScreens, entryTitle, historyRows, revertSummary } from "../lib/revert-summary";
@@ -41,6 +41,7 @@ export function HistoryDrawer({
   submits,
   onRestored,
   toast,
+  returnRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -51,6 +52,8 @@ export function HistoryDrawer({
   /** 되돌리기가 끝났다 — 칸은 미리보기를 다시 읽는다. */
   onRestored: () => void;
   toast: (text: string) => void;
+  /** 닫히면 초점이 되돌아가는 단추 — 서랍을 연 곳(시계). */
+  returnRef?: RefObject<HTMLElement | null>;
 }) {
   const { api } = daemon;
   const [entries, setEntries] = useState<RepoHistoryEntry[] | null>(null);
@@ -79,10 +82,25 @@ export function HistoryDrawer({
       cancelled = true;
     };
   }, [open, api, tick, saved, branch, repo?.cycleScreens?.length]);
-
   useEffect(() => {
     if (!open) setConfirm(null);
   }, [open]);
+
+  // 열리면 제목에 초점을 주고(화면 낭독기가 서랍의 이름부터 말하게), 닫히면
+  // 서랍을 연 단추로 돌려 놓는다 — 초점이 문서 어딘가로 사라지게 두지 않는다.
+  const title = useRef<HTMLHeadingElement>(null);
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (open === wasOpen.current) return;
+    wasOpen.current = open;
+    if (open) {
+      title.current?.focus();
+      return;
+    }
+    // 닫힘으로 바뀐 때만 — 처음 그려질 때 닫힌 서랍이 초점을 가져가지 않게.
+    const back = returnRef?.current;
+    if (back?.isConnected) back.focus();
+  }, [open, returnRef]);
 
   // Esc: 확인이 열려 있으면 확인을, 아니면 서랍을 닫는다 — 입력 중인 글자는 건드리지 않는다.
   const panel = useRef<HTMLElement>(null);
@@ -97,7 +115,10 @@ export function HistoryDrawer({
       if (typing && !panel.current?.contains(target)) return;
       if (document.querySelector(".modal, .palette")) return;
       if (confirmRef.current === null) onClose();
-      else setConfirm(null);
+      else {
+        setConfirm(null);
+        setError(null);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -143,7 +164,9 @@ export function HistoryDrawer({
       inert={!open}
     >
       <div className="nx-hist-h">
-        <h3>{L.history.title}</h3>
+        <h3 ref={title} tabIndex={-1}>
+          {L.history.title}
+        </h3>
         <span className="nx-grow" />
         <button
           type="button"
@@ -182,6 +205,7 @@ export function HistoryDrawer({
           const summary = revertSummary(list, row.index, L.history.commentPrefix);
           const pick = () => {
             if (current || restoring !== null) return;
+            setError(null);
             setConfirm((open) => (open === row.index ? null : row.index));
           };
           return (
@@ -218,8 +242,6 @@ export function HistoryDrawer({
                         type="button"
                         className="nx-btn nx-btn--sm nx-btn--pri"
                         disabled={restoring !== null}
-                        // biome-ignore lint/a11y/noAutofocus: 확인이 열리면 Enter 로 끝낸다.
-                        autoFocus
                         onClick={() => void restore(entry)}
                       >
                         {restoring === entry.sha ? L.history.restoring : L.history.revert}
@@ -228,18 +250,26 @@ export function HistoryDrawer({
                         type="button"
                         className="nx-btn nx-btn--sm nx-btn--ghost"
                         disabled={restoring !== null}
-                        onClick={() => setConfirm(null)}
+                        // biome-ignore lint/a11y/noAutofocus: 엉뚱한 Enter 가 되돌리지 않게 기본 초점은 `그만두기` — 되돌리는 손이 직접 고른다.
+                        autoFocus
+                        onClick={() => {
+                          setConfirm(null);
+                          setError(null);
+                        }}
                       >
                         {L.history.cancel}
                       </button>
                     </div>
+                    {/* 되돌리기가 실패하면 그 자리에서 말한다 — 목록 바닥으로
+                        흘리면 방금 누른 확인이 무엇을 말하는지 알 수 없다. */}
+                    {error && <div className="nx-hist-error">{error}</div>}
                   </div>
                 )}
               </div>
             </Fragment>
           );
         })}
-        {error && <div className="nx-hist-error">{error}</div>}
+        {error && confirm === null && <div className="nx-hist-error">{error}</div>}
       </div>
       <div className="nx-hist-foot">{L.history.foot}</div>
     </aside>

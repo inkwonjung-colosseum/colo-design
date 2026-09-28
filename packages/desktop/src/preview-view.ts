@@ -191,6 +191,32 @@ function openInOs(url: string): void {
 type PreviewKind = "preview" | "web";
 
 /**
+ * 오버레이가 게스트 안에서 쓸 말과 강조색 — 문장의 주인은 웹의 labels 이므로
+ * 렌더러가 다듬어 보내고, 여기서는 모양만 확인해 그대로 흘린다. 오버레이의
+ * preload 는 웹 패키지를 읽지 못한다.
+ */
+interface OverlaySkin {
+  accent?: string;
+  words?: Record<string, string>;
+}
+
+/** 렌더러가 보낸 오버레이 말 — 문자열 칸만 골라 낸다. */
+function readOverlaySkin(value: unknown): OverlaySkin | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as { accent?: unknown; words?: unknown };
+  const skin: OverlaySkin = {};
+  if (typeof source.accent === "string" && source.accent !== "") skin.accent = source.accent;
+  if (source.words && typeof source.words === "object") {
+    const words: Record<string, string> = {};
+    for (const [key, word] of Object.entries(source.words)) {
+      if (typeof word === "string" && word !== "") words[key] = word;
+    }
+    if (Object.keys(words).length > 0) skin.words = words;
+  }
+  return skin.accent || skin.words ? skin : undefined;
+}
+
+/**
  * 한 페이지의 살아 있는 전부: 뷰와, 이 페이지에 대해 pane 이 아는 것.
  * `home` 은 이 페이지를 세운 마운트 origin — 로밍으로 `origin` 이 바뀌어도
  * `home` 은 pages 의 열쇠 그대로다. loose 페이지(프로젝트 없이 열린 것)는
@@ -265,6 +291,8 @@ export class PlannerPreviewView {
 
   /** The last 💬 state — a fresh load, or a returning page, is re-told it (D67). */
   private commentsOn = false;
+  /** 오버레이의 말과 색 — 렌더러가 보낸 마지막 것을 기억해 새 게스트 · 돌아온 게스트에 다시 흘린다. */
+  private overlaySkin: OverlaySkin | undefined;
   /** 무대의 폭 에뮬레이션 — 활성 페이지가 바뀌어도 무대의 선택이므로 activate 가 다시 입힌다. */
   private emulateWidth: "mobile" | "tablet" | null = null;
   /** 앱 배율(U19) — 게스트의 실제 배율은 미리보기 배율 × 앱 배율. */
@@ -323,7 +351,7 @@ export class PlannerPreviewView {
         // 이미 화면의 페이지면 show 의 재무장을 못 받는다 — 지금 다시 말한다.
         if (this.activePage === existing) {
           const contents = existing.contents;
-          contents.send("colo-overlay:mode", { on: this.commentsOn });
+          contents.send("colo-overlay:mode", { on: this.commentsOn, skin: this.overlaySkin });
           this.sendPins(contents, this.lastPins ?? { pins: [] });
         }
       }
@@ -718,13 +746,14 @@ export class PlannerPreviewView {
     return this.activePage;
   }
 
-  commentsMode(on: boolean): void {
+  commentsMode(on: boolean, skin?: OverlaySkin): void {
     this.commentsOn = on;
+    if (skin) this.overlaySkin = skin;
     // 오버레이는 repo 의 말 — 로밍 중인 페이지에는 닿지 않는다(kind 가
     // external 의 자리를 대신한다). 다시 preview 로 돌아오면 show/did-navigate
     // 가 재무장한다.
     if (this.activePage?.kind !== "preview") return;
-    this.webContents()?.send("colo-overlay:mode", { on });
+    this.webContents()?.send("colo-overlay:mode", { on, skin: this.overlaySkin });
   }
 
   /**
@@ -1207,8 +1236,7 @@ export class PlannerPreviewView {
     // 다시 입힌다(데스크톱이면 남은 에뮬레이션을 벗긴다).
     this.applyEmulation(page);
     // The repo overlay stays out of roamed pages: comments mode off, and
-    // an empty pin list sweeps any badge a repo page left drawn.
-    contents.send("colo-overlay:mode", { on: this.commentsOn && preview });
+    contents.send("colo-overlay:mode", { on: this.commentsOn && preview, skin: this.overlaySkin });
     this.sendPins(contents, preview ? (this.lastPins ?? { pins: [] }) : { pins: [] });
     this.sendLocation(page);
     this.send("colo-preview:loading", { on: contents.isLoading() });
@@ -1319,9 +1347,11 @@ export class PlannerPreviewView {
       );
     });
     // D71: while the view holds focus the renderer DOM hears no keys — the
-    // chords the web keymap owns (PageWorkspace: 팔레트 ⌘K, 설정 ⌘,, 저장 ⌘S,
-    // 바로 가기 ⌘/, 핀 모드 ⌘⇧P) are forwarded and replayed as synthetic
-    // keydowns (PreviewFrame), so the features stay reachable. control is
+    // chords the web keymap owns (PreviewColumn: 팔레트 ⌘K, 설정 ⌘,, 저장 ⌘S,
+    // 바로 가기 ⌘/, 핀 모드 ⌘⇧P, 화면 목록 ⌘L) are forwarded and replayed as
+    // synthetic keydowns (PreviewFrame), so the features stay reachable. Esc
+    // rides the same boat — the column's close paths (찍기 끄기 · 굳힌 화면
+    // 닫기) must answer while the planner points at the page. control is
     // Windows/Linux's ⌘ slot — the gate treats it as the same modifier, or
     // the palette chord never leaves the pane there.
     contents.on("before-input-event", (event, input) => {
@@ -1332,6 +1362,8 @@ export class PlannerPreviewView {
         (mod &&
           (input.key === "k" ||
             input.key === "K" ||
+            input.key === "l" ||
+            input.key === "L" ||
             input.key === "," ||
             input.key === "/" ||
             input.key === "s" ||
@@ -1479,8 +1511,8 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     else view.zoomReset();
     return { ok: true };
   });
-  ipcMain.handle("preview:comments-mode", (_event, input: { on?: boolean }) => {
-    view.commentsMode(Boolean(input?.on));
+  ipcMain.handle("preview:comments-mode", (_event, input: { on?: boolean; skin?: unknown }) => {
+    view.commentsMode(Boolean(input?.on), readOverlaySkin(input?.skin));
     return { ok: true };
   });
   // 재설계 C1: the web pushes the whole pin list; the overlay's badges are

@@ -33,6 +33,13 @@ export interface ColoDesignCommentTarget {
    * `element`, and older pins carry no kind) or a dragged region.
    */
   kind?: "element" | "region";
+  /**
+   * The same box in viewport coordinates, carried by region pins only: their
+   * `rect` is page coordinates with the scroll left in (재설계 C9) — the app's
+   * bubble and any viewport math read this one instead. Element pins need no
+   * second box; their `rect` already is the viewport's.
+   */
+  rectView?: { x: number; y: number; width: number; height: number };
   /** outerHTML, overlay nodes stripped, capped at 1.5KB (재설계 C9). */
   html?: string;
   /** A computed-style subset worth quoting: color, font, spacing, size. */

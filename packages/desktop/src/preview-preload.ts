@@ -231,12 +231,31 @@ interface Badge {
   tone: "live" | "sent" | "done";
 }
 
-/** The badge's one color per tone — done reads as settled, not as sent. */
-const BADGE_COLORS: Record<Badge["tone"], string> = {
+/** The overlay's one accent (the app's `--accent`, sent by the mode payload) —
+    the fallback is today's red, worn only before the first payload lands. */
+let accent = "#e05252";
+/** The words the overlay speaks — all of them arrive by the mode payload; the
+    preload cannot read the web's labels. Empty until then. */
+const words: Record<string, string> = {};
+
+/** The badge's one color per tone — done reads as settled, not as sent. The
+    live tone follows the app's accent (`applySkin` moves it). */
+const badgeColors: Record<Badge["tone"], string> = {
   live: "#e05252",
   sent: "#9ca3af",
   done: "#16a34a",
 };
+
+/** The accent at an alpha — a hex the app computed for us, or today's red. */
+function accentAlpha(alpha: number): string {
+  const hex = accent.startsWith("#") ? accent.slice(1) : "";
+  const full = hex.length === 3 ? [...hex].map((c) => c + c).join("") : hex;
+  if (full.length !== 6 || /[^0-9a-f]/i.test(full)) return `rgba(224,82,82,${alpha})`;
+  const r = Number.parseInt(full.slice(0, 2), 16);
+  const g = Number.parseInt(full.slice(2, 4), 16);
+  const b = Number.parseInt(full.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
 const Z = "2147483000";
 const root = document.createElement("div");
@@ -267,16 +286,14 @@ let badges: Badge[] = [];
 let hover: HTMLDivElement | null = null;
 let hoverTarget: Element | null = null;
 /**
- * The hover box's name tag — a stacked column over the element: the
- * planner's words (the red tab, the same words the tray row and the card
- * use) and the element's own facts under it (kind · component · size, and
- * 이름 없음 when an interactive element carries no accessible name). Lives
- * and dies with `hover`.
+ * The hover box's name tag — the planner's words (the accent tab, the same
+ * name the bubble and the tray row use) and, when an interactive element
+ * carries no accessible name at all, the yellow 이름 없음 under it. Lives and
+ * dies with `hover`.
  */
 let hoverTag: {
   box: HTMLElement;
   label: HTMLElement;
-  meta: HTMLElement;
   warn: HTMLElement;
 } | null = null;
 
@@ -286,22 +303,29 @@ let hoverTag: {
     button it sits in. */
 const INTERACTIVE_SELECTOR = "button, a, input, select, textarea";
 
-/**
- * The meta line: the facts a DevTools tooltip would quote, minus the class
- * noise — utility classes tell a planner nothing and the agent reads them
- * from the pin's HTML anyway. An interactive element whose name is nowhere
- * (no aria-label/title/alt, no own words, no placeholder/value) says
- * 이름 없음: that gap is the one thing a planner can pin and ask fixed in
- * the same breath. The name is asked of the nearest interactive element —
- * the hover usually lands on the icon or label inside it.
- */
-function hoverMeta(element: Element): { text: string; unnamed: boolean } {
+/** The element's easy kind — the words a planner uses, not the tag a browser
+    does. Everything the page builds out of boxes reads as one word. */
+function kindWord(element: Element): string {
   const tag = element.tagName.toLowerCase();
-  const rect = element.getBoundingClientRect();
-  const parts = [tag];
-  parts.push(`${Math.round(rect.width)}×${Math.round(rect.height)}`);
-  let unnamed = false;
+  if (tag === "button") return words.kindButton ?? "";
+  if (tag === "a") return words.kindLink ?? "";
+  if (["img", "picture", "svg", "video", "canvas"].includes(tag)) return words.kindImage ?? "";
+  if (tag === "input" || tag === "select" || tag === "textarea") return words.kindInput ?? "";
+  return words.kindOther ?? "";
+}
+
+/**
+ * The tag's one line: the name the pin bubble would show — own words, a
+ * declared label, or the easy kind when the element says nothing. An
+ * interactive element whose name is nowhere (no aria-label/title/alt, no own
+ * words, no placeholder/value) also says 이름 없음: that gap is the one thing
+ * a planner can pin and ask fixed in the same breath. The name is asked of
+ * the nearest interactive element — the hover usually lands on the icon or
+ * label inside it.
+ */
+function hoverName(element: Element): { name: string; unnamed: boolean } {
   const interactive = element.closest(INTERACTIVE_SELECTOR);
+  let unnamed = false;
   if (interactive) {
     const it = interactive.tagName.toLowerCase();
     const named =
@@ -313,7 +337,18 @@ function hoverMeta(element: Element): { text: string; unnamed: boolean } {
       (it === "input" && interactive.getAttribute("value") !== null);
     unnamed = !named;
   }
-  return { text: parts.join(" · "), unnamed };
+  const raw =
+    ownText(element) ||
+    element.getAttribute("aria-label") ||
+    element.getAttribute("title") ||
+    element.getAttribute("placeholder") ||
+    interactive?.getAttribute("aria-label") ||
+    interactive?.getAttribute("title") ||
+    (element.tagName.toLowerCase() === "img" ? element.getAttribute("alt") : null) ||
+    kindWord(interactive ?? element) ||
+    kindWord(element);
+  const name = raw.length > 24 ? `${raw.slice(0, 24)}…` : raw;
+  return { name, unnamed };
 }
 /** The region drag in flight (재설계 C9) — a picking press that may yet
     become a drag; null while no press is down. */
@@ -342,6 +377,21 @@ const HINT_SEEN = "colo-design.pin-hint";
 function isOverlayUi(target: EventTarget | null): boolean {
   return target instanceof Node && root.contains(target);
 }
+/** The crosshair while picking — injected for the whole page except the
+    overlay's own handles (a badge keeps its pointer cursor). */
+let cursorStyle: HTMLStyleElement | null = null;
+function setPickCursor(on: boolean): void {
+  if (on === (cursorStyle !== null)) return;
+  if (on) {
+    cursorStyle = document.createElement("style");
+    cursorStyle.textContent =
+      "body,body *:not([data-colo-design-overlay] *){cursor:crosshair!important}";
+    document.documentElement.appendChild(cursorStyle);
+  } else {
+    cursorStyle?.remove();
+    cursorStyle = null;
+  }
+}
 
 function setMode(on: boolean): void {
   mode = on;
@@ -355,6 +405,7 @@ function setMode(on: boolean): void {
     hoverTarget = null;
     stopHoverLoop();
   }
+  setPickCursor(on || altHeld);
   if (!root.isConnected && document.body) document.body.appendChild(root);
   scheduleLayout();
 }
@@ -487,43 +538,36 @@ document.addEventListener(
     if (!hover) {
       hover = document.createElement("div");
       hover.setAttribute("data-colo-hover", "");
-      hover.style.cssText =
-        "position:fixed;outline:2px solid #e05252;outline-offset:1px;pointer-events:none;";
-      // The tag is a column, not one tab: the planner's words on top, the
-      // element's facts under them — aiming at a table row means guessing
-      // between the cell, the row and the table unless both lines say which
-      // one is under the cursor. The meta strip reads like the badge it will
-      // become: dark, monospace, small.
+      hover.style.cssText = `position:fixed;outline:2px solid ${accent};outline-offset:1px;pointer-events:none;`;
+      // The tag says what the pin would be called — the bubble's own name
+      // words on the accent tab, and 이름 없음 under it when an interactive
+      // element says nothing at all.
       const box = el(
         "div",
         "position:absolute;left:0;display:flex;flex-direction:column;align-items:flex-start;pointer-events:none;",
       );
       const label = el(
         "span",
-        "background:#e05252;color:#fff;border-radius:4px 4px 0 0;padding:1px 6px;font-size:10px;line-height:1.5;font-weight:600;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;",
-      );
-      const meta = el(
-        "span",
-        "background:rgba(17,17,17,.88);color:rgba(255,255,255,.78);border-radius:0;padding:1px 6px;font-size:10px;line-height:1.5;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;",
+        "color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;line-height:1.5;font-weight:600;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;",
       );
       const warn = el(
         "span",
         "background:rgba(17,17,17,.88);color:#fbbf24;border-radius:0 0 4px 4px;padding:1px 6px;font-size:10px;line-height:1.5;white-space:nowrap;",
-        "이름 없음",
+        words.unnamed ?? "",
       );
       box.appendChild(label);
-      box.appendChild(meta);
       box.appendChild(warn);
       hover.appendChild(box);
-      hoverTag = { box, label, meta, warn };
+      hoverTag = { box, label, warn };
       root.appendChild(hover);
       startHoverLoop();
     }
     if (hoverTag && hoverTarget) {
-      hoverTag.label.textContent = ownText(hoverTarget) || hoverTarget.tagName.toLowerCase();
-      const { text, unnamed } = hoverMeta(hoverTarget);
-      hoverTag.meta.textContent = text;
-      hoverTag.meta.style.borderRadius = unnamed ? "0" : "0 0 4px 4px";
+      const { name, unnamed } = hoverName(hoverTarget);
+      hoverTag.label.textContent = name;
+      hoverTag.label.style.background = accent;
+      hoverTag.label.style.borderRadius = unnamed ? "4px 4px 0 0" : "4px";
+      hoverTag.warn.textContent = words.unnamed ?? "";
       hoverTag.warn.style.display = unnamed ? "" : "none";
     }
   },
@@ -627,7 +671,7 @@ document.addEventListener(
       stopHoverLoop();
       drag.box = el(
         "div",
-        "position:fixed;border:1px dashed #e05252;background:rgba(224,82,82,.12);pointer-events:none;",
+        `position:fixed;border:1px dashed ${accent};background:${accentAlpha(0.12)};pointer-events:none;`,
       );
       root.appendChild(drag.box);
     }
@@ -659,20 +703,43 @@ document.addEventListener(
       swallowClick = false;
     }, 250);
     // Page coordinates, scroll deliberately left in (재설계 C9): the badge
-    // re-anchors on scroll and the web redraws the same numbers.
+    // re-anchors on scroll and the web redraws the same numbers. The viewport
+    // twin (`rectView`) rides along for the app's bubble — a region pin has
+    // no element to re-measure, and the page box would place the bubble off
+    // by the scroll.
     const rect = {
       x: Math.round(Math.min(press.x, event.pageX)),
       y: Math.round(Math.min(press.y, event.pageY)),
       width: Math.round(Math.abs(event.pageX - press.x)),
       height: Math.round(Math.abs(event.pageY - press.y)),
     };
+    const rectView = {
+      x: Math.round(Math.min(press.x, event.pageX) - window.scrollX),
+      y: Math.round(Math.min(press.y, event.pageY) - window.scrollY),
+      width: rect.width,
+      height: rect.height,
+    };
     const pin = {
       id: crypto.randomUUID(),
       ...pageContext(),
-      element: { kind: "region", component: "영역", text: "", path: "", rect },
+      element: {
+        kind: "region",
+        component: words.region ?? "",
+        text: "",
+        path: "",
+        rect,
+        rectView,
+      },
     };
     ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin", pin });
+    // The optimistic badge draws the region the moment the press lifts — the
+    // web's sync (the truth, and the numbering) lands a beat later.
+    badges = [
+      ...badges,
+      { id: pin.id, anchor: null, rect, number: badges.length + 1, tone: "live" },
+    ];
     renderOverlay();
+    armPinsPoll();
   },
   true,
 );
@@ -703,6 +770,7 @@ window.addEventListener("blur", () => {
 function setAlt(on: boolean): void {
   if (altHeld === on) return;
   altHeld = on;
+  setPickCursor(mode || on);
   if (!on) {
     hover?.remove();
     hover = null;
@@ -749,20 +817,26 @@ function renderOverlay(): void {
     if (badge.rect) {
       const box = el(
         "div",
-        `position:fixed;border:1px dashed ${BADGE_COLORS[badge.tone]};pointer-events:none;`,
+        `position:fixed;border:1px dashed ${badgeColors[badge.tone]};pointer-events:none;`,
       );
       box.dataset.pinBox = badge.id;
       root.appendChild(box);
     }
     const circle = el(
       "button",
-      `pointer-events:auto;position:fixed;width:24px;height:24px;padding:0;border:2px solid #fff;border-radius:999px;background:${BADGE_COLORS[badge.tone]};color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);`,
+      `pointer-events:auto;position:fixed;width:24px;height:24px;padding:0;border:2px solid #fff;border-radius:999px;background:${badgeColors[badge.tone]};color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);`,
       String(badge.number),
     );
     circle.dataset.pin = badge.id;
     circle.setAttribute(
       "aria-label",
-      `핀 ${badge.number}${badge.tone === "sent" ? " (보냄)" : badge.tone === "done" ? " (고침)" : ""}`,
+      `${words.badge ?? ""} ${badge.number}${
+        badge.tone === "sent"
+          ? ` ${words.badgeSent ?? ""}`
+          : badge.tone === "done"
+            ? ` ${words.badgeDone ?? ""}`
+            : ""
+      }`.trim() || String(badge.number),
     );
     // The badge is a handle: clicking it asks the web to focus the pin's
     // row in the composer — its memo field.
@@ -886,11 +960,11 @@ ipcRenderer.on("colo-overlay:flash", (_event, payload: { id?: unknown }) => {
   flashStop?.();
   const ring = el(
     "div",
-    "position:fixed;outline:3px solid #e05252;outline-offset:2px;border-radius:2px;pointer-events:none;",
+    `position:fixed;outline:3px solid ${accent};outline-offset:2px;border-radius:2px;pointer-events:none;`,
   );
   root.appendChild(ring);
   flashRing = ring;
-  const glow = "box-shadow:0 0 0 5px rgba(224,82,82,.45);";
+  const glow = `box-shadow:0 0 0 5px ${accentAlpha(0.45)};`;
   const before = circle?.getAttribute("style") ?? "";
   if (circle) circle.setAttribute("style", `${before}${glow}`);
   const tick = () => {
@@ -942,16 +1016,36 @@ function toast(text: string, options?: { hold?: boolean }): HTMLElement {
 // three-beat (D87: hide → the view shoots → back).
 // ---------------------------------------------------------------------------
 
-ipcRenderer.on("colo-overlay:mode", (_event, payload: { on?: boolean }) => {
-  const on = Boolean(payload?.on);
-  const boot = () => {
-    setMode(on);
-    renderOverlay();
-  };
-  if (document.readyState === "loading")
-    document.addEventListener("DOMContentLoaded", boot, { once: true });
-  else boot();
-});
+ipcRenderer.on(
+  "colo-overlay:mode",
+  (_event, payload: { on?: boolean; skin?: { accent?: unknown; words?: unknown } }) => {
+    const skin = payload?.skin;
+    // The app's words and accent — the preload cannot read the web's labels,
+    // so the mode payload is the one road they travel. Whatever arrived is
+    // kept; a live badge already drawn picks the new accent up on the next
+    // render (the sync or a scroll both redraw it).
+    if (skin && typeof skin === "object") {
+      if (typeof skin.accent === "string" && skin.accent !== "") {
+        accent = skin.accent;
+        badgeColors.live = accent;
+      }
+      if (skin.words && typeof skin.words === "object") {
+        for (const [key, word] of Object.entries(skin.words)) {
+          if (typeof word === "string") words[key] = word;
+        }
+      }
+    }
+    const on = Boolean(payload?.on);
+    maybeHint();
+    const boot = () => {
+      setMode(on);
+      renderOverlay();
+    };
+    if (document.readyState === "loading")
+      document.addEventListener("DOMContentLoaded", boot, { once: true });
+    else boot();
+  },
+);
 
 // 도구의 손길 깃발 — 보내기(main)와 그 다음 입력 dispatch 사이의 순서를
 // 보장하는 것이 임무의 전부라, 답(ack)만 하면 끝난다.
@@ -984,6 +1078,28 @@ ipcRenderer.on("colo-overlay:capture", (_event, payload: { on?: boolean }) => {
   else boot();
 });
 
+/** The ⌥+클릭 hint, said once per repo — deferred until the app's words
+    arrive (the mode payload), so the sentence lives in the app's labels. */
+let hintDone = false;
+function maybeHint(): void {
+  if (hintDone || !words.hint) return;
+  hintDone = true;
+  // ⌥+클릭 is the whole entry to the feature (D79) and nothing on the page
+  // announces it — the hint line only exists while the pin mode is on, which
+  // is the one state a planner who has not found it will never be in. Said
+  // once per repo, by the page's own storage; a machine that cannot store it
+  // simply hears it again.
+  try {
+    if (!window.localStorage.getItem(HINT_SEEN)) {
+      window.localStorage.setItem(HINT_SEEN, "1");
+      const note = toast(words.hint, { hold: true });
+      setTimeout(() => note.remove(), 6000);
+    }
+  } catch {
+    // Storage denied (a sandboxed page, a blocked origin): no hint, no harm.
+  }
+}
+
 // D79: the root mounts once the document exists, always — and the watcher
 // attaches THERE, not at preload eval: the documentElement can still be
 // missing while the page parses, and an observer that never attached
@@ -993,22 +1109,7 @@ const boot = () => {
   const html = document.documentElement;
   if (html) anchorWatch.observe(html, { childList: true, subtree: true });
   scheduleLayout();
-  // ⌥+클릭 is the whole entry to the feature (D79) and nothing on the page
-  // announces it — the hint line only exists while the pin mode is on, which
-  // is the one state a planner who has not found it will never be in. Said
-  // once per repo, by the page's own storage; a machine that cannot store it
-  // simply hears it again.
-  try {
-    if (!window.localStorage.getItem(HINT_SEEN)) {
-      window.localStorage.setItem(HINT_SEEN, "1");
-      const note = toast("클릭은 요소, 끌면 영역을 가리켜요. 여러 개 찍고 한 번에 말하세요.", {
-        hold: true,
-      });
-      setTimeout(() => note.remove(), 6000);
-    }
-  } catch {
-    // Storage denied (a sandboxed page, a blocked origin): no hint, no harm.
-  }
+  maybeHint();
 };
 if (document.readyState === "loading")
   document.addEventListener("DOMContentLoaded", boot, { once: true });

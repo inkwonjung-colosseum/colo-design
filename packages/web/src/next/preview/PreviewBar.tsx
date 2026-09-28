@@ -1,6 +1,7 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { composing } from "../../lib/ime";
 import { L } from "../labels";
+import { zoomButtons } from "../lib/preview-geometry";
 import { Popover } from "../ui/Popover";
 import {
   AddrChevronIcon,
@@ -17,6 +18,7 @@ import {
   PinIcon,
   PlusIcon,
   ReloadIcon,
+  SmallCheckIcon,
   TabletIcon,
 } from "./icons";
 import type { PreviewDevice } from "./PreviewHost";
@@ -41,6 +43,7 @@ export function PreviewBar({
   screenName,
   mine,
   others,
+  currentPath,
   onGo,
   onAddress,
   device,
@@ -49,6 +52,7 @@ export function PreviewBar({
   pinLocked,
   onPin,
   historyOpen,
+  historyBtn,
   onHistory,
   native,
   zoom,
@@ -68,6 +72,8 @@ export function PreviewBar({
   screenName: string;
   mine: ScreenRow[];
   others: ScreenRow[];
+  /** 지금 뜬 화면의 주소 — 목록의 체크 · 처음 선택이 이 줄을 가른다. */
+  currentPath: string;
   onGo: (path: string) => void;
   /** `/` 로 시작하는 주소 — 옮겼으면 null, 거절이면 그 이유 한 줄. */
   onAddress: (raw: string) => string | null;
@@ -78,6 +84,8 @@ export function PreviewBar({
   pinLocked: string | null;
   onPin: () => void;
   historyOpen: boolean;
+  /** 시계 단추의 자리 — 서랍이 닫히면 초점이 여기로 돌아간다. */
+  historyBtn?: RefObject<HTMLButtonElement | null>;
   onHistory: () => void;
   native: boolean;
   zoom: number;
@@ -112,6 +120,8 @@ export function PreviewBar({
     document.addEventListener("focusin", onFocusIn);
     return () => document.removeEventListener("focusin", onFocusIn);
   }, [addrOpen, moreOpen]);
+
+  const zoomState = zoomButtons(zoom);
 
   const deviceButton = (value: PreviewDevice, label: string, icon: ReactNode) => (
     <button
@@ -176,6 +186,7 @@ export function PreviewBar({
             <AddressList
               mine={mine}
               others={others}
+              currentPath={currentPath}
               onGo={(path) => {
                 setAddrOpen(false);
                 onGo(path);
@@ -210,6 +221,7 @@ export function PreviewBar({
       </button>
       <button
         type="button"
+        ref={historyBtn}
         className={`nx-ibtn${historyOpen ? " nx-ibtn--on" : ""}`}
         title={L.preview.history}
         aria-label={L.preview.history}
@@ -246,13 +258,14 @@ export function PreviewBar({
                     type="button"
                     title={L.preview.zoomOut}
                     aria-label={L.preview.zoomOut}
+                    disabled={zoomState.out}
                     onClick={() => onZoom("out")}
                   >
                     <MinusIcon />
                   </button>
                   <button
                     type="button"
-                    className="nx-mseg--on"
+                    className={zoomState.reset ? "nx-mseg--on" : ""}
                     title={L.preview.zoomReset}
                     aria-label={L.preview.zoomReset}
                     onClick={() => onZoom("reset")}
@@ -263,6 +276,7 @@ export function PreviewBar({
                     type="button"
                     title={L.preview.zoomIn}
                     aria-label={L.preview.zoomIn}
+                    disabled={zoomState.in}
                     onClick={() => onZoom("in")}
                   >
                     <PlusIcon />
@@ -330,38 +344,61 @@ export function PreviewBar({
 function AddressList({
   mine,
   others,
+  currentPath,
   onGo,
   onAddress,
 }: {
   mine: ScreenRow[];
   others: ScreenRow[];
+  /** 지금 뜬 화면의 주소 — 그 줄이 체크를 달고 처음 고르는 줄이다. */
+  currentPath: string;
   onGo: (path: string) => void;
   onAddress: (raw: string) => string | null;
 }) {
+  const listId = useId();
   const [query, setQuery] = useState("");
-  const [pick, setPick] = useState(0);
+  const [pick, setPick] = useState(() => {
+    const here = [...mine, ...others].findIndex((entry) => entry.path === currentPath);
+    return here >= 0 ? here : 0;
+  });
   const [why, setWhy] = useState<string | null>(null);
   const q = query.trim().toLowerCase();
   const typedPath = q.startsWith("/");
-  const match = (row: ScreenRow) =>
-    q === "" || row.name.toLowerCase().includes(q) || row.path.toLowerCase().includes(q);
+  const match = (entry: ScreenRow) =>
+    q === "" || entry.name.toLowerCase().includes(q) || entry.path.toLowerCase().includes(q);
   const mineShown = mine.filter(match);
   const othersShown = others.filter(match);
   const flat = [...mineShown, ...othersShown];
+  const listRef = useRef<HTMLDivElement>(null);
 
-  const row = (entry: ScreenRow, index: number) => (
-    <button
-      type="button"
-      key={`${entry.path}-${index}`}
-      className={`nx-mi${index === pick && !typedPath ? " nx-mi--pick" : ""}`}
-      onMouseEnter={() => setPick(index)}
-      onClick={() => onGo(entry.path)}
-    >
-      <EyeIcon />
-      <b>{entry.name}</b>
-      <span className="nx-mi-r">{entry.path}</span>
-    </button>
-  );
+  // 화살표로 고른 줄이 목록 밖에 나가면 따라간다 — 눌린 순간의 pick 으로 읽는다.
+  const reveal = (index: number) => {
+    requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector(`[id='${listId}-${index}']`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  const row = (entry: ScreenRow, index: number) => {
+    const here = entry.path === currentPath;
+    return (
+      <button
+        type="button"
+        key={`${entry.path}-${index}`}
+        id={`${listId}-${index}`}
+        role="option"
+        aria-selected={index === pick && !typedPath}
+        className={`nx-mi${index === pick && !typedPath ? " nx-mi--pick" : ""}`}
+        onMouseEnter={() => setPick(index)}
+        onClick={() => onGo(entry.path)}
+      >
+        {here ? <SmallCheckIcon /> : <EyeIcon />}
+        <b>{entry.name}</b>
+        <span className="nx-mi-r">{entry.path}</span>
+      </button>
+    );
+  };
 
   return (
     <>
@@ -371,6 +408,12 @@ function AddressList({
         aria-label={L.preview.addrPlaceholder}
         autoComplete="off"
         spellCheck={false}
+        role="combobox"
+        aria-expanded="true"
+        aria-controls={listId}
+        aria-activedescendant={
+          !typedPath && flat.length > 0 && pick < flat.length ? `${listId}-${pick}` : undefined
+        }
         // biome-ignore lint/a11y/noAutofocus: 목록을 연 손은 곧 글자를 친다.
         autoFocus
         value={query}
@@ -383,10 +426,18 @@ function AddressList({
           if (composing(event)) return;
           if (event.key === "ArrowDown" && flat.length > 0) {
             event.preventDefault();
-            setPick((index) => (index + 1) % flat.length);
+            setPick((index) => {
+              const next = (index + 1) % flat.length;
+              reveal(next);
+              return next;
+            });
           } else if (event.key === "ArrowUp" && flat.length > 0) {
             event.preventDefault();
-            setPick((index) => (index <= 0 ? flat.length - 1 : index - 1));
+            setPick((index) => {
+              const next = index <= 0 ? flat.length - 1 : index - 1;
+              reveal(next);
+              return next;
+            });
           } else if (event.key === "Enter") {
             event.preventDefault();
             if (typedPath) {
@@ -403,13 +454,15 @@ function AddressList({
           {why}
         </div>
       )}
-      <div className="nx-addr-list">
+      <div className="nx-addr-list" role="listbox" id={listId} ref={listRef}>
         {mineShown.length > 0 && <div className="nx-mh">{L.preview.addrMine}</div>}
         {mineShown.map((entry, index) => row(entry, index))}
         {othersShown.length > 0 && <div className="nx-mh">{L.preview.addrOthers}</div>}
         {othersShown.map((entry, index) => row(entry, mineShown.length + index))}
         {flat.length === 0 && !typedPath && (
-          <div className="nx-addr-none">{L.preview.addrEmpty}</div>
+          <div className="nx-addr-none">
+            {q === "" ? L.preview.addrNoScreens : L.preview.addrEmpty}
+          </div>
         )}
       </div>
       <div className="nx-addr-foot">{L.preview.addrFoot}</div>

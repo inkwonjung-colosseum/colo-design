@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PinAttachment } from "../../hooks/usePins";
 import { composing } from "../../lib/ime";
 import { L } from "../labels";
-import { bubblePlacement } from "../lib/preview-geometry";
+import { bubblePlacement, bubbleRect } from "../lib/preview-geometry";
 import { TrashIcon } from "./icons";
 
 /** `nx:pins:send` — 말풍선의 ⌘↵. 입력창(단계 2)이 지금의 글과 핀을 보낸다. */
@@ -70,7 +70,8 @@ export function PinBubble({
     const el = ref.current;
     setPlace(
       bubblePlacement({
-        rect: pin.element.rect,
+        // 영역 핀의 rect 는 스크롤이 남은 페이지 좌표라 화면 좌표(rectView)로 본다.
+        rect: bubbleRect(pin.element),
         frame,
         zoom,
         box,

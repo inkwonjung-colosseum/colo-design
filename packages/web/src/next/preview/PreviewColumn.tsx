@@ -2,6 +2,7 @@ import type { ColoDesignPinEnvelope, SessionState } from "@colo-design/protocol"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShortcutsSheet } from "../../components/dialogs/ShortcutsSheet";
+import type { PreviewOverlaySkin } from "../../components/preview/PreviewFrame";
 import type { PreviewLocation, PreviewTarget } from "../../components/preview/types";
 import { pinsSync } from "../../hooks/usePins";
 import { parseAddress } from "../../lib/preview-address";
@@ -23,6 +24,37 @@ import { PrepareCard, StageNotice } from "./PrepareCard";
 import { PreviewBar, type ScreenRow } from "./PreviewBar";
 import { nativePreview, type PreviewDevice, PreviewHost } from "./PreviewHost";
 import { type MachineTurn, usePreviewErrors } from "./use-preview-errors";
+
+/** 활성 팔레트의 강조색 — 오버레이가 앱과 같은 색을 쓰게 계산해 건넨다. */
+function accentColor(): string {
+  return getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+}
+
+/** 게스트 오버레이가 입는 말 — preload 는 이 파일(labels.ts)을 읽지 못하므로 선로로 건넨다. */
+const OVERLAY_WORDS: Record<string, string> = {
+  unnamed: L.pin.unnamed,
+  region: L.pin.area,
+  hint: L.pin.hint,
+  badge: L.pin.badgeWord,
+  badgeSent: L.pin.badgeSentMark,
+  badgeDone: L.pin.badgeDoneMark,
+  kindButton: L.pin.kindButton,
+  kindLink: L.pin.kindLink,
+  kindImage: L.pin.kindImage,
+  kindInput: L.pin.kindInput,
+  kindOther: L.pin.kindOther,
+};
+
+/** 팔레트가 바뀌면 오버레이의 색도 따라간다 — 테마는 뿌리의 data-theme 에 선다. */
+function useOverlaySkin(): PreviewOverlaySkin {
+  const [accent, setAccent] = useState(() => accentColor());
+  useEffect(() => {
+    const watch = new MutationObserver(() => setAccent(accentColor()));
+    watch.observe(document.documentElement, { attributeFilter: ["data-theme"], attributes: true });
+    return () => watch.disconnect();
+  }, []);
+  return useMemo(() => ({ accent, words: OVERLAY_WORDS }), [accent]);
+}
 
 /** `nx:pins:toggle` — 좁은 창 입력창의 `찍기`(단계 2)가 찍기를 켜고 끈다. */
 export const PINS_TOGGLE_EVENT = "nx:pins:toggle";
@@ -78,6 +110,10 @@ export function PreviewColumn({
 
   const sectionRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  /** 서랍을 연 시계 단추 — 닫히면 초점이 그곳으로 돌아간다. */
+  const historyBtn = useRef<HTMLButtonElement | null>(null);
+  /** 오버레이가 입는 말과 색 — 게스트 preload 는 웹의 labels 를 못 읽어 선로로 건넨다. */
+  const overlaySkin = useOverlaySkin();
 
   // --- 레포를 깨운다 ---------------------------------------------------
   // 이 칸의 마운트가 레포를 준비시킨다(옛 ScreenPanel 의 몫) — `repoSync` 는
@@ -533,6 +569,11 @@ export function PreviewColumn({
         setFrozen(null);
         return true;
       }
+      // 말풍선이 떠 있으면 그것을 먼저 거둔다 — 찍기까지 끄면 핀이 함께 잃는다.
+      if (bubble) {
+        setBubble(null);
+        return true;
+      }
       if (commentsOn) {
         setCommentsOn(false);
         return true;
@@ -587,6 +628,7 @@ export function PreviewColumn({
         screenName={hasScreen ? screenName : (project?.name ?? L.preview.frameTitle)}
         mine={rows.mine}
         others={rows.others}
+        currentPath={hasScreen ? (location?.path ?? "") : ""}
         onGo={go}
         onAddress={onAddress}
         device={device}
@@ -595,6 +637,7 @@ export function PreviewColumn({
         pinLocked={pinLocked}
         onPin={() => togglePins()}
         historyOpen={historyOpen}
+        historyBtn={historyBtn}
         onHistory={() => setHistoryOpen((open) => !open)}
         native={native}
         zoom={zoom}
@@ -614,6 +657,7 @@ export function PreviewColumn({
         reloadKey={reloadKey}
         device={device}
         commentsOn={commentsOn}
+        overlaySkin={overlaySkin}
         sync={sync}
         location={location}
         onPin={onPin}
@@ -690,6 +734,7 @@ export function PreviewColumn({
         submits={submits}
         onRestored={reload}
         toast={toast}
+        returnRef={historyBtn}
       />
 
       {sheetOpen &&
