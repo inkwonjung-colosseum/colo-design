@@ -69,6 +69,71 @@
   box-shadow: 0 4px 18px rgba(198, 97, 63, 0.08);
 }
 
+/* 첫 그림의 세 카드 — 60ms 간격으로 올라온다. nx-rise 는 가운데 정렬 팝오버의
+   것이라 가로 이동이 섞이므로, 카드용으로 세로만 오르는 걸음을 새로 두었다. */
+.nx-ob-step {
+  animation: nx-ob-rise 0.32s var(--drift) both;
+}
+
+.nx-ob-step:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.nx-ob-step:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+@keyframes nx-ob-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* 이번에 통과한 항목 — 체크가 그려지고 초록 원이 한 번 튄다. 이미 통과한 채
+   켜진 창의 카드는 nx-ob-step--passed 를 입지 않으므로 다시 튀지 않는다. */
+.nx-ob-step--passed {
+  animation: nx-ob-passed 900ms var(--drift);
+}
+
+@keyframes nx-ob-passed {
+  0%,
+  60% {
+    border-color: var(--ok);
+  }
+}
+
+.nx-ob-step--passed .nx-sic--ok {
+  animation: nx-ok-pop 300ms var(--spring);
+}
+
+@keyframes nx-ok-pop {
+  0% {
+    transform: scale(0.6);
+  }
+  70% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* lucide 체크의 선 — 통과의 순간에만 그려진다(dasharray 24 는 14px 체크의 선 길이). */
+.nx-ob-step--passed .nx-sic--ok svg path {
+  stroke-dasharray: 24;
+  animation: nx-check-draw 300ms var(--drift) both;
+}
+
+@keyframes nx-check-draw {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 /* 상태 동그라미 — ok(체크) · run(돌기) · act(점) · wait(허선). */
 .nx-sic {
   width: 20px;
@@ -316,11 +381,20 @@
 .nx-modal-back {
   position: fixed;
   inset: 0;
-  background: rgba(24, 22, 19, 0.3);
+  background: var(--scrim);
   display: grid;
   place-items: center;
   animation: nx-fade 0.15s;
   z-index: 70;
+}
+
+/* 닫히는 동안의 확인판 — 열림의 거꾸로. 닫는 중 상태가 끝나면 판이 언마운트된다. */
+.nx-modal-back--out {
+  animation: nx-fade 0.12s reverse both;
+}
+
+.nx-modal-back--out .nx-modal {
+  animation: nx-pop 0.12s reverse both;
 }
 
 .nx-modal {
@@ -519,5 +593,103 @@
 
   .nx-drop--over .nx-i {
     transform: none;
+  }
+
+  .nx-ob-step,
+  .nx-ob-step--passed,
+  .nx-ob-step--passed .nx-sic--ok,
+  .nx-ob-step--passed .nx-sic--ok svg path {
+    animation: none;
+  }
+
+  .nx-ob-foldaway {
+    transition: none;
+  }
+
+  .nx-ob--done .nx-ob-inner {
+    transition: none;
+    opacity: 0;
+  }
+
+  .nx-fill > i {
+    transition: none;
+  }
+
+  .nx-modal-back--out,
+  .nx-modal-back--out .nx-modal {
+    animation: none;
+    opacity: 0;
+  }
+
+  .nx-ws-enter {
+    animation: none;
+  }
+}
+
+/* 설치의 세부가 접히는 길 — grid-template-rows 를 1fr 에서 0fr 로(problem.css 의
+   기법). 내용은 남아 있어 높이가 한 프레임에 사라지지 않는다. */
+.nx-ob-foldaway {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.3s var(--drift);
+}
+
+.nx-ob-foldaway--closed {
+  grid-template-rows: 0fr;
+}
+
+.nx-ob-foldaway-i {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* 진행기가 아는 만큼만 채우는 막대 — 확인판의 가져오기 진행. */
+.nx-fill {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-3);
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.nx-fill > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.3s var(--drift);
+}
+
+/* 첫 실행의 끝 — 제목이 바뀌고 체크리스트가 흐려져 사라지는 동안, 아래에서
+   작업 틀이 페이드로 들어온다. 판은 스스로 누르지 않는다. */
+.nx-ob--done {
+  background: transparent;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.nx-ob--done .nx-ob-inner {
+  filter: blur(6px);
+  transform: scale(0.98);
+  opacity: 0;
+  transition:
+    filter 0.6s var(--drift),
+    transform 0.6s var(--drift),
+    opacity 0.5s var(--drift) 0.15s;
+}
+
+.nx-ws-enter {
+  animation: nx-fade 0.24s var(--drift);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-ws-enter {
+    animation-duration: 0.15s;
+  }
+
+  .nx-ob--done .nx-ob-inner {
+    filter: none;
+    transform: none;
+    transition: opacity 0.15s;
   }
 }

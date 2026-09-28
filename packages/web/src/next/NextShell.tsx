@@ -11,7 +11,12 @@ import {
 import { FirstRun } from "./onboarding/FirstRun";
 import { InviteConfirm } from "./onboarding/InviteConfirm";
 import "./next.css";
-import { decideShellPane } from "./lib/shell-pane";
+import {
+  decideShellPane,
+  firstRunDoneHoldMs,
+  type ShellPane,
+  shouldHoldFirstRunDone,
+} from "./lib/shell-pane";
 import { Workspace } from "./Workspace";
 
 /** App 이 셸에 건네는 계약 — 연결 하나와 설정 상태의 저장 손들. */
@@ -114,6 +119,23 @@ export function NextShell(props: NextShellProps) {
   });
   const firstRun = pane === "first-run";
 
+  // 첫 실행의 끝을 한 박자 붙든다 — 다 찬 체크리스트가 흐려져 사라지는 동안
+  // 작업 틀이 아래에서 페이드로 들어온다(shell-pane 의 판정). 앱을 켰을 때
+  // 이미 준비된 기계는 이 길을 모른다(첫 판정이 workspace · boot).
+  const paneSeen = useRef<ShellPane | null>(null);
+  const [holdingDone, setHoldingDone] = useState(false);
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const prev = paneSeen.current;
+    paneSeen.current = pane;
+    if (prev === null || !shouldHoldFirstRunDone(prev, pane)) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+    setEntered(true);
+    setHoldingDone(true);
+    const timer = window.setTimeout(() => setHoldingDone(false), firstRunDoneHoldMs(reduced));
+    return () => window.clearTimeout(timer);
+  }, [pane]);
+
   // 첫 가져오기(프로젝트 0개)의 행이 모두 `새로` 면 확인판은 되묻는 한 걸음일 뿐이다 —
   // 곧바로 적용하고, 끝나면 첫 프로젝트의 `초대 파일을 가져왔어요` 줄이 파일 지우기를
   // 맡는다(U11). 옛 초대장이라 적을 이름을 물어야 할 때만 확인판이 선다.
@@ -184,12 +206,32 @@ export function NextShell(props: NextShellProps) {
         <div className="nx nx-boot" data-testid="next-boot" aria-busy="true">
           <img src="/colonova-icon.svg" alt="" width={36} height={36} />
         </div>
+      ) : entered ? (
+        <>
+          {(firstRun || holdingDone) && (
+            <FirstRun
+              daemon={daemon}
+              provider={settings.chat.provider}
+              invite={invite}
+              checking={recheckingProvider}
+              done={holdingDone}
+            />
+          )}
+          {/* 붙드는 동안의 nx-ws-enter — 작업 틀이 페이드로 들어온다. 끝나면 클래스만 벗긴다.
+              다시 첫 실행으로 돌아가면(프로젝트가 모두 사라짐) 작업 틀은 서지 않는다. */}
+          {!firstRun && (
+            <div className={holdingDone ? "nx-ws-enter" : undefined}>
+              <Workspace {...props} discardableInvitePath={discardableInvitePath} />
+            </div>
+          )}
+        </>
       ) : firstRun ? (
         <FirstRun
           daemon={daemon}
           provider={settings.chat.provider}
           invite={invite}
           checking={recheckingProvider}
+          done={false}
         />
       ) : (
         <Workspace {...props} discardableInvitePath={discardableInvitePath} />

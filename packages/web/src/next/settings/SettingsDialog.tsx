@@ -3,7 +3,7 @@ import {
   RELEASES_REPO,
   type UpdateCheckResult,
 } from "@colo-design/protocol";
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useInstallStep } from "../../hooks/use-install-step";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import type { Daemon } from "../../lib/daemon-client";
@@ -12,14 +12,16 @@ import {
   type ChatSettings,
   type NoticeTiming,
   PICKER_THEMES,
+  type PickerTheme,
   type Settings,
   switchProviderPatch,
-  type ThemeChoice,
 } from "../../lib/settings";
 import { DEV, L } from "../labels";
 import { connectionCopy } from "../lib/connection-copy";
 import { type CheckNote, shouldClearCheckNote, updateRowCopy } from "../lib/update-row";
 import { hasNewerVersion } from "../lib/version";
+import { CloseIcon } from "../onboarding/icons";
+import { modalCloseMs, themePeekHalves } from "../onboarding/motion";
 import { CheckIcon, Spin } from "../ui/icons";
 
 /** 설정의 다섯 줄과 폴드(PLAN-UI U12) — `nav.openSettings` 가 연다. 문장은 전부
@@ -51,7 +53,6 @@ export function SettingsDialog({
   const missing = providers.filter((provider) => !provider.available);
   const panel = useRef<HTMLDivElement>(null);
   useModalFocus(panel);
-  useModalEscape(panel, onClose);
   useEffect(() => {
     panel.current?.focus();
   }, []);
@@ -60,6 +61,43 @@ export function SettingsDialog({
   const installStep = useInstallStep(daemon.install?.line ?? null);
   const installStepWord =
     installStep === null ? L.settings.installBusy : L.onboarding.installSteps[installStep];
+
+  // 닫히는 중 — 역방향 pop 이 끝나는 뒤에 물러난다(움직임을 끈 창은 곧바로).
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    },
+    [],
+  );
+  const requestClose = () => {
+    if (closing || closeTimer.current !== null) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+    if (modalCloseMs(reduced) === 0) {
+      onClose();
+      return;
+    }
+    setClosing(true);
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null;
+      onClose();
+    }, modalCloseMs(reduced));
+  };
+  useModalEscape(panel, requestClose);
+
+  // 화살표 걸음 — 테마 카드 사이를 옮겨 가며 곧바로 그것을 고른다.
+  const themeArrowStep = (event: KeyboardEvent<HTMLDivElement>) => {
+    const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+    if (!forward && event.key !== "ArrowLeft" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const count = PICKER_THEMES.length;
+    const at = Math.max(0, PICKER_THEMES.indexOf(settings.theme as PickerTheme));
+    const nextIndex = (at + (forward ? 1 : -1) + count) % count;
+    onSettingsChange({ theme: PICKER_THEMES[nextIndex] });
+    const cards = event.currentTarget.querySelectorAll<HTMLButtonElement>("button[role='radio']");
+    cards[nextIndex]?.focus();
+  };
 
   // ── AI — 설치가 끝나면 목록이 스스로 바뀌게: 옛 대화상자의 고침과 같은 길.
   const [fixBusy, setFixBusy] = useState<string | null>(null);
@@ -337,10 +375,10 @@ export function SettingsDialog({
     // 배경을 누르면 창이 물러난다 — 눌린 곳이 배경 자신일 때만(안의 창은 제외).
     // biome-ignore lint/a11y/noStaticElementInteractions: 배경 누름은 포인터의 길이다 — 키보드는 Esc 와 닫기 단추로 같은 곳에 닿는다.
     <div
-      className="nx-set-back"
+      className={`nx-set-back${closing ? " nx-set-back--out" : ""}`}
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
       <div
@@ -353,8 +391,13 @@ export function SettingsDialog({
       >
         <div className="nx-set-hd">
           <h2>{L.settings.title}</h2>
-          <button type="button" className="nx-ibtn" aria-label={L.settings.close} onClick={onClose}>
-            ✕
+          <button
+            type="button"
+            className="nx-ibtn"
+            aria-label={L.settings.close}
+            onClick={requestClose}
+          >
+            <CloseIcon />
           </button>
         </div>
         <div className="nx-set-body">
@@ -458,20 +501,39 @@ export function SettingsDialog({
               <span>{L.settings.themeSub}</span>
             </div>
             <div className="nx-sr">
-              <div className="nx-sline">
-                <select
-                  aria-label={L.settings.theme}
-                  value={settings.theme}
-                  onChange={(event) =>
-                    onSettingsChange({ theme: event.target.value as ThemeChoice })
-                  }
-                >
-                  {PICKER_THEMES.map((choice) => (
-                    <option key={choice} value={choice}>
-                      {L.settings.themeNames[choice]}
-                    </option>
-                  ))}
-                </select>
+              {/* 같은 일곱 선택 — 보이는 법만 카드로. 미리보기는 진짜 팔레트를 입은 조각이다. */}
+              <div
+                className="nx-theme-grid"
+                role="radiogroup"
+                aria-label={L.settings.theme}
+                onKeyDown={(event) => themeArrowStep(event)}
+              >
+                {PICKER_THEMES.map((choice) => (
+                  // biome-ignore lint/a11y/useSemanticElements: 카드 전체가 누르는 과녁이다 — AI 카드와 같은 모양(radiogroup 안).
+                  <button
+                    key={choice}
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.theme === choice}
+                    className={`nx-rcard nx-theme-card${
+                      settings.theme === choice ? " nx-rcard--on" : ""
+                    }`}
+                    onClick={() => onSettingsChange({ theme: choice })}
+                  >
+                    <span className="nx-theme-peek" aria-hidden="true">
+                      {themePeekHalves(choice).map((half) => (
+                        <i key={half} className="nx-peek-fill" data-theme={half}>
+                          <i className="nx-peek-panel" />
+                          <i className="nx-peek-dot" />
+                          <i className="nx-peek-line" />
+                        </i>
+                      ))}
+                    </span>
+                    <span className="nx-rt">
+                      <b>{L.settings.themeNames[choice]}</b>
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
           </section>

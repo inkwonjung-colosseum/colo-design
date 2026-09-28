@@ -26,3 +26,18 @@ export function decideShellPane(input: ShellPaneInput): ShellPane {
   if (input.projectCount === 0 || input.applyingFirst || input.gatesHold) return "first-run";
   return "workspace";
 }
+
+/**
+ * 첫 실행의 끝을 붙드는 순간 — 이번 실행 안에서 체크리스트가 작업 틀로 넘어갈
+ * 때만 참이다. 다 찬 체크리스트와 가져온 프로젝트 이름을 한 박자 보여 주고
+ * 싶은 것이다. 앱을 켰을 때 이미 준비된 기계(첫 판정이 workspace · boot)는
+ * 붙들지 않는다 — 붙들 사이가 없다.
+ */
+export function shouldHoldFirstRunDone(prev: ShellPane, next: ShellPane): boolean {
+  return prev === "first-run" && next === "workspace";
+}
+
+/** 붙드는 시간 — 줄은 움직임의 길이고, 움직임을 끄면 교차 페이드만 남는다. */
+export function firstRunDoneHoldMs(reducedMotion: boolean): number {
+  return reducedMotion ? 150 : 900;
+}

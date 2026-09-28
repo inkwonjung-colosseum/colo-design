@@ -6,6 +6,7 @@ import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
 import { CheckIcon, Spin } from "../ui/icons";
 import { AlertIcon, UploadIcon } from "./icons";
+import { type GateKey, takeFreshPasses } from "./motion";
 import "./onboarding.css";
 
 /**
@@ -21,6 +22,7 @@ export function FirstRun({
   provider,
   invite,
   checking,
+  done,
 }: {
   daemon: Daemon;
   /** 설정이 고른 에이전트 — 로그인 명령이 에이전트마다 다르다. */
@@ -29,6 +31,8 @@ export function FirstRun({
   invite: InviteImportController;
   /** 게이트 검사가 도는 중(첫 상태 · 프로바이더 불일치 재검사). */
   checking: boolean;
+  /** 첫 실행이 끝나는 순간 — 제목을 바꾸고 체크리스트가 흐려진다(셸이 붙드는 동안). */
+  done: boolean;
 }) {
   const steps = daemon.onboarding ?? [];
   const byId = new Map(steps.map((step) => [step.id, step]));
@@ -88,6 +92,30 @@ export function FirstRun({
   const projects = daemon.projects;
   const inviteImporting = invite.state.phase === "reading" || invite.state.phase === "applying";
   const [dropOver, setDropOver] = useState(false);
+
+  // 이번에 통과한 항목만 반응한다 — 앱을 켰을 때 이미 통과한 항목은 첫 그림에서
+  // '본 것'으로 새겨 튀지 않는다(onboarding/motion 의 판정).
+  const passesSeen = useRef<ReadonlySet<GateKey> | null>(null);
+  const [freshPasses, setFreshPasses] = useState<GateKey[]>([]);
+  const invitePass = projects.length > 0;
+  useEffect(() => {
+    const passes: GateKey[] = [
+      ...(toolsPass ? (["tools"] as const) : []),
+      ...(agentPass ? (["agent"] as const) : []),
+      ...(invitePass ? (["invite"] as const) : []),
+    ];
+    const taken = takeFreshPasses(passesSeen.current, passes);
+    passesSeen.current = taken.seen;
+    if (taken.fresh.length > 0) setFreshPasses(taken.fresh);
+  }, [toolsPass, agentPass, invitePass]);
+
+  // 설치의 세부(설명 · 막대 · 단계 말)는 상태가 바뀌어도 한 프레임에 사라지지
+  // 않는다 — 접어서 내려 보낸다. 한 번이라도 설치가 도는 순간부터 길이 산다.
+  const [installSeen, setInstallSeen] = useState(false);
+  useEffect(() => {
+    if (installing) setInstallSeen(true);
+  }, [installing]);
+  const detailsOpen = agentState === "idle" || agentState === "installing";
   // 설치 진행기의 날 줄은 화면에 내리지 않는다 — 단계 말만 선다.
   const installStep = useInstallStep(daemon.install?.line ?? null);
   const installStepWord =
@@ -162,17 +190,21 @@ export function FirstRun({
   const agentBusy = installing || loginLive || checking;
 
   return (
-    <div className="nx nx-ob" data-testid="next-first-run">
+    <div className={`nx nx-ob${done ? " nx-ob--done" : ""}`} data-testid="next-first-run">
       <div className="nx-ob-inner">
         <div className="nx-ob-logo" aria-hidden="true">
           <img src="/colonova-icon.svg" alt="" width={36} height={36} />
         </div>
-        <h1 className="nx-ob-title">{L.onboarding.title}</h1>
-        <p className="nx-ob-sub">{L.onboarding.sub}</p>
+        <h1 className="nx-ob-title">{done ? L.onboarding.doneTitle : L.onboarding.title}</h1>
+        <p className="nx-ob-sub">{done ? L.onboarding.doneSub : L.onboarding.sub}</p>
 
         <ol className="nx-ob-steps">
           {/* 도구 준비 */}
-          <li className={`nx-ob-step${toolsPass ? "" : " nx-ob-step--act"}`}>
+          <li
+            className={`nx-ob-step${toolsPass ? "" : " nx-ob-step--act"}${
+              freshPasses.includes("tools") ? " nx-ob-step--passed" : ""
+            }`}
+          >
             {sic(toolsPass ? "ok" : toolsFailed ? "act" : "run")}
             <div>
               <div className="nx-ob-t">
@@ -223,7 +255,7 @@ export function FirstRun({
                 : agentState === "idle" && !agentFix
                   ? " nx-ob-step--wait"
                   : " nx-ob-step--act"
-            }`}
+            }${freshPasses.includes("agent") ? " nx-ob-step--passed" : ""}`}
           >
             {sic(
               agentState === "pass"
@@ -242,22 +274,31 @@ export function FirstRun({
                 <span className="nx-ob-r">{agentRight}</span>
               </div>
 
-              {(agentState === "idle" || agentState === "installing") && (
-                <p className="nx-ob-d">{L.onboarding.agentWhat}</p>
-              )}
-
-              {agentState === "installing" && daemon.install && (
-                <>
-                  <div className="nx-bar" aria-hidden="true">
-                    <i />
+              {/* 세부는 접어서 내려 보낸다 — 통과의 순간에도 카드 높이가 튀지 않게. */}
+              {installSeen && (
+                <div
+                  className={`nx-ob-foldaway${detailsOpen ? "" : " nx-ob-foldaway--closed"}`}
+                  aria-hidden={!detailsOpen}
+                >
+                  <div className="nx-ob-foldaway-i">
+                    {(agentState === "idle" || agentState === "installing") && (
+                      <p className="nx-ob-d">{L.onboarding.agentWhat}</p>
+                    )}
+                    {installing && (
+                      <>
+                        <div className="nx-bar" aria-hidden="true">
+                          <i />
+                        </div>
+                        {/* 설치 프로그램의 날 줄은 내리지 않는다 — 단계 말만 바뀐다. */}
+                        <div className="nx-ob-log" role="status">
+                          <b key={installStepWord} className="nx-inst-word">
+                            {installStepWord}
+                          </b>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  {/* 설치 프로그램의 날 줄은 내리지 않는다 — 단계 말만 바뀐다. */}
-                  <div className="nx-ob-log" role="status">
-                    <b key={installStepWord} className="nx-inst-word">
-                      {installStepWord}
-                    </b>
-                  </div>
-                </>
+                </div>
               )}
 
               {agentState === "blocked" && failureParts && (
@@ -339,7 +380,11 @@ export function FirstRun({
           </li>
 
           {/* 초대 파일 */}
-          <li className={`nx-ob-step${projects.length > 0 ? "" : " nx-ob-step--act"}`}>
+          <li
+            className={`nx-ob-step${projects.length > 0 ? "" : " nx-ob-step--act"}${
+              freshPasses.includes("invite") ? " nx-ob-step--passed" : ""
+            }`}
+          >
             {sic(projects.length > 0 ? "ok" : inviteImporting ? "run" : "act")}
             <div>
               <div className="nx-ob-t">

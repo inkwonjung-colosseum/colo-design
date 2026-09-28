@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 // 순수 모듈 — src 에서 곧장 읽는다(next-connection-copy.test.ts 와 같은 모양).
-import { decideShellPane } from "../src/next/lib/shell-pane.ts";
+import {
+  decideShellPane,
+  firstRunDoneHoldMs,
+  shouldHoldFirstRunDone,
+} from "../src/next/lib/shell-pane.ts";
 
 /** 프로젝트가 있는 기계의 다시 열기 — 초대장으로 이미 시작한 창이 이 모양이다. */
 const reopened = {
@@ -45,4 +49,21 @@ test("첫 실행의 초대 적용이 도는 동안에도 첫 화면을 지킨다
   // 첫 프로젝트가 생기는 순간 넘어가면 나머지 진행과 실패가 안 보인다.
   const pane = decideShellPane({ ...reopened, projectCount: 1, applyingFirst: true });
   assert.equal(pane, "first-run");
+});
+
+test("첫 실행의 끝은 이번 실행의 체크리스트가 작업 틀로 넘어갈 때만 붙든다", () => {
+  // 넘어가는 순간 — 다 찬 체크리스트를 한 박자 보여 주는 자리다.
+  assert.equal(shouldHoldFirstRunDone("first-run", "workspace"), true);
+  // 앱을 켰을 때 이미 준비된 기계 — 표지에서 곧장 작업 틀로, 붙들 사이가 없다.
+  assert.equal(shouldHoldFirstRunDone("boot", "workspace"), false);
+  // 넘어가지 않는 모든 길.
+  assert.equal(shouldHoldFirstRunDone("first-run", "first-run"), false);
+  assert.equal(shouldHoldFirstRunDone("workspace", "workspace"), false);
+  assert.equal(shouldHoldFirstRunDone("workspace", "first-run"), false);
+  assert.equal(shouldHoldFirstRunDone("boot", "first-run"), false);
+});
+
+test("붙드는 시간 — 움직임을 끄면 교차 페이드의 150ms 만 남는다", () => {
+  assert.equal(firstRunDoneHoldMs(false), 900);
+  assert.equal(firstRunDoneHoldMs(true), 150);
 });
