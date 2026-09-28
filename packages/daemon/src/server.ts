@@ -20,6 +20,7 @@ import { DriverRegistry } from "./agent/registry.js";
 import { AgentInstall } from "./agent-install.js";
 import { AgentUpdates } from "./agent-update.js";
 import { browserMcpEntry } from "./browser-launch.js";
+import { type BrowserFailKind, classifyBrowserFailure } from "./browser-tools.js";
 import { CommandDedupe } from "./command-dedupe.js";
 import {
   type CredentialStore,
@@ -1283,6 +1284,26 @@ export class DaemonServer {
     return secret;
   }
 
+  /** 브라우저 op 한 번의 관측 (PLAN-MCP M-8) — 통계에 한 번, 데몬 로그에
+   *  한 줄. 주소·ref·인자는 싣지 않는다: 새니타이저를 믿는 대신 애초에
+   *  담지 않는다. 로거에 debug 수준이 없어 info 로 남긴다. */
+  private observeBrowserOp(
+    sessionId: string | null,
+    op: string,
+    ms: number,
+    fail?: BrowserFailKind,
+  ): void {
+    if (sessionId !== null) {
+      this.stats.noteBrowserOp(sessionId, { op, ms, ...(fail !== undefined ? { fail } : {}) });
+    }
+    this.logger.info("[browser] op", {
+      op,
+      ms: Math.max(0, ms),
+      ok: fail === undefined,
+      ...(fail !== undefined ? { fail } : {}),
+    });
+  }
+
   /**
    * POST /internal/browser — browser-mcp.js의 도구 호출이 닿는 자리. op는
    * 화이트리스트로 가리고 실행은 pane 드라이버로 위임한다. 계약: 200
@@ -1308,6 +1329,9 @@ export class DaemonServer {
       }
     }
     if (!authorized || sessionId === null) {
+      // 401 은 본문을 읽기 전에 끝나 op 를 알 수 없다 — 로그만 남고 통계는
+      // 붙일 세션 자체가 없다(관측의 401 경로, M-8).
+      this.observeBrowserOp(null, "unknown", 0, "other");
       reply(401, { ok: false, error: "브라우저 시크릿이 일치하지 않습니다." });
       return;
     }
@@ -1342,6 +1366,10 @@ export class DaemonServer {
       reply(400, { ok: false, error: `알 수 없는 브라우저 op: ${op || "(없음)"}` });
       return;
     }
+
+    // op 관측의 시계 (M-8) — 화이트리스트를 지난 자리에서 놓아 모든 끝
+    // (성공 · 실패 · 타임아웃 · 404)이 같은 시계로 잰다.
+    const opStart = Date.now();
     const params = message.params ?? {};
     if (typeof params !== "object" || params === null || Array.isArray(params)) {
       reply(400, { ok: false, error: "params는 객체여야 합니다." });
@@ -1353,6 +1381,14 @@ export class DaemonServer {
     // 콘솔을 비우므로 읽는 줄은 정확히 그 화면의 것이다.
     if (op === "screenCheck") {
       const checked = await this.runScreenCheck(sessionId, params as Record<string, unknown>);
+      this.observeBrowserOp(
+        sessionId,
+        op,
+        Date.now() - opStart,
+        checked.body.ok === true
+          ? undefined
+          : classifyBrowserFailure(String(checked.body.error ?? "")),
+      );
       reply(checked.status, checked.body);
       return;
     }
@@ -1364,6 +1400,7 @@ export class DaemonServer {
       const slug = workspaces?.slug ?? null;
       const allowed = slug !== null && (this.registry.get(slug)?.lifecycle?.submitFromChat ?? true);
       if (!allowed) {
+        this.observeBrowserOp(sessionId, op, Date.now() - opStart, "other");
         reply(200, {
           ok: false,
           error: "이 프로젝트는 대화로의 제출이 꺼져 있습니다 — 화면의 제출 버튼을 눌러 주세요.",
@@ -1371,6 +1408,7 @@ export class DaemonServer {
         return;
       }
       workspaces?.supervisor.submit("chat");
+      this.observeBrowserOp(sessionId, op, Date.now() - opStart);
       reply(200, {
         ok: true,
         result: "개발자에게 보냈어요 — 진행은 상단의 상태 칩이 알려 줍니다.",
@@ -1379,6 +1417,7 @@ export class DaemonServer {
     }
     const factory = this.config.browserDriverFactory;
     if (!factory) {
+      this.observeBrowserOp(sessionId, op, Date.now() - opStart, "no-pane");
       reply(404, {
         ok: false,
         error: "브라우저 드라이버가 없습니다 — 데스크톱 앱에서만 동작합니다.",
@@ -1387,6 +1426,7 @@ export class DaemonServer {
     }
     const driver = factory.forPane();
     if (!driver) {
+      this.observeBrowserOp(sessionId, op, Date.now() - opStart, "no-pane");
       reply(404, {
         ok: false,
         error: "브라우저 창이 아직 없습니다 — 탭을 열거나 미리보기를 띄운 뒤 다시 시도해 주세요.",
@@ -1481,8 +1521,15 @@ export class DaemonServer {
           // 못 읽는 주소는 게이트 입력이 아니다.
         }
       }
+      this.observeBrowserOp(sessionId, op, Date.now() - opStart);
       reply(200, { ok: true, result });
     } catch (error) {
+      this.observeBrowserOp(
+        sessionId,
+        op,
+        Date.now() - opStart,
+        classifyBrowserFailure(error instanceof Error ? error.message : String(error)),
+      );
       reply(200, {
         ok: false,
         error: error instanceof Error ? error.message : String(error),

@@ -11,6 +11,7 @@
  * 번역만 한다. 실패도 도구 결과다 — 데몬의 ok:false·401·404 와 도달 실패는
  * 모두 isError 텍스트로 내려가 턴을 죽이는 대신 모델이 읽고 고치게 한다.
  */
+import { BROWSER_MCP_SERVER_NAME } from "./browser-launch.js";
 
 /** 느슨한 와이어 형태 — 줄 단위 JSON을 그대로 다룬다. */
 export type Wire = Record<string, unknown>;
@@ -225,6 +226,56 @@ export function browserTools(submitFromChat: boolean): ToolDef[] {
   return submitFromChat
     ? BROWSER_TOOLS
     : BROWSER_TOOLS.filter((tool) => tool.op !== "submitForReview");
+}
+
+/**
+ * 브라우저 도구의 이름 전부 (PLAN-MCP M-7) — 통계가 도구 묶음을 가리는
+ * 잣대. 접두 문자열과 달리 `browser_` 로 시작하는 우연한 이름이나 다른 MCP
+ * 서버의 도구를 세지 않는다.
+ */
+export const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set(
+  BROWSER_TOOLS.map((tool) => tool.name),
+);
+
+/**
+ * 도구 이름이 브라우저 도구인가 — 세 프로바이더가 각각 다르게 부르는 이름
+ * 셋을 본다: 맨 이름(omp host tool), `mcp__<server>__<name>`(claude),
+ * `<server>/<name>`(codex). 서버 이름은 상수만 본다 — RENAME 계획이 값을
+ * 바꿔도 이 판정은 흔들리지 않는다.
+ */
+export function isBrowserToolName(name: string): boolean {
+  if (BROWSER_TOOL_NAMES.has(name)) return true;
+  const claudePrefix = `mcp__${BROWSER_MCP_SERVER_NAME}__`;
+  if (name.startsWith(claudePrefix)) {
+    return BROWSER_TOOL_NAMES.has(name.slice(claudePrefix.length));
+  }
+  const codexPrefix = `${BROWSER_MCP_SERVER_NAME}/`;
+  if (name.startsWith(codexPrefix)) {
+    return BROWSER_TOOL_NAMES.has(name.slice(codexPrefix.length));
+  }
+  return false;
+}
+
+/** 브라우저 op 실패의 종류 (PLAN-MCP M-8) — 통계 행과 데몬 로그가 함께 쓴다. */
+export type BrowserFailKind = "stale-ref" | "timeout" | "refused" | "no-pane" | "other";
+
+/**
+ * 실패 문장 → 종류. 순수 함수라 시험이 문장을 직접 본다 — 문장은 드라이버와
+ * 서버가 제갈래로 내지만, 종류는 그중 안정적인 부분만으로 판정한다.
+ */
+export function classifyBrowserFailure(message: string): BrowserFailKind {
+  if (message.includes("지금 화면의 것이 아닙니다")) return "stale-ref";
+  if (message.includes("시간을 넘겼습니다")) return "timeout";
+  if (message.includes("거절")) return "refused";
+  if (
+    message.includes("브라우저 드라이버가 없습니다") ||
+    message.includes("브라우저 창이 아직 없습니다") ||
+    // 데스크톱 드라이버가 pane 이 사라졌을 때 던지는 문장도 같은 종류다.
+    message.includes("미리보기 화면이 없습니다")
+  ) {
+    return "no-pane";
+  }
+  return "other";
 }
 
 /** 데몬의 `/internal/browser`가 답을 먹고 버티는 유예 — waitFor의 5초 폴링과 스크린샷 인코딩까지 담는다. */
