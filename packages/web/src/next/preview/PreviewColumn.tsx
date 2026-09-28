@@ -16,6 +16,7 @@ import {
   titleOfPath,
 } from "../../lib/turn-screens";
 import { L } from "../labels";
+import { arriveOnTurnEnd } from "../lib/preview-geometry";
 import type { PreviewColumnProps } from "../slots";
 import { clockOf, HISTORY_OPEN_EVENT, HistoryDrawer } from "./HistoryDrawer";
 import { ArrowIcon, PinSmallIcon } from "./icons";
@@ -199,20 +200,31 @@ export function PreviewColumn({
 
   // 턴이 끝나면 그 턴이 고친 화면으로(README 「미리보기에서 확인」) — 이미 보고
   // 있으면 그대로 둔다. 외부 페이지를 보는 중이면 사람이 일부러 나간 것이다.
+  // 판정은 한 곳(arriveOnTurnEnd)이 내리고, 칸은 그 하나의 신호로 이동과
+  // 도착의 표시(알약 물들임 · 빛줄기)를 함께 일으킨다.
   const liveBefore = useRef({ live: turnLive, id: activeSessionId });
+  const [arriveTick, setArriveTick] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 턴의 끝(상태 전이)만 본다.
   useEffect(() => {
     const before = liveBefore.current;
     liveBefore.current = { live: turnLive, id: activeSessionId };
-    if (!before.live || turnLive || !activeSessionId || before.id !== activeSessionId) return;
-    if (location?.kind === "web") return;
-    const done = daemon.sessions[activeSessionId]?.blocks;
+    const ended =
+      before.live && !turnLive && Boolean(activeSessionId) && before.id === activeSessionId;
+    if (!ended) return;
+    const done = activeSessionId ? daemon.sessions[activeSessionId]?.blocks : null;
     if (!done) return;
-    const screens = lastTurnScreens(done, toPath);
-    const first = screens[0];
-    if (!first) return;
-    if (screens.some((screen) => screenKey(screen.path) === screenKey(herePath))) return;
-    go(first.path);
+    const verdict = arriveOnTurnEnd({
+      ended,
+      external: location?.kind === "web",
+      screens: lastTurnScreens(done, toPath).map((screen) => ({
+        path: screen.path,
+        key: screenKey(screen.path),
+      })),
+      hereKey: screenKey(herePath),
+    });
+    if (!verdict) return;
+    setArriveTick((tick) => tick + 1);
+    if (!verdict.already) go(verdict.path);
   }, [turnLive, activeSessionId]);
 
   const cycleTitle = useCallback(
@@ -299,6 +311,29 @@ export function PreviewColumn({
       toast(L.preview.restarted);
     }
   }, [restarting, phase, toast]);
+
+  // 준비가 끝나면 덮개가 즉시 걷히지 않는다 — 600ms 카드를 붙들어 셋째
+  // 체크가 튀어 오르고 막대가 초록으로 차오르게 한 뒤, 살아 있는 화면 위로
+  // 흐려지며 걷힌다. 첫 준비든 다시 준비든 같은 마무리를 쓴다.
+  const [prepHold, setPrepHold] = useState<"hold" | "out" | null>(null);
+  const wasPreparing = useRef(false);
+  useEffect(() => {
+    if (preparing) {
+      wasPreparing.current = true;
+      setPrepHold(null);
+      return;
+    }
+    const finished = wasPreparing.current;
+    wasPreparing.current = false;
+    if (!finished || phase !== "ready") return;
+    setPrepHold("hold");
+    const out = window.setTimeout(() => setPrepHold("out"), 600);
+    const gone = window.setTimeout(() => setPrepHold(null), 1000);
+    return () => {
+      window.clearTimeout(out);
+      window.clearTimeout(gone);
+    };
+  }, [preparing, phase]);
 
   // --- 기계의 턴 --------------------------------------------------------
   const machineBusy = useRef(false);
@@ -605,15 +640,21 @@ export function PreviewColumn({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const overlay = preparing ? (
-    <PrepareCard phase={phase} phaseSince={repo?.phaseSince} first={first} />
-  ) : restarting ? (
-    <StageNotice kind="restarting" restarts={restarts} />
-  ) : fixing ? (
-    <StageNotice kind="fixing" restarts={restarts} />
-  ) : !previewUrl && location?.kind !== "web" ? (
-    <div className="nx-pv-placeholder">{L.slot.previewWaiting}</div>
-  ) : null;
+  const overlay =
+    preparing || prepHold ? (
+      <PrepareCard
+        phase={prepHold ? "ready" : phase}
+        phaseSince={repo?.phaseSince}
+        first={first}
+        finale={prepHold !== null}
+      />
+    ) : restarting ? (
+      <StageNotice kind="restarting" restarts={restarts} />
+    ) : fixing ? (
+      <StageNotice kind="fixing" restarts={restarts} />
+    ) : !previewUrl && location?.kind !== "web" ? (
+      <div className="nx-pv-placeholder">{L.slot.previewWaiting}</div>
+    ) : null;
 
   const pinCount = pins.list.length;
 
@@ -629,6 +670,7 @@ export function PreviewColumn({
         mine={rows.mine}
         others={rows.others}
         currentPath={hasScreen ? (location?.path ?? "") : ""}
+        arrivePulse={arriveTick}
         onGo={go}
         onAddress={onAddress}
         device={device}
@@ -658,6 +700,7 @@ export function PreviewColumn({
         device={device}
         commentsOn={commentsOn}
         overlaySkin={overlaySkin}
+        sweep={arriveTick}
         sync={sync}
         location={location}
         onPin={onPin}
@@ -685,12 +728,14 @@ export function PreviewColumn({
             </div>
           </div>
         )}
-        {overlay && <div className="nx-over">{overlay}</div>}
+        {overlay && (
+          <div className={`nx-over${prepHold === "out" ? " nx-over--out" : ""}`}>{overlay}</div>
+        )}
         {commentsOn && !overlay && (
           <div className="nx-pinstrip" role="status">
             <PinSmallIcon />
             <b>{L.pin.stripTitle}</b>
-            <span>{L.pin.stripBody}</span>
+            <span>{pinCount > 0 ? L.pin.stripCount(pinCount) : L.pin.stripBody}</span>
             <button
               type="button"
               className="nx-btn nx-btn--sm"

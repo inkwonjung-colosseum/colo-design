@@ -44,6 +44,7 @@ export function PreviewBar({
   mine,
   others,
   currentPath,
+  arrivePulse,
   onGo,
   onAddress,
   device,
@@ -96,11 +97,22 @@ export function PreviewBar({
   onShowAi: () => void;
   showAiBusy: boolean;
   onShortcuts: () => void;
+  /** 답이 끝나 도착한 신호 — 오를 때마다 주소 알약이 강조색으로 잠깐 물든다. */
+  arrivePulse: number;
   /** ⌘L — 오를 때마다 주소 목록을 연다. */
   addrSignal: number;
 }) {
   const [addrOpen, setAddrOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  // 답이 끝나 도착하면 주소 알약이 강조색으로 1.2초 물든다 — 도착이 먼저
+  // 말하고 색이 뒤따라 꺼진다.
+  const [arriveTint, setArriveTint] = useState(false);
+  useEffect(() => {
+    if (arrivePulse <= 0) return;
+    setArriveTint(true);
+    const off = window.setTimeout(() => setArriveTint(false), 1200);
+    return () => window.clearTimeout(off);
+  }, [arrivePulse]);
   const addrRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
 
@@ -171,14 +183,16 @@ export function PreviewBar({
       <div className="nx-anchor nx-addrwrap" ref={addrRef}>
         <button
           type="button"
-          className="nx-addr"
+          className={`nx-addr${arriveTint ? " nx-addr--tint" : ""}`}
           aria-label={L.preview.addrLabel}
           aria-haspopup="dialog"
           aria-expanded={addrOpen}
           data-testid="preview-address"
           onClick={() => setAddrOpen((open) => !open)}
         >
-          <b>{screenName}</b>
+          {/* 화면 이름으로 key — 이름이 바뀌면 들어오는 쪽에서 미끄러져
+              들어온다(답이 끝나 옮겨 간 순간이 가장 크게 보인다). */}
+          <b key={screenName}>{screenName}</b>
           <AddrChevronIcon />
         </button>
         {addrOpen && (

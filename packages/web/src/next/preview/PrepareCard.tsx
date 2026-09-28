@@ -25,15 +25,20 @@ function useNow(on: boolean): number {
  * 미리보기 켜기`, 지금 걸음의 흐른 시간(`RepoStatus.phaseSince`), 진행 막대,
  * `준비되는 동안 먼저 말해 두셔도 돼요`. 이미 한 번 켠 서비스를 다시 켜는
  * 동안(앱을 다시 켰다)은 제목만 조용해진다.
+ *
+ * `finale` — 준비가 끝난 뒤 덮개가 걷히기 전의 마무리 장: 세 걸음의 체크가
+ * 모두 켜지고 막대가 초록으로 100% 에 차오른다. 칸이 붙드는 600ms 동안만.
  */
 export function PrepareCard({
   phase,
   phaseSince,
   first,
+  finale = false,
 }: {
   phase: string;
   phaseSince?: string;
   first: boolean;
+  finale?: boolean;
 }) {
   const now = useNow(true);
   // 데몬이 걸음의 시작을 싣지 않으면 이 카드가 본 순간부터 센다.
@@ -42,14 +47,19 @@ export function PrepareCard({
   const since = phaseSince ? Date.parse(phaseSince) : Number.NaN;
   const startedAt = Number.isFinite(since) ? since : seenAt.at;
   const elapsed = Math.max(0, now - startedAt);
-  const step = prepStep(phase) ?? 0;
+  const step = finale ? 3 : (prepStep(phase) ?? 0);
+  const progress = finale ? 100 : prepProgress(phase, elapsed);
   const names = [L.prepare.stepDownload, L.prepare.stepInstall, L.prepare.stepPreview];
   return (
     <div className="nx-prep-card">
-      {/* 소리내는 자리는 제목과 걸음 이름뿐 — 카드 전체가 live region 이면
-          경과 글자가 매초 바뀌며 화면 낭독기를 쉬지 않게 한다. */}
       <div role="status">
-        <i className="nx-spin nx-spin--lg" aria-hidden="true" />
+        {finale ? (
+          <span className="nx-sic nx-sic--ok nx-sic--finale" aria-hidden="true">
+            <SmallCheckIcon />
+          </span>
+        ) : (
+          <i className="nx-spin nx-spin--lg" aria-hidden="true" />
+        )}
         <h3>{first ? L.prepare.title : L.preview.prepAgainTitle}</h3>
         <p>{first ? L.prepare.body : L.preview.prepAgainBody}</p>
         <ul className="nx-prep-steps">
@@ -82,14 +92,14 @@ export function PrepareCard({
         </ul>
       </div>
       <div
-        className="nx-prep-bar"
+        className={`nx-prep-bar${finale ? " nx-prep-bar--done" : ""}`}
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={prepProgress(phase, elapsed)}
-        aria-valuetext={names[step]}
+        aria-valuenow={progress}
+        aria-valuetext={finale ? names[2] : names[step]}
       >
-        <i style={{ width: `${prepProgress(phase, elapsed)}%` }} />
+        <i style={{ width: `${progress}%` }} />
       </div>
       <p className="nx-prep-hint">{L.prepare.hint}</p>
     </div>

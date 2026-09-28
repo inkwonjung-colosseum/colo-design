@@ -40,6 +40,7 @@ export function PreviewHost({
   device,
   commentsOn,
   overlaySkin,
+  sweep,
   sync,
   location,
   onPin,
@@ -60,6 +61,8 @@ export function PreviewHost({
   commentsOn: boolean;
   /** 오버레이가 입는 말과 색 — 게스트 preload 는 웹의 문장을 못 읽어 선로로 건넨다. */
   overlaySkin: PreviewOverlaySkin;
+  /** 답이 끝나 화면이 옮겨 간 순간의 신호 — 오를 때마다 빛줄기가 한 번 훑는다. */
+  sweep: number;
   sync: ColoDesignPinsSync;
   location: PreviewLocation | null;
   onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
@@ -109,6 +112,30 @@ export function PreviewHost({
       window.clearTimeout(stuck);
     };
   }, [loading, reloadKey]);
+  // 잠깐의 이동은 조용히 — 150ms 를 넘기면 무대 가장자리에 흐르는 선이
+  // 답한다(눈 깜짝할 새의 새로 고침에 표시가 뜨는 소음은 없앤다).
+  const [busy, setBusy] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 새 주소 · 새로 고침마다 허용 시간의 시계를 다시 잰다.
+  useEffect(() => {
+    if (!loading) {
+      setBusy(false);
+      return;
+    }
+    const show = window.setTimeout(() => setBusy(true), 150);
+    return () => window.clearTimeout(show);
+  }, [loading, frameSrc, reloadKey]);
+
+  // 기기 틀이 바뀌는 동안 내용을 잠깐 흐리게 — 에뮬레이션이 닿았다는
+  // 신호가 선로에 없으니 시간(틀의 전환과 같은 결)로 되돌린다.
+  const [swap, setSwap] = useState(false);
+  const lastDevice = useRef(device);
+  useEffect(() => {
+    if (lastDevice.current === device) return;
+    lastDevice.current = device;
+    setSwap(true);
+    const back = window.setTimeout(() => setSwap(false), 320);
+    return () => window.clearTimeout(back);
+  }, [device]);
 
   // 30초의 멈춤: 서버 · 화면마다 도구가 먼저 한 번 새로 고치고, 그다음은 판정.
   const stuckReloads = useRef(new Set<string>());
@@ -142,7 +169,7 @@ export function PreviewHost({
 
   return (
     <div className="nx-pvstage" data-device={device}>
-      <div className="nx-pvdevice" ref={stageRef}>
+      <div className={`nx-pvdevice${swap ? " nx-pvdevice--swap" : ""}`} ref={stageRef}>
         {native ? (
           <PreviewFrame
             url={url}
@@ -171,6 +198,11 @@ export function PreviewHost({
           />
         ) : null}
       </div>
+      {/* 찍기가 켜진 동안 무대 둘레에 서는 안쪽 고리 — 화면을 가리지 않는 옅은 물들임. */}
+      {commentsOn && <div className="nx-pvring" aria-hidden="true" />}
+      {busy && <i className="nx-pvbusy" aria-hidden="true" />}
+      {/* 답이 끝나 도착한 화면 위로 빛줄기가 한 번 지난다 — 신호마다 다시. */}
+      {sweep > 0 && <div className="nx-pvsweep" key={sweep} aria-hidden="true" />}
       {loadPhase !== "ok" && (
         <span className="nx-pvlate" role="status">
           {L.preview.lateLoad}

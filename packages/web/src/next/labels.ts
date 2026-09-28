@@ -447,6 +447,8 @@ export const L = {
   pin: {
     stripTitle: "찍기 켜짐",
     stripBody: "화면을 누르면 그 자리가 입력창에 담겨요 · 끌면 영역을 짚어요",
+    /** 찍기 알약이 담은 수를 말한다 — 문장은 `2개 담음`. */
+    stripCount: (n: number) => `${n}개 담음`,
     stripOff: "끄기",
     bubblePlaceholder: "어떻게 바꿀까요? (안 적어도 돼요)",
     bubbleKeepHint: "↵ 담기",

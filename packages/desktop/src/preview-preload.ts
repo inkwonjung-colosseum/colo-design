@@ -234,8 +234,7 @@ let drag: {
 let swallowClick = false;
 let layoutStop: (() => void) | null = null;
 let layoutTimer: number | null = null;
-/** The 600ms flash ring (칩 클릭 → 배지 깜빡임, 재설계 C1). */
-let flashRing: HTMLElement | null = null;
+/** The one flash stopper — the ring and its timers clean themselves up. */
 let flashStop: (() => void) | null = null;
 /** Where the page remembers that the ⌥+클릭 hint has been said once. */
 const HINT_SEEN = "colo-design.pin-hint";
@@ -481,6 +480,7 @@ document.addEventListener(
       }
     }, 3000);
     ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin", pin });
+    freshPins.add(pin.id);
     badges = [...badges, { id: pin.id, anchor: element, number: badges.length + 1, tone: "live" }];
     renderOverlay();
     armPinsPoll();
@@ -600,6 +600,7 @@ document.addEventListener(
     ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin", pin });
     // The optimistic badge draws the region the moment the press lifts — the
     // web's sync (the truth, and the numbering) lands a beat later.
+    freshPins.add(pin.id);
     badges = [
       ...badges,
       { id: pin.id, anchor: null, rect, number: badges.length + 1, tone: "live" },
@@ -670,48 +671,177 @@ function el(tag: string, style: string, text?: string): HTMLElement {
   return node;
 }
 
-function renderOverlay(): void {
-  for (const child of [...root.childNodes]) {
-    if (child === hover || child === toasts || child === flashRing) continue;
-    child.remove();
-  }
+/** The drawn half of a badge — the number circle and, for a region, the
+    dashed box. Kept by pin id across syncs: only what changed moves (number ·
+    tone · color), what vanished fades out. This is what lets a badge carry
+    animation and hover at all — an element rebuilt every sync could not. */
+const badgeEls = new Map<string, { circle: HTMLButtonElement; box?: HTMLDivElement }>();
 
-  // --- badges: the web's pin list, one 24px number per element -------------
+/** The pins this document just made — a click or a region drag. Only these
+    are greeted (pop · ripple · flash); a sync that first shows an older pin
+    stands it quietly, or every reload and return would cheer at once. */
+const freshPins = new Set<string>();
+
+/** The page asked for less motion — the guest honors its own ear; the
+    preload has none. Every move below asks this first. */
+function reducedMotion(): boolean {
+  return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+}
+
+function badgeLabel(badge: Badge): string {
+  return (
+    `${words.badge ?? ""} ${badge.number}${
+      badge.tone === "sent"
+        ? ` ${words.badgeSent ?? ""}`
+        : badge.tone === "done"
+          ? ` ${words.badgeDone ?? ""}`
+          : ""
+    }`.trim() || String(badge.number)
+  );
+}
+
+function makeBadgeCircle(badge: Badge): HTMLButtonElement {
+  const circle = el(
+    "button",
+    `pointer-events:auto;position:fixed;width:24px;height:24px;padding:0;border:2px solid #fff;border-radius:999px;background:${badgeColors[badge.tone]};color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);`,
+    String(badge.number),
+  ) as HTMLButtonElement;
+  circle.dataset.pin = badge.id;
+  circle.setAttribute("aria-label", badgeLabel(badge));
+  // The badge is a handle: clicking it asks the web to focus the pin's
+  // row in the composer — its memo field.
+  circle.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin-focus", id: badge.id });
+  });
+  return circle;
+}
+
+/** A region badge's dashed box (재설계 C9) — page coordinates, positioned by
+    layoutOverlay on every scroll. */
+function makeBadgeBox(badge: Badge): HTMLDivElement {
+  const box = el(
+    "div",
+    `position:fixed;border:1px dashed ${badgeColors[badge.tone]};pointer-events:none;`,
+  ) as HTMLDivElement;
+  box.dataset.pinBox = badge.id;
+  return box;
+}
+/** What a sync can change about a badge that already stands: its number, its
+    tone's color, its spoken label. Nothing here re-creates an element. */
+function syncBadgeDom(
+  badge: Badge,
+  holder: { circle: HTMLButtonElement; box?: HTMLDivElement },
+): void {
+  holder.circle.textContent = String(badge.number);
+  holder.circle.style.background = badgeColors[badge.tone];
+  holder.circle.setAttribute("aria-label", badgeLabel(badge));
+  if (holder.box) holder.box.style.borderColor = badgeColors[badge.tone];
+}
+
+/** The pinned point in viewport coordinates — where a ripple begins. */
+function badgePoint(badge: Badge): { x: number; y: number } | null {
+  if (badge.rect) {
+    return {
+      x: badge.rect.x - window.scrollX + badge.rect.width / 2,
+      y: badge.rect.y - window.scrollY + badge.rect.height / 2,
+    };
+  }
+  const rect = badge.anchor?.getBoundingClientRect();
+  return rect ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : null;
+}
+
+/** One ripple from the pinned point — the pin landing in water. */
+function rippleAt(x: number, y: number): void {
+  const ring = el(
+    "div",
+    `position:fixed;left:${Math.round(x - 9)}px;top:${Math.round(y - 9)}px;width:18px;height:18px;border:2px solid ${accent};border-radius:50%;pointer-events:none;`,
+  );
+  root.appendChild(ring);
+  const gone = ring.animate(
+    [
+      { transform: "scale(0.5)", opacity: 0.9 },
+      { transform: "scale(3.6)", opacity: 0 },
+    ],
+    { duration: 380, easing: "cubic-bezier(.2,.7,.3,1)" },
+  );
+  gone.onfinish = () => ring.remove();
+  // 안전망 — 애니메이션이 끝을 못 알리는 세계에서도 물결은 지워진다.
+  window.setTimeout(() => {
+    if (ring.isConnected) ring.remove();
+  }, 600);
+}
+
+/** A pin's greeting, once per id: the badge springs in, a ripple runs from
+    the pinned point, and the flash ring passes over the element once. The
+    sync that follows updates the same element in place, so the greeting
+    never repeats for one pin. */
+function greetNewBadge(badge: Badge, circle: HTMLButtonElement): void {
+  if (reducedMotion()) {
+    flashPin(badge.id, { scroll: false });
+    return;
+  }
+  circle.animate(
+    [
+      { transform: "scale(0.4)" },
+      { transform: "scale(1.12)", offset: 0.7 },
+      { transform: "scale(1)" },
+    ],
+    { duration: 180, easing: "cubic-bezier(.2,.8,.3,1)" },
+  );
+  const point = badgePoint(badge);
+  if (point) rippleAt(point.x, point.y);
+  flashPin(badge.id, { scroll: false });
+}
+
+/** A badge leaving the list — a short fade, then gone. Sent pins ride this
+    on their way out; a pin that comes right back draws a fresh circle. */
+function retireBadge(holder: { circle: HTMLButtonElement; box?: HTMLDivElement }): void {
+  const circle = holder.circle;
+  const box = holder.box;
+  circle.style.pointerEvents = "none";
+  if (reducedMotion()) {
+    circle.remove();
+    box?.remove();
+    return;
+  }
+  const out = [{ opacity: 1 }, { opacity: 0 }];
+  circle.animate(out, { duration: 160, easing: "ease-out" }).onfinish = () => circle.remove();
+  const boxGone = box?.animate(out, { duration: 160, easing: "ease-out" });
+  if (boxGone) boxGone.onfinish = () => box?.remove();
+  window.setTimeout(() => {
+    if (circle.isConnected) circle.remove();
+    if (box?.isConnected) box.remove();
+  }, 400);
+}
+
+function renderOverlay(): void {
+  const seen = new Set<string>();
   for (const badge of badges) {
-    // A region badge gets its dashed border box (재설계 C9) — page
-    // coordinates, positioned by layoutOverlay on every scroll.
-    if (badge.rect) {
-      const box = el(
-        "div",
-        `position:fixed;border:1px dashed ${badgeColors[badge.tone]};pointer-events:none;`,
-      );
-      box.dataset.pinBox = badge.id;
-      root.appendChild(box);
+    seen.add(badge.id);
+    const holder = badgeEls.get(badge.id);
+    if (!holder) {
+      const fresh: { circle: HTMLButtonElement; box?: HTMLDivElement } = {
+        circle: makeBadgeCircle(badge),
+      };
+      if (badge.rect) {
+        fresh.box = makeBadgeBox(badge);
+        root.appendChild(fresh.box);
+      }
+      root.appendChild(fresh.circle);
+      badgeEls.set(badge.id, fresh);
+      // The greeting belongs to a pin this document just made — a sync's
+      // first sight of an older pin stands it quietly.
+      if (freshPins.delete(badge.id)) greetNewBadge(badge, fresh.circle);
+      continue;
     }
-    const circle = el(
-      "button",
-      `pointer-events:auto;position:fixed;width:24px;height:24px;padding:0;border:2px solid #fff;border-radius:999px;background:${badgeColors[badge.tone]};color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);`,
-      String(badge.number),
-    );
-    circle.dataset.pin = badge.id;
-    circle.setAttribute(
-      "aria-label",
-      `${words.badge ?? ""} ${badge.number}${
-        badge.tone === "sent"
-          ? ` ${words.badgeSent ?? ""}`
-          : badge.tone === "done"
-            ? ` ${words.badgeDone ?? ""}`
-            : ""
-      }`.trim() || String(badge.number),
-    );
-    // The badge is a handle: clicking it asks the web to focus the pin's
-    // row in the composer — its memo field.
-    circle.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin-focus", id: badge.id });
-    });
-    root.appendChild(circle);
+    syncBadgeDom(badge, holder);
+  }
+  for (const [id, holder] of badgeEls) {
+    if (seen.has(id)) continue;
+    badgeEls.delete(id);
+    retireBadge(holder);
   }
   layoutOverlay();
 }
@@ -728,7 +858,8 @@ function readRect(
 }
 
 /**
- * The web's whole pin list (재설계 C1) — the truth, redrawn from scratch.
+ * The web's whole pin list (재설계 C1) — the truth; the drawn badges are
+ * its diff (same id updates in place, vanished ids fade out).
  * Only THIS screen's pins draw badges (재설계 C5); the number is the mark
  * registry's `n` when the web sends one, else the row's place in the list.
  *
@@ -815,24 +946,53 @@ function armPinsPoll(): void {
   pinsPollTimer = window.setTimeout(tick, 600);
 }
 
-/** 칩 클릭 → 배지 (재설계 C1): a 600ms ring over the element and a glow on
- * the badge — "여기"를 눈으로 찾게 한다.
+/** 칩 클릭 → 배지 (재설계 C1): 화면 밖의 핀이면 먼저 그 화면으로 스크롤해
+ * 들어간 뒤(영역 핀은 그 상자로), 고리와 배지 빛이 두 번 맥동하며 "여기"를
+ * 눈으로 찾게 한다. 찍는 순간의 인사(greetNewBadge)도 이 고리를 쓴다.
  */
-ipcRenderer.on("colo-overlay:flash", (_event, payload: { id?: unknown }) => {
-  if (typeof payload?.id !== "string") return;
-  const badge = badges.find((entry) => entry.id === payload.id);
-  const circle = root.querySelector<HTMLElement>(`[data-pin="${CSS.escape(payload.id)}"]`);
+function flashPin(id: string, options: { scroll: boolean }): void {
+  const badge = badges.find((entry) => entry.id === id);
+  const circle = root.querySelector<HTMLElement>(`[data-pin="${CSS.escape(id)}"]`);
   if (!badge && !circle) return;
   flashStop?.();
+  const smooth = !reducedMotion();
+  if (options.scroll && badge) {
+    if (badge.anchor?.isConnected) {
+      badge.anchor.scrollIntoView({ block: "center", behavior: smooth ? "smooth" : "auto" });
+    } else if (badge.rect) {
+      window.scrollTo({
+        top: Math.max(0, badge.rect.y + badge.rect.height / 2 - window.innerHeight / 2),
+        left: Math.max(0, badge.rect.x + badge.rect.width / 2 - window.innerWidth / 2),
+        behavior: smooth ? "smooth" : "auto",
+      });
+    }
+  }
   const ring = el(
     "div",
     `position:fixed;outline:3px solid ${accent};outline-offset:2px;border-radius:2px;pointer-events:none;`,
   );
   root.appendChild(ring);
-  flashRing = ring;
-  const glow = `box-shadow:0 0 0 5px ${accentAlpha(0.45)};`;
+  const beat = 320;
   const before = circle?.getAttribute("style") ?? "";
-  if (circle) circle.setAttribute("style", `${before}${glow}`);
+  if (smooth) {
+    const shadow = "0 2px 8px rgba(0,0,0,.25)";
+    circle?.animate(
+      [
+        { boxShadow: shadow },
+        { boxShadow: `${shadow}, 0 0 0 6px ${accentAlpha(0.5)}` },
+        { boxShadow: shadow },
+      ],
+      { duration: beat, iterations: 2, easing: "ease-out" },
+    );
+    ring.animate([{ opacity: 0.25 }, { opacity: 1 }, { opacity: 0.25 }], {
+      duration: beat,
+      iterations: 2,
+      easing: "ease-out",
+    });
+  } else {
+    // 동작을 줄이는 세계에서는 맥동 대신 고정된 빛이 600ms 서 있다.
+    if (circle) circle.setAttribute("style", `${before}box-shadow:0 0 0 5px ${accentAlpha(0.45)};`);
+  }
   const tick = () => {
     if (!ring.isConnected) return;
     if (badge?.anchor?.isConnected) {
@@ -857,12 +1017,16 @@ ipcRenderer.on("colo-overlay:flash", (_event, payload: { id?: unknown }) => {
   const stop = () => {
     if (flashStop !== stop) return;
     flashStop = null;
-    flashRing = null;
     ring.remove();
     if (circle) circle.setAttribute("style", before);
   };
   flashStop = stop;
-  window.setTimeout(stop, 600);
+  window.setTimeout(stop, smooth ? beat * 2 + 40 : 600);
+}
+
+ipcRenderer.on("colo-overlay:flash", (_event, payload: { id?: unknown }) => {
+  if (typeof payload?.id !== "string") return;
+  flashPin(payload.id, { scroll: true });
 });
 
 /** A line in the toast column. `hold` keeps it until its sender removes it. */
@@ -889,7 +1053,7 @@ ipcRenderer.on(
     // The app's words and accent — the preload cannot read the web's labels,
     // so the mode payload is the one road they travel. Whatever arrived is
     // kept; a live badge already drawn picks the new accent up on the next
-    // render (the sync or a scroll both redraw it).
+    // render (the next sync or mode boot repaints them; a scroll only moves).
     if (skin && typeof skin === "object") {
       if (typeof skin.accent === "string" && skin.accent !== "") {
         accent = skin.accent;

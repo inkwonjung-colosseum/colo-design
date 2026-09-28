@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PinAttachment } from "../../hooks/usePins";
 import { composing } from "../../lib/ime";
 import { L } from "../labels";
@@ -62,7 +62,9 @@ export function PinBubble({
   const input = useRef<HTMLInputElement>(null);
   const opened = useRef(pin.note);
   const [note, setNote] = useState(pin.note);
-  const [place, setPlace] = useState<{ left: number; top: number; up: boolean } | null>(null);
+  const [place, setPlace] = useState<{ left: number; top: number; up: boolean; arrowLeft: number } | null>(
+    null,
+  );
 
   // 자리는 연 순간 한 번 — 말풍선의 실제 높이를 재고 나서.
   // biome-ignore lint/correctness/useExhaustiveDependencies: 연 순간의 좌표만 쓴다.
@@ -118,7 +120,15 @@ export function PinBubble({
       className={`nx-pinbub${place?.up ? " nx-pinbub--up" : ""}`}
       role="dialog"
       aria-label={L.pin.bubble}
-      style={place ? { left: place.left, top: place.top } : { visibility: "hidden" }}
+      style={
+        place
+          ? ({
+              left: place.left,
+              top: place.top,
+              "--pv-arrow": `${place.arrowLeft}px`,
+            } as CSSProperties)
+          : { visibility: "hidden" }
+      }
     >
       <div className="nx-pinbub-h">
         <span className="nx-pnum">{n}</span>
