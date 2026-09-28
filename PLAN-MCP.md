@@ -458,3 +458,25 @@ repoRoot, route)` 가 먼저, `title` 이 있으면 `huntPinFiles` 에 `{ text: 
   먼저 합쳐져도 충돌은 상수 한 줄이다.
 - 옛 `PLAN.md` · `PLAN-UI.md` 는 `5dfe2a65` 에서 걷혔다. 이 문서는 그 번호 체계(L · O · U)를
   잇지 않고 `M-` 로 새로 센다.
+
+---
+
+## 8. 진행 기록
+
+합친 묶음마다 한 줄 — 커밋은 `mcp-int` 줄의 것. 계획과 어긋난 것이 확인된 것만 적는다.
+
+- **A** — `17726563` 잣대: 통계가 도구 이름 집합으로 세고, 중계가 op 마다 시간과 실패
+  종류를 턴 행과 데몬 로그에 남긴다. 계획과 달라진 점 — op 로그가 `debug` 가 아니라
+  `info` 로 남는다(`observeBrowserOp`).
+- **B** — `b41c0798` screen_check 로만 확인한 화면도 장부에 적고, 대화 제출이 귀속 대화와
+  한마디(200자)를 싣는다.
+- **C** — `2c00453c` 스냅샷을 한 줄 표기로 줄이고 액션의 답을 바뀐 줄의 요약으로 바꾸며,
+  같은 DOM 노드는 같은 ref 를 이어 쓰고 `browser_find` 로 필요한 줄만 찾는다.
+- **D** — `f36ef323` screen_check 가 여러 화면 · 화면 폭 · 문제 화면의 그림을 받는다 —
+  화면 하나의 판정은 게이트와 같은 `judgeScreen` 하나에서 난다.
+- **E-1** — 진행 중(다른 워크트리) — `browser_inspect`.
+- **E-2 · E-3** — `7681a858` screen_files · notify_developer(하루 세 통). 계획과 달라진
+  점 — 관찰 지도가 주소 세 모양(전체 주소 · 화면 id · 정규 경로)을 같은 화면으로 접어
+  읽는 보강(`screen-map.ts` 의 `normalizeRoute`)이 함께 들어왔다.
+- **F** — 지침 · README · 버전의 흐름(`DaemonConfig.appVersion` → `COLO_APP_VERSION` →
+  `serverInfo.version`) · `browser_wait` 의 답 문장.

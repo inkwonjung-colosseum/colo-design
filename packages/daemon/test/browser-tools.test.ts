@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { join } from "node:path";
 import { test } from "node:test";
+import { browserMcpEntry } from "../dist/browser-launch.js";
 import {
   BROWSER_TOOLS,
   browserTools,
@@ -11,6 +12,8 @@ import {
   classifyBrowserFailure,
   isBrowserToolName,
   submitNoteOf,
+  waitForAnswer,
+  waitForBudgetMs,
 } from "../dist/browser-tools.js";
 
 test("browserTools — submit_for_review 는 판정이 켜진 세션에만 실린다", () => {
@@ -127,6 +130,17 @@ test("callBrowserTool — 스크린샷은 텍스트가 아니라 image 블록으
   );
 });
 
+/** initialize 응답의 serverInfo — 와이어 JSON 을 in·typeof 로 좁혀 읽는다(인라인 캐스트 회피). */
+function serverInfoOf(message: Record<string, unknown>): Record<string, unknown> {
+  const result: unknown = message.result;
+  if (typeof result === "object" && result !== null && "serverInfo" in result) {
+    const info: unknown = result.serverInfo;
+    // 이미 object 로 좁혀진 뒤다 — 필드 읽기를 위한 느슨한 사전으로 한 번만 편다.
+    if (typeof info === "object" && info !== null) return info as Record<string, unknown>;
+  }
+  return {};
+}
+
 /** stdio JSON-RPC 자식 — 요청 id 별로 한 줄 응답을 기다린다(줄 단위 버퍼 포함). */
 class McpChild {
   private seq = 0;
@@ -172,6 +186,7 @@ test("browser-mcp 악수 — initialize → tools/list → 모르는 도구와 �
   // 닫힌 포트 — 중계 실패까지 결과로 내려오는 길을 함께 본다.
   env.COLO_DAEMON_URL = "http://127.0.0.1:1";
   env.COLO_BROWSER_SECRET = "test-secret";
+  env.COLO_APP_VERSION = "9.9.9";
   const child = spawn(
     process.execPath,
     [join(import.meta.dirname, "..", "dist", "browser-mcp.js")],
@@ -184,8 +199,14 @@ test("browser-mcp 악수 — initialize → tools/list → 모르는 도구와 �
   try {
     const init = await mcp.call("initialize", { protocolVersion: "2025-06-18" });
     assert.equal(init.error, undefined);
-    const serverInfo = (init.result as { serverInfo?: { name?: string } }).serverInfo;
-    assert.equal(serverInfo?.name, "colo-browser");
+    const info = serverInfoOf(init);
+    assert.equal(info.name, "colo-browser");
+    assert.equal(info.title, "콜로디자인 도구");
+    assert.equal(
+      info.version,
+      "9.9.9",
+      "env 의 앱 버전이 serverInfo.version 으로 흘러간다(PLAN-MCP §3.F)",
+    );
 
     const list = await mcp.call("tools/list", {});
     const tools = (list.result as { tools?: Array<{ name?: string }> }).tools ?? [];
@@ -268,4 +289,45 @@ test("BROWSER_TOOLS — 배열 인자는 모두 items 를 선언한다", () => {
       );
     }
   }
+});
+
+test("waitForBudgetMs — 드라이버와 같은 규칙으로 기본 5초 · 상한 30초를 계산한다", () => {
+  assert.equal(waitForBudgetMs(undefined), 5_000, "ms 가 없으면 기본 5초다");
+  assert.equal(waitForBudgetMs(-5), 5_000, "음수는 기본 예산으로");
+  assert.equal(waitForBudgetMs(1_500), 1_500, "있으면 그 값이다");
+  assert.equal(waitForBudgetMs(90_000), 30_000, "상한을 넘으면 30초로 깎인다");
+});
+
+test("waitForAnswer — 참은 사실 한 줄, 거짓은 실제 예산을 말한다(isError 가 아닌 길)", () => {
+  assert.equal(waitForAnswer(true, undefined), "조건을 만족했습니다");
+  assert.equal(waitForAnswer(true, 20_000), "조건을 만족했습니다", "성공은 예산을 말하지 않는다");
+  assert.equal(
+    waitForAnswer(false, undefined),
+    "조건을 5초 안에 만족하지 못했습니다 — 화면을 다시 읽거나 조건을 바꾸십시오",
+  );
+  assert.equal(
+    waitForAnswer(false, 30_000),
+    "조건을 30초 안에 만족하지 못했습니다 — 화면을 다시 읽거나 조건을 바꾸십시오",
+  );
+  assert.equal(
+    waitForAnswer(false, 1_500),
+    "조건을 1.5초 안에 만족하지 못했습니다 — 화면을 다시 읽거나 조건을 바꾸십시오",
+    "초는 잘라 올리지 않는다 — 1.5초가 2초로 불어나지 않는다",
+  );
+  assert.equal(
+    waitForAnswer(false, 90_000),
+    "조건을 30초 안에 만족하지 못했습니다 — 화면을 다시 읽거나 조건을 바꾸십시오",
+    "문장의 예산은 드라이버가 실제로 기다린 값이다",
+  );
+});
+
+test("browserMcpEntry — 앱 버전을 COLO_APP_VERSION 으로 싣는다(있을 때 · 없을 때)", () => {
+  const withVersion = browserMcpEntry(true, "http://127.0.0.1:1", "s", false, "0.3.15");
+  assert.equal(withVersion?.env.COLO_APP_VERSION, "0.3.15", "버전을 알면 env 로 자식에 실린다");
+  const withoutVersion = browserMcpEntry(true, "http://127.0.0.1:1", "s", false);
+  assert.equal(
+    withoutVersion?.env.COLO_APP_VERSION,
+    undefined,
+    "버전을 모르면 env 도 없다 — 자식은 0 으로 산다",
+  );
 });
