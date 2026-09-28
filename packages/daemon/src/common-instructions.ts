@@ -68,9 +68,9 @@ export function stripCommonInstructions(text: string): string {
   const header = lines[index] ?? "";
   if (
     header.startsWith("# Nova Design 공통 규칙") ||
+    // read-legacy — 옛 저장본의 머리.
     header.startsWith("# Colo Design 공통 규칙")
   ) {
-    // read-legacy
     index += 1;
     while (index < lines.length) {
       const row = lines[index]?.trim() ?? "";
