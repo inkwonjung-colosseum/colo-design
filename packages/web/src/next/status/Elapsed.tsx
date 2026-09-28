@@ -31,9 +31,19 @@ export function Elapsed({
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const tick = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(tick);
-  }, []);
+    // 첫 째깍을 다음 초 경계에 맞춘다 — 마운트 순간부터 세면 startedAt 과 어긋나
+    // 한 초가 건너뛰거나 늦게 갈아 입는다. 이후에도 같은 경계로 잇는다.
+    let timer = 0;
+    const schedule = () => {
+      const delay = 1000 - ((Date.now() - startedAt) % 1000);
+      timer = window.setTimeout(() => {
+        setNow(Date.now());
+        schedule();
+      }, delay);
+    };
+    schedule();
+    return () => window.clearTimeout(timer);
+  }, [startedAt]);
   return (
     <span className="nx-since" role="timer">
       {elapsedText(now - startedAt)}

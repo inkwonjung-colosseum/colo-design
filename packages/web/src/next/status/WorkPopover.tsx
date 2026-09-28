@@ -98,8 +98,9 @@ export function WorkPopover({
         <div>{L.work.headerSub(name, start, where)}</div>
       </div>
       <div className={`nx-wp-journey nx-cycle--${cycle}`}>
-        {journey.points.map((point) => (
-          <div key={point.label} className={`nx-wp-step nx-wp-step--${point.state}`}>
+        {journey.points.map((point, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: 계단의 자리가 곧 정체다 — 글자를 key 로 쓰면 국면이 바뀔 때 자리가 버려져 채움이 끊긴다.
+          <div key={index} className={`nx-wp-step nx-wp-step--${point.state}`}>
             {point.label}
           </div>
         ))}

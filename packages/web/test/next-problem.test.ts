@@ -8,6 +8,7 @@ import {
   dismissProblem,
   pickAttention,
   problemFor,
+  problemLineId,
 } from "../src/next/lib/problem.ts";
 
 const REPO: RepoStatus = {
@@ -45,6 +46,52 @@ test("problemFor: 연결 코드 만료는 초대 파일, AI 로그인은 브라�
   const relogin = problemFor({ attention: login }, REPO, L);
   assert.equal(relogin?.body, L.problem.reconnectLogin);
   assert.equal(relogin?.action, "login");
+});
+
+test("problemLineId: 같은 문제는 같은 신원 — 몸통 객체가 새로 지어져도", () => {
+  const a = problemFor({ attention: fixing }, REPO, L);
+  const b = problemFor({ attention: { kind: "ai-fixing", since } }, REPO, L);
+  assert.ok(a !== null && b !== null);
+  assert.notEqual(a, b);
+  assert.equal(
+    problemLineId({ kind: "problem", problem: a }),
+    problemLineId({ kind: "problem", problem: b }),
+  );
+});
+
+test("problemLineId: 제목이나 종류가 바뀌면 다른 신원", () => {
+  const base = problemFor({ attention: notified }, REPO, L);
+  assert.ok(base !== null);
+  const retitled = { ...base, title: `${base.title} 2` };
+  assert.notEqual(
+    problemLineId({ kind: "problem", problem: base }),
+    problemLineId({ kind: "problem", problem: retitled }),
+  );
+  assert.notEqual(
+    problemLineId({ kind: "problem", problem: base }),
+    problemLineId({ kind: "problem", problem: { ...base, kind: "fixing" as const } }),
+  );
+});
+
+test("problemLineId: 초대 줄은 경로가 신원 — 문제 줄과 섞이지 않는다", () => {
+  const problem = problemFor({ attention: fixing }, REPO, L);
+  assert.ok(problem !== null);
+  assert.equal(
+    problemLineId({ kind: "invite", path: "/tmp/a.colo-invite" }),
+    "invite:/tmp/a.colo-invite",
+  );
+  assert.notEqual(
+    problemLineId({ kind: "invite", path: "/tmp/a.colo-invite" }),
+    problemLineId({ kind: "invite", path: "/tmp/b.colo-invite" }),
+  );
+  assert.notEqual(
+    problemLineId({ kind: "invite", path: "/tmp/a.colo-invite" }),
+    problemLineId({ kind: "problem", problem }),
+  );
+});
+
+test("problemLineId: 없는 줄은 null", () => {
+  assert.equal(problemLineId(null), null);
 });
 
 test("problemFor: 다시 연결이 제출 막힘 · 알림 · 고침보다 먼저다", () => {

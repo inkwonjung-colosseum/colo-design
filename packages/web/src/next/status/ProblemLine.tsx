@@ -1,15 +1,27 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { requestInvitePicker } from "../../lib/invite-bus";
 import { AlertIcon, MailIcon, PlugIcon, XIcon } from "../chat/icons";
 import { L } from "../labels";
-import { dismissedProblems, dismissProblem, problemFor } from "../lib/problem";
+import {
+  dismissedProblems,
+  dismissProblem,
+  type ProblemLineBody,
+  problemFor,
+  problemLineId,
+} from "../lib/problem";
+import { SentIcon } from "./parts";
 
 /**
  * 문제 문장 한 줄(README「화면의 문제 문장은 셋이다」) — 상태 줄 바로 아래, 대화와
  * 미리보기에 걸친 한 줄(목업의 `.problem`). 셋째(`다시 연결이 필요해요`)만 사람의 손이 필요하고 버튼이 선다.
  * 문제 문장이 없으면 방금 가져온 초대 파일의 `파일 지우기 · 나중에` 줄(U11)이
  * 그 자리를 쓴다.
+ *
+ * 감싸개는 한 번 뜬 뒤에는 자리를 지킨다 — 들어올 때 · 저절로 풀릴 때 모두
+ * grid 줄(1fr ↔ 0fr)로 부드럽게 열리고 접힌다(problem.css). 마지막으로 보던
+ * 줄을 기억해 접히는 동안 몸통으로 쓰고, `AI가 고치는 중` 이 풀리면 초록 체크를
+ * 잠깐 보인 뒤 접는다.
  */
 export function ProblemLine({
   daemon,
@@ -27,50 +39,89 @@ export function ProblemLine({
   const [login, setLogin] = useState<"idle" | "busy" | "started">("idle");
   // 닫은 문제의 신원 — 이 탭이 사는 동안 같은 문제의 줄은 다시 서지 않는다.
   const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set(dismissedProblems()));
-  // 닫힘 애니메이션 — 줄을 0 높이로 접는 동안은 자리를 곧장 비우지 않는다.
-  const [closing, setClosing] = useState(false);
-  const closeTimers = useRef<number[]>([]);
 
+  // 지금 보여야 할 것 — 문제가 먼저고, 없으면 초대 파일 줄. 몸통은 렌더마다
+  // 새로 지어지므로 효과는 신원 문자열(problem.ts 의 problemLineId)에만 기대고,
+  // 몸통은 같은 신원이면 갈아 끼우지 않는다.
+  const shown: ProblemLineBody | null =
+    problem && !(problem.dismissId !== null && closed.has(problem.dismissId))
+      ? { kind: "problem", problem }
+      : invitePath !== null
+        ? { kind: "invite", path: invitePath }
+        : null;
+  const shownId = problemLineId(shown);
+
+  // 마지막으로 보인 줄과 접힘 — 들고 날 때의 몸통과 grid 줄의 상태. 효과 안에서
+  // 읽는 몸통은 ref 로 — 상태를 의존성에 넣으면 같은 고리로 다시 돈다.
+  const [held, setHeld] = useState<ProblemLineBody | null>(shown);
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const [open, setOpen] = useState(false);
+  // 고침이 저절로 풀린 뒤의 체크 단계 — 접히기 전에 잠깐 선다.
+  const [fixed, setFixed] = useState(false);
+  const timers = useRef<number[]>([]);
+  const later = useCallback((ms: number, after: () => void) => {
+    timers.current.push(window.setTimeout(after, ms));
+  }, []);
   useEffect(() => {
-    const pending = closeTimers.current;
+    const pending = timers.current;
     return () => {
       for (const t of pending) window.clearTimeout(t);
     };
   }, []);
-
-  /** 접어 사라지는 닫기 — 접힘(problem.css 의 0.2s)이 끝난 뒤 마무리를 돌린다.
-      움직임을 줄이기로 둔 탭에선 접힘 없이 곧장 닫는다. */
-  const collapseThen = (after: () => void) => {
-    if (closing) return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      after();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 몸통 객체는 렌더마다 새로 지어진다 — 신원 문자열이 곧 의존성이고 몸통은 그 회차의 것을 쓴다.
+  useEffect(() => {
+    if (shown !== null && shownId !== null) {
+      setFixed(false);
+      if (problemLineId(heldRef.current) !== shownId) setHeld(shown);
+      // 처음 그려지는 감싸개는 접힌 채 시작 — 한 칸 늦게 열어야 0fr → 1fr 이
+      // 움직인다.
+      const frame = requestAnimationFrame(() => setOpen(true));
+      return () => cancelAnimationFrame(frame);
+    }
+    // 저절로 풀린 고침 — 초록 체크를 잠깐 보이고 접는다. 동작을 줄이는 탭에서는
+    // 움직임이 없으니 곧장 접는다.
+    const wasFixing =
+      heldRef.current !== null &&
+      heldRef.current.kind === "problem" &&
+      heldRef.current.problem.kind === "fixing";
+    if (wasFixing && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setFixed(true);
+      later(600, () => {
+        setFixed(false);
+        setOpen(false);
+      });
       return;
     }
-    setClosing(true);
-    closeTimers.current.push(
-      window.setTimeout(() => {
-        setClosing(false);
-        after();
-      }, 240),
-    );
-  };
+    setOpen(false);
+    // 신원만 본다 — 몸통 객체는 렌더마다 새로 지어진다.
+  }, [shownId, later]);
 
-  if (problem && !(problem.dismissId !== null && closed.has(problem.dismissId))) {
+  if (held === null) return null;
+
+  if (held.kind === "problem") {
+    const { problem: line } = held;
     const icon =
-      problem.kind === "fixing" ? (
-        <i className="nx-spin" aria-hidden="true" />
-      ) : problem.kind === "notified" ? (
+      line.kind === "fixing" ? (
+        fixed ? (
+          <span className="nx-problem-fixed">
+            <SentIcon />
+          </span>
+        ) : (
+          <i className="nx-spin" aria-hidden="true" />
+        )
+      ) : line.kind === "notified" ? (
         <MailIcon />
       ) : (
         <PlugIcon />
       );
     return (
-      <div className={`nx-problem-wrap${closing ? " nx-problem-wrap--closed" : ""}`}>
-        <div className={`nx-problem nx-problem--${problem.kind}`} role="status">
+      <div className={`nx-problem-wrap${open ? "" : " nx-problem-wrap--closed"}`}>
+        <div className={`nx-problem nx-problem--${line.kind}`} role="status">
           {icon}
-          <b>{problem.title}</b>
-          <span>{problem.body}</span>
-          {problem.action === "invite" && (
+          <b>{fixed ? L.problem.fixed : line.title}</b>
+          <span>{line.body}</span>
+          {!fixed && line.action === "invite" && (
             <button
               type="button"
               className="nx-btn nx-btn--sm nx-btn--pri"
@@ -79,7 +130,7 @@ export function ProblemLine({
               {L.problem.openInvite}
             </button>
           )}
-          {problem.action === "login" && (
+          {!fixed && line.action === "login" && (
             <button
               type="button"
               className="nx-btn nx-btn--sm nx-btn--pri"
@@ -100,16 +151,17 @@ export function ProblemLine({
                   : L.problem.loginInBrowser}
             </button>
           )}
-          {problem.dismissId !== null && (
+          {!fixed && line.dismissId !== null && (
             <button
               type="button"
               className="nx-btn nx-btn--sm nx-btn--ghost nx-problem-close"
               aria-label={L.problem.dismiss}
               title={L.problem.dismiss}
               onClick={() => {
-                const id = problem.dismissId;
+                const id = line.dismissId;
                 if (id === null) return;
-                collapseThen(() => {
+                setOpen(false);
+                later(240, () => {
                   dismissProblem(id);
                   setClosed((prev) => new Set(prev).add(id));
                 });
@@ -123,20 +175,24 @@ export function ProblemLine({
     );
   }
 
-  if (!invitePath) return null;
-  const discard = window.coloDesignDesktop?.invite?.discard;
+  // 초대 파일 지우기 — 감싸개가 접히는 동안에도 몸통은 지울 경로를 기억한다.
+  const discardable = (() => {
+    const discard = window.coloDesignDesktop?.invite?.discard;
+    return discard !== undefined && invitePath !== null ? { discard, path: invitePath } : null;
+  })();
   return (
-    <div className={`nx-problem-wrap${closing ? " nx-problem-wrap--closed" : ""}`}>
+    <div className={`nx-problem-wrap${open ? "" : " nx-problem-wrap--closed"}`}>
       <div className="nx-problem nx-problem--notified" role="status">
         <AlertIcon />
         <b>{L.inviteCleanup.title}</b>
         <span>{L.inviteCleanup.body}</span>
-        {discard && (
+        {discardable && (
           <button
             type="button"
             className="nx-btn nx-btn--sm nx-btn--pri"
             onClick={() => {
-              void discard(invitePath)
+              void discardable
+                .discard(discardable.path)
                 .then(() => onToast(L.inviteCleanup.removed))
                 .catch(() => onToast(L.inviteCleanup.removeFailed))
                 .finally(onClearInvite);
@@ -148,7 +204,10 @@ export function ProblemLine({
         <button
           type="button"
           className="nx-btn nx-btn--sm nx-btn--ghost"
-          onClick={() => collapseThen(onClearInvite)}
+          onClick={() => {
+            setOpen(false);
+            later(240, onClearInvite);
+          }}
         >
           {L.inviteCleanup.later}
         </button>
