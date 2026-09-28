@@ -384,16 +384,95 @@ export class TypeChecker {
 
 ### 3.D 게이트의 타입 오류 · 지침 · README (H-9 · H-10 · H-11) — 물결 2
 
-B · C 가 합쳐진 뒤 띄운다. 계획은 그때 코드에 맞춰 이 절을 다시 적는다. 지금 정한 것:
+B · C 가 합쳐진 `harness-int` 위에서 한다. B 가 `server.ts` 의 게이트 갈래를 `startGate` ·
+`finishWithoutGate` · `gateFromChangedFiles` · `gateAfterFallback` 로 나눴고, C 가 `TypeChecker` 와
+`repoCommandEnv` 를 서버에 들였다 — 이 묶음은 그 둘을 잇는다.
 
-- 게이트가 이 턴의 바뀐 파일 중 `.ts` · `.tsx` · `.mts` · `.cts` 가 있을 때만 `TypeChecker.check` 를 부르고,
-  그 파일들에 있는 오류만 브리프의 `### 타입 검사` 절에 최대 10줄. 화면 문제와 타입 오류가 둘 다 없으면
-  지금처럼 통과. 모인 화면이 없어도 타입 오류가 있으면 그 절만으로 게이트가 선다.
-- 게이트 행에 `typeErrors?: number` · `typeMs?: number`.
-- 지침: 새 불릿 `repo_diagnostics`, 첫 불릿에 "이번에 고친 파일의 타입 오류도 함께 본다".
-- README: 턴 끝의 화면 확인(바뀐 파일에서 되짚기 · 타입 오류), 턴 통계 표(`fallback` · `typeErrors` ·
-  `typeMs`), 도구가 기계에 남기는 것(`tsc.tsbuildinfo`), 환경 변수(`COLO_DESIGN_BENCH_ENDPOINT`), 테스트 절에
-  벤치 한 단락, 「레포의 check · build 는 막지 않는다」 문단에 게이트의 고침 턴 한 문장.
+**D-1 순수 판정 — `type-check.ts` 에 더한다.**
+
+```ts
+/** 게이트 브리프의 타입 절 상한. */
+export const MAX_TYPE_LINES = 10;
+/** 이 턴이 바꾼 TypeScript 파일인가 — `.ts` · `.tsx` · `.mts` · `.cts`(`.d.ts` 포함). */
+export function isTypeScriptFile(rel: string): boolean;
+/**
+ * 게이트가 브리프에 실을 타입 오류 — result 가 ok 이고 changed 안의 파일에 오류가 있을 때만.
+ * lines 는 `- <file>:<line>:<col> <code> <message 200자>` 를 MAX_TYPE_LINES 까지, 넘으면 끝에
+ * `… 나머지 K건`. errors 는 changed 안의 오류 전체 수. 없으면 null.
+ */
+export function typeTroublesOf(result: TypeCheckResult, changed: string[]): { lines: string[]; errors: number } | null;
+```
+
+**D-2 브리프 — `screen-gate.ts` `gateBrief(troubles, typeLines: string[] = [])`.** 둘째 인자를 더한다.
+기존 호출 · 시험은 그대로 통과해야 한다. 표식은 그대로 `{ kind: "gate", step: "화면 확인" }`(사용자 면에
+새 말 없음).
+
+- 타입 절: `### 타입 검사` · `이번 턴에 고친 파일에서 타입 검사가 찾은 오류입니다.` · typeLines 를 줄마다.
+- 화면 문제가 있으면: 지금의 머리 문장과 화면 블록들, 그 뒤에 타입 절.
+- 화면 문제가 없고 타입 절만 있으면 머리 문장은
+  `이번 턴에 고친 파일을 도구가 타입 검사했습니다. 아래를 고친 뒤 답해 주세요.`
+
+**D-3 게이트 — `preview-drivers.ts`.**
+
+- `PreviewDriverDeps` 에 선택 콜백
+  `typeTroubles?(sessionId: string): Promise<{ lines: string[]; errors: number; ms: number } | null>`.
+- `GateOutcome` 의 모든 갈래에 선택 칸 `typeErrors?: number` · `typeMs?: number` 를 더한다(교차 타입 하나로).
+  `gateOutcomeStats` 가 그 둘을 그대로 넘긴다.
+- `runGate` 의 순서:
+  1. `no-driver` · `no-session` 판정은 지금 그대로 먼저.
+  2. `typeTroubles` 를 부른다(실패는 null). 결과가 있으면 `typeErrors` · `typeMs` 를 결과의 모든 갈래에 싣는다.
+  3. 모인 화면이 없고 타입 줄도 없으면 지금처럼 `no-screens`.
+  4. 모인 화면이 있으면 지금의 미리보기 · origin · 검사 흐름. 단 미리보기 주소가 없을 때(`no-preview`)와
+     origin 을 지난 화면이 0 일 때는, 타입 줄이 있으면 화면 없이 계속 간다.
+  5. 게이트 자신이 깨진 것(`broken`)은 지금 그대로 `broken` 으로 끝낸다(타입 줄도 버린다 — 드물고, 다음
+     사람의 턴이 다시 본다).
+  6. 화면 문제도 타입 줄도 없으면 `ok`. 있으면 지금의 `busy` 판정 · `gatedSessions` · 알림 · 그림 첨부
+     그대로 하고 `session.send(gateBrief(troubles, typeLines), captures)`.
+- 사용자의 한 턴에 한 번 규칙(`gatedSessions`)은 그대로다.
+
+**D-4 서버 — `server.ts`.**
+
+- `new PreviewDrivers({ … })` 에 `typeTroubles` 를 준다: 세션의 작업 공간 → `repo.diff()` 의 경로 중
+  `isTypeScriptFile` 인 것 → 없으면 null(검사를 돌리지 않는다) → 있으면 `this.typeChecker.check(repoRoot,
+  paths.root, repoCommandEnv(process.env))` 와 `typeTroublesOf` → `{ lines, errors, ms }`(오류가 없으면
+  lines `[]` · errors 0 — 검사를 돌린 사실은 통계에 남긴다).
+- 화면이 없어도 타입 오류로 게이트가 서도록: `gateFromChangedFiles` 가 `{ tsChanged: boolean }` 을
+  돌려주고(바뀐 경로 중 `isTypeScriptFile` 이 하나라도 있으면 true), `gateAfterFallback(sessionId,
+  turnDurationMs, tsChanged)` 가 `gatePossible || tsChanged` 이면 `startGate`, 아니면 지금처럼
+  `finishWithoutGate`. 되짚는 사이 새 턴이 시작된 경우의 규칙은 그대로다.
+- `startGate` 는 지금 그대로 — `runGate` 가 화면 없는 타입 게이트를 스스로 처리한다.
+
+**D-5 통계 — `turn-stats.ts`.** `TurnGateRow` 와 `noteGateCheck` 의 outcome 에 `typeErrors?: number` ·
+`typeMs?: number`. 검사를 돌렸으면 0 도 싣는다(돌지 않은 게이트와 오류 0 인 게이트를 가른다).
+
+**D-6 지침 — `common-instructions.ts`.**
+
+- 첫 불릿의 `턴이 끝나면 기계가 그 화면을 다시 열어 확인하므로,` 를
+  `턴이 끝나면 기계가 그 화면을 다시 열고 이번에 고친 파일의 타입 오류도 함께 보므로,` 로.
+- `screen_files` 불릿 바로 뒤에 새 불릿 한 줄(소스는 템플릿 문자열이라 백틱은 이웃 불릿들처럼 `\`` 로 쓴다):
+  `- 편집 사이사이의 확인은 \`repo_diagnostics\` 로 한다 — 이번에 바뀐 파일의 타입 오류부터 몇 초 안에 돌려준다. 레포의 검사 명령 전체는 답하기 전에 한 번만 돌린다.`
+- 머리 주석에 날짜 한 줄(2026-09-28 — repo_diagnostics · 게이트의 타입 오류, PLAN-HARNESS §3.D).
+- 불릿은 `- ` 한 줄 형식을 지킨다(`stripCommonInstructions` 가 그 모양만 규칙으로 센다).
+  `common-instructions.test.ts` 가 세는 것이 있으면 맞춘다.
+
+**D-7 README.** 같은 목소리로, 해당 문단만 고친다(새 절을 만들지 않는다).
+
+| 자리 | 고칠 것 |
+|---|---|
+| 「턴 끝의 화면 확인」 | 가리킨 화면이 없을 때 바뀐 파일에서 되짚는 두 길(한 화면에만 속한 코드 파일의 관찰 · Next.js 고정 page), 파일 이름으로 주소를 짓지 않는 이유 한 문장. 이번 턴에 고친 TypeScript 파일의 타입 오류가 브리프의 `### 타입 검사` 절로 가고, 화면이 없어도 그 절만으로 게이트가 선다. "판정의 범위가 '이 턴이 연 화면' 인 이유는 하나다: 바뀐 파일에서 화면 주소를 끌어낼 길이 없다" 는 문장은 지금 사실에 맞게 고친다 |
+| 「자동 보관 · 제출 · 반영됨」 의 check · build 문단 | 타입 오류는 게이트가 고침 턴으로 AI 에게 돌려줄 뿐 보관 · 제출을 막지 않는다는 한 문장 |
+| 「코멘트 핀」 | 정체가 빈손인 핀의 후보 길이 주소(`(주소)`) → 관찰(`(관찰)`) 순서 |
+| `screen_files` · 도구 목록을 말하는 자리 | `(주소)` 줄, 새 도구 `repo_diagnostics`(도구 수를 말하면 그 수도) |
+| 「도구가 기계에 남기는 것」 표 | `~/.colo-design/projects/<slug>/tsc.tsbuildinfo` 한 줄. 턴 통계 줄에 게이트 행의 `fallback` · `typeErrors` · `typeMs` |
+| 환경 변수 표 | `COLO_DESIGN_BENCH_ENDPOINT` — 개발 실행의 데스크톱이 벤치 접속 파일을 적는 자리, 패키징된 앱은 보지 않는다 |
+| 「테스트」 | 재생 벤치 한 단락과 명령 셋(데스크톱을 접속 파일과 함께 띄우기 · `pnpm bench run …` · `pnpm bench compare …`), 자세한 것은 `scripts/bench/README.md` |
+
+**시험**: `type-check.test.ts` 에 `isTypeScriptFile` · `typeTroublesOf`(바뀐 파일만 · 10줄 상한과 나머지 ·
+ok 아닌 결과는 null · 오류 0 은 null). 게이트 브리프 시험이 있는 파일(`screen-check.test.ts` 등 —
+`rg gateBrief packages/daemon/test` 로 찾는다)에 타입 절만 · 화면+타입 · 둘째 인자 없음(기존 모양 그대로).
+`runGate` 의 타입 갈래는 가짜 deps 로 부를 수 있으면 시험(화면 없음+타입 줄 → 브리프 전송 · `no-preview`
++타입 줄 → 전송 · 타입 줄 없음 → 지금과 같은 skipped), 어려우면 손 검증 시나리오로 둔다.
+`turn-stats-measure.test.ts` 에 `typeErrors: 0` 이 실리는 것 한 건.
 
 ---
 
