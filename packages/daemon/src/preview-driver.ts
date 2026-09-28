@@ -6,6 +6,7 @@
  * never fires. 인앱 브라우저부터 이 모듈은 두 번째 계약 —
  * 에이전트가 pane 의 페이지를 만지는 `BrowserDriver` — 도 선언한다.
  */
+import type { ColoDesignCommentTarget } from "@colo-design/protocol";
 
 /** The widths a screen can be looked at in — the 폭 toggle's, shared. */
 export type PreviewViewport = "mobile" | "tablet" | "desktop";
@@ -124,6 +125,13 @@ export interface BrowserDriver {
   consoleLines(): Promise<PreviewConsoleLine[]>;
   evaluate(fn: string): Promise<unknown>;
   waitFor(target: { text?: string; url?: string; ms?: number }): Promise<boolean>;
+  /**
+   * ref 하나의 정체 조사 (PLAN-MCP §3.E-1) — 핀 봉투의 element 칸
+   * (ColoDesignCommentTarget) 와 같은 모양에 owners 까지 얹은 것. 낡은 ref 는
+   * 액션과 같은 문장으로 던진다. 파일 후보 보강(enrichIdentity)은 데몬이
+   * 덧입힌다 — 드라이버는 페이지가 아는 것만 말한다.
+   */
+  inspect(target: { ref: string }): Promise<{ url: string; element: ColoDesignCommentTarget }>;
   /**
    * op 가 데몬의 타임아웃을 넘겨도 끝나지 않을 때의 강제 복구 — 디버거를
    * 떼고 붙임 지킴이(keepAttached 인터벌)와 ref 세대를 비운다. 데몬의 큐

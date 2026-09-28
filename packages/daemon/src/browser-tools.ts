@@ -49,12 +49,13 @@ export interface BrowserRelay {
 }
 
 /**
- * 계약의 20개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
+ * 계약의 22개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
  * op `type`으로, `browser_wait`가 op `waitFor`로, `browser_console`이 op
  * `consoleLines`로 걸리는 것만 이름 차이다. `browser_find`는 op 가 아니라
- * 스냅샷의 거름이다(PLAN-MCP §3.C). `screen_check`는 op `screenCheck`로
- * 게이트와 같은 판정을 턴 안에서 앞당겨 본다. pane 이 필요한 도구는 화면의
- * 페이지를 겨누고(pane 은 프로젝트당 페이지 하나라 탭 주소는 없다),
+ * 스냅샷의 거름이고(PLAN-MCP §3.C), `browser_inspect`는 핀의 정체 조사를
+ * 핀 없이 돌리는 op(§3.E-1)다. `screen_check`는 op `screenCheck`로 게이트와
+ * 같은 판정을 턴 안에서 앞당겨 본다. pane 이 필요한 도구는 화면의 페이지를
+ * 겨누고(pane 은 프로젝트당 페이지 하나라 탭 주소는 없다),
  * `screen_files` · `notify_developer` 는 pane 없이 데몬만으로 답한다.
  */
 export const BROWSER_TOOLS: ToolDef[] = [
@@ -90,6 +91,17 @@ export const BROWSER_TOOLS: ToolDef[] = [
       role: { type: "string", description: "정확히 맞출 역할 — 예: button, link." },
       limit: { type: "number", description: "최대 줄 수 (기본 10, 최대 30)." },
     },
+  },
+  {
+    name: "browser_inspect",
+    op: "inspect",
+    description:
+      "스냅샷의 ref 하나의 정체(컴포넌트 · testid · 경로 · 스타일)와 그 요소가 살 파일 후보를 돌려준다 — " +
+      "사용자가 핀 없이 화면의 일부를 말로 가리킬 때 browser_find 로 찾은 뒤 부른다.",
+    properties: {
+      ref: { type: "string", description: "조사할 요소의 ref." },
+    },
+    required: ["ref"],
   },
   {
     name: "browser_screenshot",

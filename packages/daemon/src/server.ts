@@ -5,11 +5,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { homedir } from "node:os";
 import {
   type ClientMessage,
+  type ColoDesignCommentTarget,
   composeAttention,
   PROTOCOL_VERSION,
   type ProjectSummary,
   parseClientMessage,
   type ServerMessage,
+  type SessionPinHint,
 } from "@colo-design/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
 import type { Diagnostic } from "./agent/driver.js";
@@ -25,6 +27,7 @@ import {
   findInSnapshot,
   focusLineOf,
   isWholeSnapshot,
+  renderIdentity,
   renderSnapshot,
   type SnapshotRender,
   snapshotLines,
@@ -61,7 +64,7 @@ import { MachineSetting } from "./machine-setting.js";
 import { type DaemonNotice, noticeForState } from "./notices.js";
 import { AgentLogin } from "./onboarding.js";
 import { realpathBestEffort } from "./paths.js";
-import { huntPinFiles } from "./pin-files.js";
+import { enrichIdentity, huntPinFiles, type IdentityFiles } from "./pin-files.js";
 import { PlanTracker } from "./plan-tracker.js";
 import { daemonOwnedPorts } from "./preview-claim.js";
 import type {
@@ -126,6 +129,7 @@ const BROWSER_OPS: Record<string, true> = {
   forward: true,
   snapshot: true,
   find: true,
+  inspect: true,
   screenshot: true,
   click: true,
   type: true,
@@ -160,6 +164,7 @@ const BROWSER_OP_TIMEOUT_MS = 90_000;
 const BROWSER_QUIET_OPS: Record<string, true> = {
   snapshot: true,
   find: true,
+  inspect: true,
   screenshot: true,
   consoleLines: true,
   waitFor: true,
@@ -206,6 +211,19 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * inspect 답의 화면 id — 페이지(pageContext)와 같은 판정: 앞 슬래시 없는
+ * 경로, 루트는 `index`. 못 읽는 주소는 undefined (관찰 지도의 열쇠가 아니다).
+ */
+function screenIdOf(url: string): string | undefined {
+  try {
+    const id = new URL(url).pathname.replace(/^\/+/, "");
+    return id === "" ? "index" : id;
+  } catch {
+    return undefined;
+  }
+}
+
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
@@ -243,6 +261,8 @@ async function callBrowserOp(
         limit: asNumber(params.limit),
       });
     }
+    case "inspect":
+      return driver.inspect({ ref: String(params.ref ?? "") });
     case "screenshot":
       return driver.screenshot({
         ref: asString(params.ref),
@@ -1721,22 +1741,24 @@ export class DaemonServer {
   /**
    * 스냅샷 다이어트의 결과 가공 (PLAN-MCP §3.C) — onInternalBrowser 의
    * 가공 줄을 이 한 곳으로 모은다. snapshot 은 렌더된 텍스트를, find 는
-   * 거른 줄을, 액션 11개는 주소 · 제목 · 포커스 · 바뀐 줄의 요약을 내리고
-   * 세션의 마지막 렌더 줄을 갈아둔다(다음 액션 요약의 before). 부분
-   * 트리(ref) 스냅샷은 기준을 갈지 않는다 — 페이지 전체가 아니므로.
+   * 거른 줄을, inspect 는 정체 + 파일 후보의 한 장(§3.E-1)을, 액션 11개는
+   * 주소 · 제목 · 포커스 · 바뀐 줄의 요약을 내리고 세션의 마지막 렌더 줄을
+   * 갈아둔다(다음 액션 요약의 before). 부분 트리(ref) 스냅샷은 기준을 갈지
+   * 않는다 — 페이지 전체가 아니므로.
    */
-  private shapeBrowserResult(
+  private async shapeBrowserResult(
     sessionId: string,
     op: string,
     params: Record<string, unknown>,
     result: unknown,
-  ): unknown {
+  ): Promise<unknown> {
     if (op === "snapshot") {
       const rendered = result as SnapshotRender;
       if (isWholeSnapshot(params)) this.browserLastRender.set(sessionId, rendered.fullLines);
       return rendered.text;
     }
     if (op === "find") return (result as FindRender).text;
+    if (op === "inspect") return this.shapeInspect(sessionId, params, result);
     if (BROWSER_SUMMARIZE_OPS[op] !== true) return result;
     const report = result as BrowserActionReport & { settled?: boolean };
     const after = snapshotLines(report.snapshot);
@@ -1749,6 +1771,40 @@ export class DaemonServer {
     });
     this.browserLastRender.set(sessionId, after);
     return summary.text;
+  }
+
+  /**
+   * inspect 결과의 보강 (§3.E-1) — 핀 턴(enrichCommentsTurn)과 같은 순서로
+   * 클론을 훑아 파일 후보 · 발췌를 얹고 정체 한 장을 조립한다. 조사한 화면은
+   * 이 턴의 화면이다: notePinned 가 게이트 · screen-map.jsonl · 「이번 작업」의
+   * 재료이므로 navigate · screen_check 와 같은 자리에 전체 주소로 적는다.
+   * 세션의 프로젝트(활성이 아님)가 클론의 주인 — 게이트와 같은 겨냥이다.
+   */
+  private async shapeInspect(
+    sessionId: string,
+    params: Record<string, unknown>,
+    result: unknown,
+  ): Promise<string> {
+    const inspected = result as { url?: unknown; element?: ColoDesignCommentTarget };
+    const element = inspected.element;
+    const url = typeof inspected.url === "string" ? inspected.url : "";
+    const workspaces = this.workspaceOfSession(sessionId);
+    const screen = screenIdOf(url);
+    const files = element
+      ? await enrichIdentity(
+          workspaces?.paths.repoRoot ?? "",
+          {
+            id: String(params.ref ?? ""),
+            ...(element.attrs?.testId ? { testId: element.attrs.testId } : {}),
+            ...(element.owners && element.owners.length > 0 ? { owners: element.owners } : {}),
+            ...(element.text ? { text: element.text } : {}),
+            ...(screen !== undefined ? { screen } : {}),
+          } satisfies SessionPinHint,
+          workspaces ? { projectRoot: workspaces.paths.root } : null,
+        ).catch((): IdentityFiles => ({ candidates: [], observed: false }))
+      : { candidates: [], observed: false };
+    if (url !== "") this.drivers.notePinned(sessionId, url);
+    return element ? renderIdentity(element, files) : String(result);
   }
   /**
    * `screen_check` 도구의 판정 (빠른 수정, 2026-09-20): 세션이 사는
