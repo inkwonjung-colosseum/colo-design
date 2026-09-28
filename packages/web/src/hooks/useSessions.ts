@@ -72,6 +72,36 @@ function forgetLastThreads(slug: string | null) {
     // 손상된 기록은 버려진 것과 같다 — 조용히 건너뛴다.
   }
 }
+/**
+ * 모델 칩 · ⚡ 토글이 읽고 쓰는 주인(PLAN-MODEL-CHIP §3.1). `next` 는 다음
+ * 새 대화의 저장된 선택(설정과 같은 값의 세 얼굴 중 하나)이고 `session` 은
+ * 열린 대화의 몸이 답하는 상태다 — 두 주인이 한 칩을 섞어 읽는 것이 이
+ * 인터페이스가 없던 시절의 결함이었다.
+ */
+export interface ChipTarget {
+  subject: "next" | "session";
+  /** 낙관 상태의 열쇠 — session 은 대화 id, next 는 `next:<provider>` */
+  key: string;
+  provider: string;
+  model: string | null;
+  effort: EffortLevel | null;
+  fastMode: boolean;
+  fastModeBlocked: string | null;
+  models: SessionModelInfo[];
+  setModel(model: string | null): Promise<void>;
+  setEffort(effort: EffortLevel | null): Promise<void>;
+  /**
+   * session 은 데몬이 답한 상태, next 는 저장된 선택. `key` 는 답한 주인의
+   * 열쇠 — 되살린 대화는 새 id 일 수 있어 누른 순간의 `target.key` 와 다를
+   * 수 있다. null = 못 했음.
+   */
+  setFast(on: boolean): Promise<{ on: boolean; blocked: string | null; key: string } | null>;
+  /**
+   * 다음 새 대화의 AI 고르기 — `next` 만 있다. 열린 대화는 태어난 AI 에
+   * 묶이므로 session 은 null 이고, 칩은 그 사실을 한 줄로 말한다.
+   */
+  pickProvider: ((id: string) => void) | null;
+}
 
 /** The chat state of the one workspace, as its views consume it. */
 export interface Sessions {
@@ -90,38 +120,17 @@ export interface Sessions {
    */
   awaitingTurn: { sessionId: string; since: number } | null;
   usage: ContextUsage | null;
-  /**
-   * 모델·추론·권한 chips. Always present: until a session can answer, the
-   * chips report the stored choice this workspace will start its next session
-   * with, so they can be set before the workspace is even connected.
-   */
-  selector: SessionSelectors;
   /** The /command palette rows of the active thread. */
   commands: SessionCommand[];
-  setModel: (model: string | null) => Promise<void>;
   /**
-   * 빠르게 칩 — 같은 모델을 더 빠른 응답으로 돌린다. 살아 있는 대화 id 를
-   * 돌려준다(데몬이 다시 일으킨 몸의 id 와 같을 수 있다): 누른 뒤 선택자를
-   * 다시 읽는 쪽이 그 id 로 묻는다. 되살리지 못한 대화면 null — 칩은
-   * 제자리로 돌아간다.
+   * 칩의 주인을 정해 준다(PLAN-MODEL-CHIP D2) — 모델 칩 · ⚡ 토글 · AI 고르기는
+   * 모두 이 타깃으로 읽고 쓴다. `next` 는 다음 새 대화의 저장된 선택(설정과
+   * 같은 값)이고 `session` 은 열린 대화의 몸. 홈도 `next` 다: 홈의 칩이 대화
+   * 칸 뒤에 숨은 열린 대화의 값을 섞어 읽던 것이 이 자리가 없던 시절의
+   * 결함이었다(AI 체크는 설정에서 · 모델 목록은 숨은 대화에서 읽고, 고른
+   * 모델이 숨은 대화에 들어갔다).
    */
-  setFastMode: (on: boolean) => Promise<string | null>;
-  /** 새 대화 빈 자리의 ⚡ 선택 — 다음 세션이 켜진 채로 태어난다. */
-  setFastPick: (on: boolean) => void;
-  setEffort: (effort: EffortLevel | null) => Promise<void>;
-  /**
-   * 새 대화가 어느 프로바이더로 돌지 골라 둔다 — 설정의 프로바이더 목록과 같은
-   * 한 군데를 쓴다(switchProviderPatch): 컴포저의 칩도 설정도 다음 세션의
-   * 프로바이더를 정하는 같은 사실의 두 얼굴이다. 열려 있는 대화는 건드리지
-   * 않는다 — 스레드는 태어난 프로바이더에 묶인다.
-   */
-  pickProvider: (id: string) => void;
-  /**
-   * 설정에 골라 둔 다음 새 대화의 프로바이더 — `pickProvider`가 쓴 값의 읽는
-   * 쪽. 열린 대화의 프로바이더(`selector.provider`)와 갈라질 수 있다: 스레드는
-   * 태어난 프로바이더에 묶이고, 고름은 다음 대화부터 먹는다.
-   */
-  chatProvider: string;
+  chipTarget: (subject: "next" | "session") => ChipTarget;
   error: string | null;
   setError: (error: string | null) => void;
   /**
@@ -277,7 +286,10 @@ export function useSessions(
    * 아니라 settings 에 남기지 않고 다음 세션 한 번에만 실어 보낸다.
    */
   const [commands, setCommands] = useState<SessionCommand[]>([]);
-  const [catalog, setCatalog] = useState<SessionModelInfo[]>(() => loadModelCatalog(chat.provider));
+  const [catalog, setCatalog] = useState<{ provider: string; rows: SessionModelInfo[] }>(() => ({
+    provider: chat.provider,
+    rows: loadModelCatalog(chat.provider),
+  }));
   const [error, setError] = useState<string | null>(null);
   const [historyFailed, setHistoryFailed] = useState(false);
 
@@ -347,8 +359,13 @@ export function useSessions(
    * 갈아끼운다.
    */
   useEffect(() => {
-    setCatalog(loadModelCatalog(chat.provider));
+    setCatalog({ provider: chat.provider, rows: loadModelCatalog(chat.provider) });
   }, [chat.provider]);
+  // 갈아끼움은 효과에 맡겼으므로, 프로바이더가 바뀐 커밋의 렌더에서는 상태가
+  // 아직 이전 AI 의 행이다 — 그 낡은 목록이 새 AI 의 씨앗·칩에 새어 들어
+  // 이전 AI 의 첫 모델을 적던 결함이었다. 읽는 곳은 모두 이 파생값으로.
+  const catalogRows =
+    catalog.provider === chat.provider ? catalog.rows : loadModelCatalog(chat.provider);
 
   /**
    * Which session the selector state is about. The fetch effect guards its
@@ -366,7 +383,7 @@ export function useSessions(
     if (next.models.length > 0) {
       const provider = next.provider ?? "claude";
       saveModelCatalog(provider, next.models);
-      if (provider === startRef.current.chat.provider) setCatalog(next.models);
+      if (provider === startRef.current.chat.provider) setCatalog({ provider, rows: next.models });
     }
   }, []);
   const startSession = useCallback(
@@ -990,83 +1007,114 @@ export function useSessions(
   };
 
   /**
-   * ⚡ 칩 — 컴포저의 토글 버튼이 부른다. 되살린 대화의 몸은 새 id 일 수 있으므로
-   * 선택자를 다시 읽을 대상 id 를 돌려준다(버튼이 그 답으로 선다 — 요금제가
-   * 막으면 제자리).
-   */
-  const switchFast = async (on: boolean): Promise<string | null> => {
-    const target = await liveTarget();
-    if (target === null) return null;
-    await api.setFastMode(target, on);
-    return target;
-  };
-
-  /**
-   * 아직 태어나지 않은 대화의 ⚡ — 새 대화 빈 자리의 칩이 부른다. 세션 몸이
-   * 없으므로 다음 세션의 선택(chat pick)으로 남는다. startSession 이 그 선택을
-   * 실어 다음 세션을 켜진 채로 태어나게 한다.
+   * 아직 태어나지 않은 대화의 ⚡ — 다음 세션의 선택(chat pick)으로 남는다.
+   * startSession 이 그 선택을 실어 다음 세션을 켜진 채로 태어나게 한다.
    */
   const setFastPick = (on: boolean) => {
     onChatChange(withChatPick(chat, chat.provider, { fast: on }));
   };
 
   /**
-   * 설정 can change these while a thread is open, and the daemon keeps a copy
-   * per session — so a choice made in the dialog has to reach the live thread
-   * too. Without this a planner sets 화면 수정은 바로 and keeps getting cards
-   * in the very conversation they set it for.
-   *
-   * Keyed on the VALUES, not on the session: opening another thread must not
-   * re-push settings `startSession` already carried at create time.
+   * 칩의 주인(PLAN-MODEL-CHIP §3) — `next` 는 다음 새 대화의 저장된 선택,
+   * `session` 은 열린 대화의 몸. next 는 api 에 닿는 길이 전혀 없다: 홈에서
+   * 고른 모델이 대화 칸 뒤에 숨은 열린 대화로 새어 들어가던 결함이 바로 그
+   * 새어 들어감이었다.
    */
-  const pushed = useRef<ChatSettings | null>(null);
-  useEffect(() => {
-    const last = pushed.current;
-    pushed.current = chat;
-    // selector 응답이 아직 오지 않았으면 이 세션의 프로바이더를 모른다 —
-    // Claude 기본값으로 착각하면 비(非)Claude 대화에 Claude 모델을 밀어 넣는다.
-    // 모르면 밀지 않는다.
-    if (!activeId || !last || !selector) return;
-    const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
-    // A settings edit reaches the live thread only when the thread's
-    // provider is the one the dialog is editing — a Codex session must not
-    // receive a Claude alias, and the Claude enum must not reach a provider
-    // that names its own modes.
-    const same = (selector.provider ?? "claude") === chat.provider;
-    if (same && last.model !== chat.model) void api.setModel(activeId, chat.model).catch(fail);
-    if (same && last.effort !== chat.effort) void api.setEffort(activeId, chat.effort).catch(fail);
-  }, [activeId, chat, selector, api]);
-
-  /**
-   * 새 대화의 프로바이더 — 설정의 프로바이더 목록과 같은 한 군데를 쓴다. 칩에서
-   * 고른 것이 곧 설정에 남는다: 다음 세션은 그 프로바이더로 돌고, 열려 있는
-   * 대화는 태어난 프로바이더에 묶여 무관하다.
-   */
-  const pickProvider = useCallback(
-    (id: string) => onChatChange(switchProviderPatch(chat, id)),
-    [onChatChange, chat],
-  );
+  const chipTarget = (subject: "next" | "session"): ChipTarget => {
+    if (subject === "next") {
+      const provider = chat.provider;
+      const key = `next:${provider}`;
+      // 데몬이 먼저(세션 없는 probe 와 산 세션이 함께 채우는 최신 목록),
+      // 로컬 캐시가 받친다 — 연결 전에만 쓸모다(옛 빌드의 캐시는
+      // supportsFastMode 가 없어 켜진 것으로 읽힌다).
+      const fromDaemon = daemon.status?.modelsByProvider?.[provider];
+      const models = fromDaemon?.length ? fromDaemon : catalogRows;
+      return {
+        subject,
+        key,
+        provider,
+        model: chat.model,
+        effort: chat.effort,
+        fastMode: chat.fastMode === true,
+        fastModeBlocked: null,
+        models,
+        setModel: (model) => {
+          // 빠르게를 받지 않는 행을 골랐으면 빠르게 선택도 끈다 — CLI 도 모델을
+          // 그쪽으로 옮기면 그렇게 한다. 켠 채로 태어나면 데몬의
+          // setFastMode(true) 가 CLI 에게 모델을 몰래 바꾸게 하므로.
+          const pick =
+            modelRowOf(models, model)?.supportsFastMode === false && chat.fastMode
+              ? { model, fast: false }
+              : { model };
+          onChatChange(withChatPick(chat, provider, pick));
+          return Promise.resolve();
+        },
+        setEffort: (effort) => {
+          onChatChange(withChatPick(chat, provider, { effort }));
+          return Promise.resolve();
+        },
+        setFast: (on) => {
+          setFastPick(on);
+          return Promise.resolve({ on, blocked: null, key });
+        },
+        pickProvider: (id) => onChatChange(switchProviderPatch(chat, id)),
+      };
+    }
+    // session 타깃 — 열린 대화. 선택자가 오기 전에는 목록 행의 provider 로
+    // 어휘를 맞추고 나머지는 빈 값: 칩은 AI 이름만 선다가 선택자가 오면
+    // 정정된다(계획 §9). 죽은 질의의 선택자는 빈 목록을 돌려주므로 데몬의
+    // 캐시가 목록을 받친다.
+    const provider =
+      selector?.provider ??
+      list.find((row) => row.sessionId === activeId)?.provider ??
+      chat.provider;
+    return {
+      subject,
+      key: activeId ?? "session:none",
+      provider,
+      model: selector?.model ?? null,
+      effort: selector?.effort ?? null,
+      fastMode: selector?.fastMode === true,
+      fastModeBlocked: selector?.fastModeBlocked ?? null,
+      models: selector?.models.length
+        ? selector.models
+        : (daemon.status?.modelsByProvider?.[provider] ?? []),
+      setModel: switchModel,
+      setEffort: switchEffort,
+      setFast: async (on) => {
+        // 칩의 부탁이 닿을 산 몸 — 죽은 대화(데몬 재시작이 거둔 몸 · 크래시가
+        // 남긴 error)는 보내기와 같은 길로 되살린다. 되살리지 못하면 null,
+        // 부탁은 죽은 몸에 닿지 않는다(실사 결함 2026-09-28: 데몬 재시작 뒤
+        // ⚡·모델 칩이 닫힌 세션 id 를 두드려 눌러도 무응답이었다).
+        const target = await liveTarget();
+        if (target === null) return null;
+        await api.setFastMode(target, on);
+        // 되살린 몸은 새 id 일 수 있다 — 그 몸에서 다시 읽은 선택자가 답의
+        // 주인이다(버튼은 그 답으로 선다 — 요금제가 막으면 제자리).
+        const next = await api.selectors(target);
+        applySelectors(target, next);
+        return { on: next.fastMode === true, blocked: next.fastModeBlocked, key: target };
+      },
+      pickProvider: null,
+    };
+  };
 
   // 메뉴에서 '자동' 행은 없어졌다 — 그러니 비어 있던 자리도 허공에 남을 수
-  // 없다. 목록(또는 산 세션이 말해 주는 모델)이 처음 이름을 대는 순간, 모델은
-  // 그 행을 데려가고 노력은 모델이 받는 수준의 가운데에서 시작한다. 사용자가
-  // 누르는 것과 같은 길(switchModel·switchEffort)이므로 저장·세션 반영·
-  // 되돌림까지 같이 된다. 공급자당 한 번만 시도한다 — 거절이 되돌림을 남기면
-  // 이 효과가 다시 불려 무한히 재시도하는 것을 막는다.
+  // 없다. 목록(또는 데몬이 말해 주는 모델)이 처음 이름을 대는 순간, 다음
+  // 대화의 모델은 그 행을 데려가고 노력은 모델이 받는 수준의 가운데에서
+  // 시작한다. next 만 본다(PLAN-MODEL-CHIP §3.4) — 열린 대화는 이미 모델을
+  // 가지고 있으니 씨앗이 필요 없고, 숨은 대화의 선택자를 여기 섞으면 홈의
+  // 씨앗이 그 대화로 새어 든다. 공급자당 한 번만 시도한다 — 거절이 되돌림을
+  // 남기면 이 효과가 다시 불려 무한히 재시도하는 것을 막는다.
   const seededModelFor = useRef<string | null>(null);
   const seededEffortFor = useRef<string | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onChatChange 는 매 렌더 새 몸이지만 한 번 guards가 재시도를 막는다 — 의존성에서 일부러 뺀다.
   useEffect(() => {
-    const provider = selector?.provider ?? chat.provider;
-    const models = selector?.models.length
-      ? selector.models
-      : catalog.length > 0
-        ? catalog
-        : (daemon.status?.modelsByProvider?.[provider] ?? []);
+    const provider = chat.provider;
+    const fromDaemon = daemon.status?.modelsByProvider?.[provider];
+    const models = fromDaemon?.length ? fromDaemon : catalogRows;
     if (models.length === 0) return;
-    const pick =
-      provider === chat.provider
-        ? { model: chat.model, effort: chat.effort }
-        : (chat.byProvider?.[provider] ?? { model: null, effort: null });
+    const pick = { model: chat.model, effort: chat.effort };
     // 초대 v4(PLAN 단계 5): 사용자가 이 공급자의 모델·생각 시간을 고른 적이
     // 없을 때만 프로젝트의 처음 값이 씨앗이 된다 — 고른 값이 있으면 그것이
     // 이기고, defaults.provider 가 다른 공급자를 겨누면 여기서는 아무 일도
@@ -1082,12 +1130,10 @@ export function useSessions(
       const row =
         (defaultsFit && projectDefaults.model
           ? modelRowOf(models, projectDefaults.model)
-          : undefined) ??
-        modelRowOf(models, selector?.model ?? null) ??
-        models[0];
+          : undefined) ?? models[0];
       if (!row) return;
       seededModelFor.current = provider;
-      void switchModel(row.value);
+      onChatChange(withChatPick(chat, provider, { model: row.value }));
       return;
     }
     if (pick.effort == null) {
@@ -1100,12 +1146,9 @@ export function useSessions(
           : levels[Math.floor(levels.length / 2)];
       if (!row?.supportsEffort || !level) return;
       seededEffortFor.current = provider;
-      void switchEffort(level);
+      onChatChange(withChatPick(chat, provider, { effort: level }));
     }
-    // switchModel·switchEffort는 매 렌더 새 몸이지만 위의 한 번 guards가
-    // 재시도를 막는다 — 의존성에서 일부러 뺀다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selector, chat, catalog, daemon.status, switchModel, switchEffort]);
+  }, [chat, catalogRows, daemon.status]);
 
   return {
     activeId,
@@ -1122,27 +1165,8 @@ export function useSessions(
     reopen,
     create,
     fresh,
-    selector: selector ?? {
-      provider: chat.provider,
-      model: chat.model,
-      effort: chat.effort,
-      // 빠르게 — 아직 태어나지 않은 대화의 자리에서는 다음 세션의 ⚡ 선택이
-      // 이 값이 된다(태어난 대화는 데몬의 답이 이 견적을 덮는다).
-      fastMode: chat.fastMode === true,
-      fastModeBlocked: null,
-      // Local cache first (it matches what this planner last saw), then the
-      // daemon's own copy so a fresh browser still gets a real picker —
-      // both keyed by the provider the next session will run on.
-      models:
-        catalog.length > 0 ? catalog : (daemon.status?.modelsByProvider?.[chat.provider] ?? []),
-    },
+    chipTarget,
     commands,
-    setModel: switchModel,
-    setEffort: switchEffort,
-    setFastMode: switchFast,
-    setFastPick,
-    pickProvider,
-    chatProvider: chat.provider,
     remove,
     confirmRemove,
     cancelRemove,

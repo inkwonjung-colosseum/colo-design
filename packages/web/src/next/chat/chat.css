@@ -933,6 +933,14 @@
   line-height: 1.4;
 }
 
+/* 누르지 않는 AI 한 줄(열린 대화) — 고르는 줄과 같은 문양이지만 누를 수
+   없다: 손가락 포인터도, 마우스를 얹은 밝음도 없다. */
+.nx .nx-model-pop .nx-mi--static,
+.nx .nx-model-pop .nx-mi--static:hover {
+  cursor: default;
+  background: none;
+}
+
 .nx .nx-model-pop .nx-mt small {
   font-size: 12.5px;
 }
