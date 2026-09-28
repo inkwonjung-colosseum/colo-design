@@ -18,6 +18,8 @@ packages/desktop/resources/bin/
 packages/desktop/.dev-userData/
 packages/desktop/.dev-userData*/
 .test-logs/
+# 재생 벤치(PLAN-HARNESS §3.A)의 결과 파일 — 실행마다 쌓이는 산출물이다.
+bench-results/
 # 수동으로 뭉친 데스크톱 산물(공유용 tgz) — 릴리스 에셋은 워크플로우가 짓는다.
 /*.tgz
 
