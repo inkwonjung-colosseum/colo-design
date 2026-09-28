@@ -422,6 +422,33 @@ export function notifyDeveloperAnswer(via: "pr" | "issue" | "slack" | "none"): s
 }
 
 /**
+ * browser_wait 의 예산 규칙(밀리초) — 드라이버(preview-driver.ts)의 기본
+ * 5초 · 상한 30초와 같은 수를 데몬이 따로 알고 있어야, 실패 문장이 실제로
+ * 기다린 시간을 말한다. ms 는 상한에서 깎일 뿐 거절되지 않는다(드라이버와
+ * 같은 규칙), 없거나 음수면 기본 예산이다.
+ */
+export const WAIT_DEFAULT_MS = 5_000;
+export const WAIT_MAX_MS = 30_000;
+
+/** browser_wait 가 실제로 기다리는 예산 — 드라이버의 계산을 데몬이 같은 식으로 한다. */
+export function waitForBudgetMs(ms: number | undefined): number {
+  return typeof ms === "number" && ms >= 0 ? Math.min(ms, WAIT_MAX_MS) : WAIT_DEFAULT_MS;
+}
+
+/**
+ * browser_wait 의 결과 문장 (PLAN-MCP §3.F) — 참은 사실 한 줄이다. 거짓은
+ * 오류가 아니라 사실이므로 isError 도 아니고 true/false 로도 답하지 않는다:
+ * 실제로 기다린 예산을 말해 모델이 화면을 다시 읽을지 조건을 바꿀지 정하게
+ * 한다. 초는 소수 첫 자리까지 — 1.5초의 기다림이 "2초" 로 불어나지 않게.
+ */
+export function waitForAnswer(ok: boolean, ms: number | undefined): string {
+  if (ok) return "조건을 만족했습니다";
+  const seconds = waitForBudgetMs(ms) / 1000;
+  const shown = Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1);
+  return `조건을 ${shown}초 안에 만족하지 못했습니다 — 화면을 다시 읽거나 조건을 바꾸십시오`;
+}
+
+/**
  * 브라우저 도구의 이름 전부 (PLAN-MCP M-7) — 통계가 도구 묶음을 가리는
  * 잣대. 접두 문자열과 달리 `browser_` 로 시작하는 우연한 이름이나 다른 MCP
  * 서버의 도구를 세지 않는다.

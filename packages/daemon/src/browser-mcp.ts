@@ -72,7 +72,15 @@ async function handle(message: Wire): Promise<void> {
         protocolVersion:
           typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "colo-browser", title: "콜로디자인 인앱 브라우저", version: "0" },
+        serverInfo: {
+          // 이름은 도구 이름의 접두(mcp__colo-browser__*)라 바꾸지 않는다 —
+          // screen_check · screen_files 같은 브라우저가 아닌 도구도 이 서버가
+          // 실어 준다(PLAN-MCP §4). 타이틀이 그 어색함을 말하는 자리다.
+          // 버전은 데몬이 env 로 싣는 앱 · 데몬의 것 — 모르면 "0" 이다.
+          name: "colo-browser",
+          title: "콜로디자인 도구",
+          version: process.env.COLO_APP_VERSION || "0",
+        },
         instructions:
           "인앱 브라우저 도구 — 사용자가 보고 있는 페이지를 드라이브한다. browser_snapshot의 ref로 " +
           "요소를 가리키며, 액션의 결과는 바뀐 줄의 요약으로 돌아온다. 화면 전체가 필요할 때만 " +

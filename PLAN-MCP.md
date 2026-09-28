@@ -458,3 +458,43 @@ repoRoot, route)` 가 먼저, `title` 이 있으면 `huntPinFiles` 에 `{ text: 
   먼저 합쳐져도 충돌은 상수 한 줄이다.
 - 옛 `PLAN.md` · `PLAN-UI.md` 는 `5dfe2a65` 에서 걷혔다. 이 문서는 그 번호 체계(L · O · U)를
   잇지 않고 `M-` 로 새로 센다.
+
+---
+
+## 8. 진행 기록
+
+합친 묶음마다 한 줄 — 커밋은 `mcp-int` 줄의 것. 구현은 omp 의 GLM 5.3 · GLM 5.3 flash 가
+묶음별 워크트리(`mcp-a` ~ `mcp-f`)에서 했고, 오케스트레이터가 diff 를 검토해 되돌려 보낸 뒤
+합쳤다. 계획과 어긋난 것과 검토에서 고친 것만 적는다.
+
+- **A** (GLM 5.3) — `17726563` 잣대: 통계가 도구 이름 집합으로 세고, 중계가 op 마다 시간과
+  실패 종류를 턴 행과 데몬 로그에 남긴다. 계획과 달라진 점 — op 로그는 로거에 `debug` 가
+  없어 `info` 다. 검토에서 고친 것 — `browserMs` 를 도구 끝 이벤트와 중계가 함께 더해 두
+  배로 잡던 첫 판을 중계 한 곳만 세게 했다. 데스크톱의 "미리보기 화면이 없습니다" 도
+  `no-pane` 으로 센다.
+- **B** (GLM 5.3 flash) — `b41c0798` screen_check 로만 확인한 화면도 장부에 적고, 대화 제출이
+  귀속 대화와 한마디(200자)를 싣는다.
+- **C** (GLM 5.3) — `2c00453c` 스냅샷을 한 줄 표기로 줄이고 액션의 답을 바뀐 줄의 요약으로
+  바꾸며, 같은 DOM 노드는 같은 ref 를 이어 쓰고 `browser_find` 로 필요한 줄만 찾는다.
+  계획과 달라진 점 — 드라이버 액션 답을 `BrowserActionReport { url, title, snapshot }` 으로
+  넓혔다. 검토에서 고친 것 — 이동이 끝까지 로드되지 않으면 요약이 그렇게 말하고, 부분
+  스냅샷(`ref`)은 차이의 기준을 갈지 않으며, 기준이 없는 첫 액션은 전체 읽기를 안내한다.
+- **D** (GLM 5.3 flash) — `f36ef323` screen_check 가 여러 화면 · 화면 폭 · 문제 화면의 그림을
+  받는다 — 화면 하나의 판정은 게이트와 같은 `judgeScreen` 하나에서 난다. 결과는 언제나
+  `{ screens: [...] }`. 검토에서 고친 것 — `routes` 는 `items`, `viewport` 는 `enum` 을
+  선언한다(원소 형식 없는 배열은 OpenAI · Gemini 계열이 도구 정의 전체를 거절할 수 있다).
+  모든 배열 인자가 `items` 를 갖는지 계약 시험이 지킨다.
+- **E-1** (GLM 5.3) — `62e2f705` `browser_inspect`. 계획과 달라진 점 — 미리보기 preload 는
+  샌드박스라 로컬 모듈을 부를 수 없어(계획의 (a) 불가), `element-identity.ts` 의 자기완결
+  함수를 드라이버는 `Runtime.callFunctionOn` 으로, preload 는 빌드(`scripts/build-preloads.mjs`)
+  가 산출물 꼬리에 이식해 쓴다(계획의 (b)). React owners 판정도 같은 파일 하나다.
+- **E-2 · E-3** (GLM 5.3 flash) — `7681a858` screen_files · notify_developer(하루 세 통).
+  계획과 달라진 점 — 관찰 지도가 주소 세 모양(전체 주소 · 화면 id · 정규 경로)을 같은
+  화면으로 접어 읽는다(`screen-map.ts` 의 `normalizeRoute`). 검토에서 고친 것 — 지도 행에는
+  외부로 이동한 주소도 남으므로, 루프백이 아닌 절대 주소는 어떤 화면과도 짝짓지 않는다.
+- **F** (GLM 5.3 flash) — `f8b40b6f` 지침 · README · 버전의 흐름(`DaemonConfig.appVersion` →
+  `COLO_APP_VERSION` → `serverInfo.version`) · `browser_wait` 의 답 문장.
+
+**검증** — 통합 브랜치에서 `pnpm test` · `pnpm typecheck` 통과 — 시험은 기준선 594건에서
+667건으로 늘었고 실패는 없다. §5.1 손 검증과 §5.2 전후 비교는 **아직 돌리지 않았다** —
+Electron 창과 실제 에이전트 턴이 필요하다.

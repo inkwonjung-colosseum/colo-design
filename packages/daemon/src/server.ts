@@ -41,6 +41,7 @@ import {
   screenFilesAnswer,
   shortHash,
   submitNoteOf,
+  waitForAnswer,
 } from "./browser-tools.js";
 import { CommandDedupe } from "./command-dedupe.js";
 import {
@@ -358,6 +359,13 @@ export interface DaemonConfig {
    * tools answer 404.
    */
   browserDriverFactory?: BrowserDriverFactory;
+  /**
+   * 앱 · 데몬의 버전 — 브라우저 MCP 자식이 serverInfo.version 으로 말한다
+   * (browserMcpEntry 가 COLO_APP_VERSION env 로 싣는다). 데스크톱은
+   * app.getVersion() 을, 단독 실행은 데몬 package.json 의 version 을 넣는다.
+   * 없으면 자식은 "0" 으로 산다 — 버전을 모른다는 뜻일 뿐이다.
+   */
+  appVersion?: string;
 }
 
 /**
@@ -860,6 +868,7 @@ export class DaemonServer {
           `http://127.0.0.1:${this.address().port}`,
           secret,
           submitFromChat,
+          this.config.appVersion,
         );
       },
       // createSession 이 던지면 발급된 시크릿을 회수한다 — 못 열린 세션의
@@ -1759,6 +1768,10 @@ export class DaemonServer {
     }
     if (op === "find") return (result as FindRender).text;
     if (op === "inspect") return this.shapeInspect(sessionId, params, result);
+    // 기다림의 실패는 오류가 아니라 사실이다(PLAN-MCP §3.F) — true/false
+    // 그대로면 모델이 다음 수를 정할 근거가 옅다. 실제로 기다린 예산을 말하는
+    // 문장으로 내린다.
+    if (op === "waitFor") return waitForAnswer(result === true, asNumber(params.ms));
     if (BROWSER_SUMMARIZE_OPS[op] !== true) return result;
     const report = result as BrowserActionReport & { settled?: boolean };
     const after = snapshotLines(report.snapshot);
