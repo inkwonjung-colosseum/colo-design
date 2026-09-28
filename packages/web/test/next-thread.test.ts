@@ -23,6 +23,7 @@ import {
   screenTitle,
   sizeText,
   splitDuration,
+  textRoles,
 } from "../src/next/lib/thread.ts";
 
 test("effortWord: 다섯 칸과 CLI 의 단계 — 하나씩 대응", () => {
@@ -342,4 +343,99 @@ test("screenTitle: 고친 화면 카드의 제목 — 링크 제목 · 이번 �
     "이름 없는 화면",
   );
   assert.equal(screenTitle({ path: "/event/12", title: null }, undefined, words), "이름 없는 화면");
+});
+
+test("textRoles: 묶음마다 마지막 글이 답 자리다 — 도는 중에도 그렇다", () => {
+  // 마감된 묶음: 마지막 글이 답, 앞의 글은 과정(첫 과정이 접는 줄).
+  const done = textRoles(
+    [
+      { type: "user", id: "u1" },
+      { type: "text", id: "t1", agentId: null },
+      { type: "tool", id: "k1" },
+      { type: "text", id: "t2", agentId: null },
+      { type: "turn", id: "e1" },
+    ],
+    false,
+  );
+  assert.deepEqual([...done.answers], ["t2"]);
+  assert.deepEqual(done.steps.get("t1"), { head: true, key: "t1", settled: true });
+
+  // 도는 꼬리: 마지막 글도 답 자리로 — 답이 끝나는 순간 모양이 바뀌지 않게.
+  const liveTail = textRoles(
+    [
+      { type: "user", id: "u1" },
+      { type: "text", id: "t1", agentId: null },
+    ],
+    true,
+  );
+  assert.deepEqual([...liveTail.answers], ["t1"]);
+  assert.equal(liveTail.steps.size, 0);
+
+  // 답이 멈추면(세션이 멈춘 꼬리) 과정이 생기고 접힌다.
+  const stoppedTail = textRoles(
+    [
+      { type: "user", id: "u1" },
+      { type: "text", id: "t1", agentId: null },
+      { type: "text", id: "t2", agentId: null },
+    ],
+    false,
+  );
+  assert.deepEqual([...stoppedTail.answers], ["t2"]);
+  assert.deepEqual(stoppedTail.steps.get("t1"), { head: true, key: "t1", settled: true });
+});
+
+test("textRoles: 도는 중 뒤에 이어 온 글이 답 자리를 받으면 앞의 글은 과정으로 내려간다", () => {
+  const before = textRoles(
+    [
+      { type: "user", id: "u1" },
+      { type: "text", id: "t1", agentId: null },
+    ],
+    true,
+  );
+  const after = textRoles(
+    [
+      { type: "user", id: "u1" },
+      { type: "text", id: "t1", agentId: null },
+      { type: "tool", id: "k1" },
+      { type: "text", id: "t2", agentId: null },
+    ],
+    true,
+  );
+  // t1 은 답이었다가 과정이 된다 — 이 내려갬이 한 번 부드럽게 일어난다.
+  assert(before.answers.has("t1"));
+  assert(!after.answers.has("t1"));
+  assert.deepEqual(after.steps.get("t1"), { head: true, key: "t1", settled: false });
+  assert(after.answers.has("t2"));
+});
+
+test("textRoles: 묶음의 경계와 머리 · 하위 에이전트의 글", () => {
+  // 생각 · 도구 · 알림은 묶음을 끊지 않고, 사람 말 · 마감 · 기록이 끊는다.
+  const roles = textRoles(
+    [
+      { type: "text", id: "a1", agentId: null },
+      { type: "thinking", id: "h1" },
+      { type: "notice", id: "n1" },
+      { type: "text", id: "a2", agentId: null },
+      { type: "save", id: "s1" },
+      { type: "text", id: "sub1", agentId: "agent-2" },
+      { type: "user", id: "u1" },
+      { type: "text", id: "b1", agentId: null },
+      { type: "text", id: "b2", agentId: null },
+      { type: "human", id: "r1" },
+      { type: "text", id: "c1", agentId: null },
+    ],
+    true,
+  );
+  // 첫 묶음 — 생각 · 알림 사이에서도 한 묶음, save 가 마감한다.
+  assert.deepEqual([...roles.answers], ["a2", "b2", "c1"]);
+  assert.deepEqual(roles.steps.get("a1"), { head: true, key: "a1", settled: true });
+  // 둘째 묶음은 human 기록이 마감한다.
+  assert.deepEqual(roles.steps.get("b1"), { head: true, key: "b1", settled: true });
+  // 꼬리의 묶음은 도는 중 — 마지막 글이 곧 답이라 과정이 없다.
+  assert(!roles.steps.has("c1"));
+  // 하위 에이전트의 글은 답도 과정도 아니다.
+  assert(!roles.answers.has("sub1"));
+  assert(!roles.steps.has("sub1"));
+  // 경계 블록들만으로는 묶음이 생기지 않는다.
+  assert.equal(textRoles([{ type: "user", id: "u" }], true).steps.size, 0);
 });

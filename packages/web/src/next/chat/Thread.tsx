@@ -5,7 +5,7 @@ import {
   type RepoStatus,
   readTurn,
 } from "@colo-design/protocol";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useRef, useState } from "react";
 import { Markdown } from "../../components/Markdown";
 import { ActivitySummary, groupActivity } from "../../components/transcript/activity";
 import { ThinkingBlock, ToolBlock } from "../../components/transcript/blocks";
@@ -25,6 +25,7 @@ import {
   rawErrorLine,
   retryCount,
   screenTitle,
+  textRoles,
 } from "../lib/thread";
 import { BriefCard, FailCard, GateCard, ReceiptCard, ReviewCard, reviewParts } from "./cards";
 import { CheckIcon, ClockIcon, EditIcon, FwdIcon, SparkIcon } from "./icons";
@@ -126,51 +127,10 @@ export function Thread(props: ThreadProps) {
 
   // 한 답 묶음(사람의 말 뒤부터 답이 끝날 때까지)에서 마지막 말이 답이고 그 앞의
   // 말은 과정이다 — 과정은 타임라인으로 그리고(A) 답이 끝나면 한 줄로 접는다.
-  // 도는 동안에는 펼친 채 마지막 줄만 강조한다.
-  type StepRole = {
-    /** 접는 줄이 서는 자리 — 묶음의 첫 과정 문장. */
-    head: boolean;
-    /** 묶음의 첫 과정 문장 id — 펼침 상태의 열쇠. */
-    key: string;
-    /** 답이 끝났는가 — 끝나면 과정은 접힌다. */
-    settled: boolean;
-    /** 도는 동안의 마지막 줄 — 강조하는 한 줄. */
-    now: boolean;
-  };
-  const stepRoles = new Map<string, StepRole>();
-  {
-    let bundle: string[] = [];
-    const close = (settled: boolean) => {
-      if (bundle.length === 0) return;
-      const steps = settled ? bundle.slice(0, -1) : bundle;
-      steps.forEach((id, at) => {
-        stepRoles.set(id, {
-          head: at === 0,
-          key: steps[0]!,
-          settled,
-          now: !settled && at === steps.length - 1,
-        });
-      });
-      bundle = [];
-    };
-    // 답을 여는 말 · 답을 닫는 기록이 묶음의 경계다 — 생각 · 도구 · 알림은
-    // 묶음 안의 일이다.
-    for (const block of tape) {
-      if (block.type === "text" && block.agentId === null) {
-        bundle.push(block.id);
-      } else if (
-        block.type === "user" ||
-        block.type === "turn" ||
-        block.type === "human" ||
-        block.type === "milestone" ||
-        block.type === "save" ||
-        block.type === "saveBlocked"
-      ) {
-        close(true);
-      }
-    }
-    close(!live); // 꼬리의 묶음 — 답이 도는 중이면 펼친 채 둔다.
-  }
+  // 도는 중에도 마지막 말은 처음부터 답 모양으로 선다: 답이 끝나는 순간 모양이
+  // 바뀌며 다시 마운트되어 글의 크기 · 자리 · 색이 한꺼번에 바뀌는 일이 없게.
+  // 뒤에 이어 온 글이 답 자리를 받으면 앞의 글은 과정으로 내려간다.
+  const roles = textRoles(tape, live);
   const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(new Set());
   const toggleSteps = (key: string) =>
     setOpenSteps((prev) => {
@@ -179,6 +139,27 @@ export function Thread(props: ThreadProps) {
       else next.add(key);
       return next;
     });
+
+  // 이번 창에서 펼쳐져 본 과정 — 접힘의 높이 애니메이션은 이 묶음에만 돈다.
+  // 처음부터 접힌 채로 불려 온 옛 대화는 그리지도 않는다(펼치면 그때 올라온다).
+  const openedSteps = useRef<ReadonlySet<string>>(new Set());
+  // 답 자리였다가 과정으로 내려간 글 — 그 내려갬을 한 번 부드럽게 한다. 표식은
+  // 강등된 뒤로도 남는다(흐르는 이어 렌더 사이에서 애니메이션이 끊기지 않게).
+  const answerSeen = useRef<ReadonlySet<string>>(new Set());
+  const demotedEver = useRef<ReadonlySet<string>>(new Set());
+  const demoteNow = new Set<string>();
+  for (const id of answerSeen.current) if (!roles.answers.has(id)) demoteNow.add(id);
+  if (demoteNow.size > 0) demotedEver.current = new Set([...demotedEver.current, ...demoteNow]);
+  answerSeen.current = roles.answers;
+  // 이번 창에서 살아 있던 답 — 첫 그림에 없던 마감(턴)은 이 창에서 막 끝난 답이다.
+  // 끝난 답의 보상(고친 화면 카드 · 체크)은 이 답에만 한 번.
+  const historyTurns = useRef<ReadonlySet<string> | null>(null);
+  if (historyTurns.current === null) {
+    historyTurns.current = new Set(
+      blocks.filter((block) => block.type === "turn").map((block) => block.id),
+    );
+  }
+  answerSeen.current = roles.answers;
 
   const prompts = promptNumbers(blocks);
   const turnNumbers = turnBlockNumbers(blocks);
@@ -333,12 +314,20 @@ export function Thread(props: ThreadProps) {
         const trimmed = block.text.trim();
         if (trimmed === NO_RESPONSE) return null;
         if (trimmed === INTERRUPTED) return <Note>{L.transcript.stopped}</Note>;
-        const step = stepRoles.get(block.id);
+        const step = roles.steps.get(block.id);
         if (step) {
-          // 과정 문장 — 답이 끝나면 한 줄로 접히고(A), 도는 동안에는 펼친 채
-          // 마지막 줄만 강조한다. 얼굴은 답에만 선다.
+          // 과정 문장 — 답이 끝나면 한 줄로 접힌다(A). 이번 창에서 펼쳐져 본
+          // 묶음은 높이를 줄이며 부드럽게 접히고, 처음부터 접힌 옛 대화는
+          // 그리지 않는다(펼치면 그때 올라온다). 얼굴은 답에만 선다.
           const open = !step.settled || openSteps.has(step.key);
-          if (!open && !step.head) return null;
+          if (open) {
+            const next = new Set(openedSteps.current);
+            next.add(step.key);
+            openedSteps.current = next;
+          }
+          const seen = openedSteps.current.has(step.key);
+          if (!open && !seen && !step.head) return null;
+          const demoted = demotedEver.current.has(block.id);
           return (
             <>
               {step.settled && step.head && (
@@ -352,13 +341,16 @@ export function Thread(props: ThreadProps) {
                   {L.transcript.stepsFold}
                 </button>
               )}
-              {open && (
+              {seen && (
                 <div
-                  className={`nx-m-step${step.now ? " nx-m-step--now" : ""}${
-                    block.streaming ? " nx-m-live" : ""
+                  className={`nx-m-stepwrap${open ? "" : " nx-m-stepwrap--gone"}${
+                    demoted ? " nx-m-stepwrap--was" : ""
                   }`}
+                  inert={!open}
                 >
-                  <Markdown text={block.text} />
+                  <div className={`nx-m-step${demoted ? " nx-m-step--was" : ""}`}>
+                    <Markdown text={block.text} />
+                  </div>
                 </div>
               )}
             </>
@@ -415,10 +407,12 @@ export function Thread(props: ThreadProps) {
         const turnNo = turnNumbers.get(block.id) ?? 1;
         const whole = turnAnswers.get(block.id) ?? block.resultText ?? null;
         const screens = screensByTurn.get(block.id) ?? [];
+        // 이번 창에서 막 끝난 답 — 보상(카드 · 체크)은 이 답에만 한 번.
+        const fresh = !historyTurns.current?.has(block.id);
         return (
           <>
             {screens.length > 0 && (
-              <div className="nx-shots">
+              <div className={`nx-shots${fresh ? " nx-shots--new" : ""}`}>
                 {screens.map((screen) => (
                   <ShotCard
                     key={screen.path}
@@ -435,6 +429,7 @@ export function Thread(props: ThreadProps) {
               durationMs={block.durationMs}
               whole={whole}
               lastAnswer={lastAnswerByTurn.get(block.id) ?? null}
+              reward={fresh === true}
               onFork={props.canBranch && whole !== null ? () => props.onFork(turnNo) : null}
               onOpenHistory={props.onOpenHistory}
               onToast={props.onToast}

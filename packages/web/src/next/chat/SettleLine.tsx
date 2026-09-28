@@ -29,6 +29,7 @@ export function SettleLine({
   durationMs,
   whole,
   lastAnswer,
+  reward,
   onFork,
   onOpenHistory,
   onToast,
@@ -38,6 +39,8 @@ export function SettleLine({
   whole: string | null;
   /** 마지막 답 한 조각 — `이 답변만 복사`. */
   lastAnswer: string | null;
+  /** 이번 창에서 막 끝난 답인가 — 체크가 그려지듯 등장하는 보상은 이때만. */
+  reward: boolean;
   /** 여기서 새 대화 — 갈래를 낼 수 없는 AI 면 없다. */
   onFork: (() => void) | null;
   onOpenHistory: () => void;
@@ -66,7 +69,7 @@ export function SettleLine({
   const hasMenu = onFork !== null || lastAnswer !== null;
   if (durationMs == null && whole == null && !hasMenu) return null;
   return (
-    <div className="nx-settle">
+    <div className={`nx-settle${reward ? " nx-settle--draw" : ""}`}>
       <CheckIcon />
       {durationMs != null && <span>{L.transcript.took(durationText(durationMs))}</span>}
       {whole != null && (
