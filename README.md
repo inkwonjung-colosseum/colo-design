@@ -412,7 +412,7 @@ rpc 에는 모드를 바꿀 명령이 없고, 모든 쓰기·실행이 데몬을
 | --- | --- |
 | `~/.colo-design/config/` | `daemon.json` (host/port/token), `projects.json` (레지스트리) — 전부 0600, 비밀 없음(그건 OS 저장소로 간다) |
 | `~/.colo-design/logs/` | 데몬의 하루 로그(`daemon-YYYY-MM-DD.log`, 7일 보존) — 값의 비밀·이메일·계정 경로는 `~/{path}` 따위로 눌러 닫힌다. 설정 → `개발자용` 의 `로그 폴더 열기`가 여기를 연다 |
-| `~/.colo-design/logs/turn-stats-YYYY-MM-DD.jsonl` | 턴 통계 — 한 턴의 종류(사람 말 · 핀 · 게이트) · 길이 · 도구 묶음별 호출 수 · 컨텍스트 토큰 · 첫 답까지(`firstDeltaMs`)·첫 편집까지(`firstEditMs`) · 실패 단계(`failure`) · 핀 턴의 payload 크기(`pinBytes`) · 핀 후보 적중 여부(`pinHit` — 파일 경로는 남기지 않는다). 게이트 행(`gateset`)은 판정 상세(빈 화면·콘솔 오류·실패한 요청 수, `rescued`)와 돌지 못한 이유(`skipped`)를 더 남긴다. 무엇이 턴을 느리게 하는지 재는 잣자리로, 사용자의 말도 화면도 남기지 않는다(7일 보존) |
+| `~/.colo-design/logs/turn-stats-YYYY-MM-DD.jsonl` | 턴 통계 — 한 턴의 종류(사람 말 · 핀 · 게이트) · 길이 · 도구 묶음별 호출 수 · 컨텍스트 토큰 · 첫 답까지(`firstDeltaMs`)·첫 편집까지(`firstEditMs`) · 실패 단계(`failure`) · 핀 턴의 payload 크기(`pinBytes`) · 핀 후보 적중 여부(`pinHit` — 파일 경로는 남기지 않는다) · 브라우저 도구에 쓴 시간(`browserMs`)과 op 실패 종류 수(`browserFail` — 낡은 ref · 시간 초과 · 거절 · 창 없음 · 그 밖, 0인 종류는 칸에서 뺀다). 게이트 행(`gateset`)은 판정 상세(빈 화면·콘솔 오류·실패한 요청 수, `rescued`)와 돌지 못한 이유(`skipped`)를 더 남긴다. 무엇이 턴을 느리게 하는지 재는 잣자리로, 사용자의 말도 화면도 남기지 않는다(7일 보존) |
 | `~/.colo-design/projects/<slug>/screen-map.jsonl` | 라우트↔파일 관찰 지도 — 그 화면을 고친 커밋이 건드린 파일(sha 와 함께). 정체 검색이 빈손인 핀의 마지막 후보 길이다(500행 상한) |
 | `~/.colo-design/projects/<slug>/cycle.json` | 사이클 원장 — 제출 의도 · 푸시 밀림 · 코멘트 장부 · 예산 · 끝난 요청. 어디서 끊겨도 다음 시작이 이어받는다 |
 | `~/.colo-design/projects/<slug>/repo/` | 그 프로젝트의 연결 레포 클론 |
