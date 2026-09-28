@@ -9,6 +9,8 @@
  * 것이 이 표기의 전부다. 드라이버 계약은 그대로 두고(트리를 그대로 돌려주고)
  * 압축은 이 자리에서만 한다.
  */
+import type { ColoDesignCommentTarget } from "@colo-design/protocol";
+import type { IdentityFiles } from "./pin-files.js";
 import type { PreviewAxNode } from "./preview-driver.js";
 
 /** 한 번의 스냅샷이 모델에게 보이는 기본 상한 — 이 크기가 곧 토큰 예산이다. */
@@ -285,4 +287,59 @@ export function findInSnapshot(nodes: PreviewAxNode[], query: FindQuery): FindRe
     return { text: lines.join("\n"), lines };
   }
   return { text: matches.join("\n"), lines: matches };
+}
+
+// ---------------------------------------------------------------------------
+// browser_inspect 의 답 (PLAN-MCP §3.E-1) — 핀 블록이 정체를 사람 말로 적던
+// 모양(web 의 preview-turns)을 도구 결과 한 장으로 옮긴다. 없는 칸은 줄째
+// 빠지고 긴 값은 자른다 — 이 답의 독자는 모델이다.
+// ---------------------------------------------------------------------------
+
+/** 이름 · testid 의 상한 — 핀의 ownText(80) 와 같은 결. */
+export const IDENTITY_NAME_LIMIT = 80;
+/** CSS 경로의 상한 — 깊은 중첩이 한 줄을 잡아먹지 않게. */
+export const IDENTITY_PATH_LIMIT = 160;
+
+/** 긴 값 자르기 — 잘렸으면 말줄임표를 단다. */
+function identityCap(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+/**
+ * 요소 정체 한 장 — 요소 · testid·경로 · 글자 · 파일 후보 · 발췌 · 스타일 의
+ * 줄 단위 표기. 파일 칸은 enrichIdentity(pin-files) 가 채운 재료고, 요소 칸은
+ * 핀 봉투의 element(ColoDesignCommentTarget) 그대로다 — 드라이버와 핀이 같은
+ * 판정을 냈으므로 여기서 다시 해석하지 않는다.
+ */
+export function renderIdentity(element: ColoDesignCommentTarget, files: IdentityFiles): string {
+  const lines: string[] = [];
+  const role = element.a11y?.role ?? element.component;
+  const name = element.a11y?.name ?? element.text;
+  const head = name === "" ? role : `${role} ${quote(identityCap(name, IDENTITY_NAME_LIMIT))}`;
+  const owners = element.owners ?? [];
+  lines.push(`요소: ${head}${owners.length > 0 ? `  (컴포넌트: ${owners.join(" › ")})` : ""}`);
+  const facts: string[] = [];
+  if (element.attrs?.testId) {
+    facts.push(`testid: ${identityCap(element.attrs.testId, IDENTITY_NAME_LIMIT)}`);
+  }
+  if (element.path !== "") facts.push(`경로: ${identityCap(element.path, IDENTITY_PATH_LIMIT)}`);
+  if (facts.length > 0) lines.push(facts.join(" · "));
+  if (element.text !== "") lines.push(`글자: ${element.text}`);
+  if (files.candidates.length > 0) {
+    lines.push(
+      `파일 후보: ${files.candidates.map((file) => identityCap(file, IDENTITY_PATH_LIMIT)).join(" · ")}${
+        files.observed ? " (관찰)" : ""
+      }`,
+    );
+  }
+  if (files.excerpt) {
+    lines.push(`파일 발췌 ${files.excerpt.file} ${files.excerpt.from}-${files.excerpt.to}줄:`);
+    for (const codeLine of files.excerpt.code.split("\n")) lines.push(`  ${codeLine}`);
+  }
+  // 스타일은 색 · 배경 · 글꼴 몇 칸만 — 봉투의 부분(열두 칸) 중 앞 여섯 칸이다.
+  const styleRows = Object.entries(element.styles ?? {})
+    .slice(0, 6)
+    .map(([key, value]) => `${key} ${identityCap(value, 60)}`);
+  if (styleRows.length > 0) lines.push(`스타일: ${styleRows.join(" · ")}`);
+  return lines.join("\n");
 }

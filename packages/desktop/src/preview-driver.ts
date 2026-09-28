@@ -22,7 +22,9 @@ import type {
   PreviewOpenResult,
   PreviewViewport,
 } from "@colo-design/daemon/server";
+import type { ColoDesignCommentTarget } from "@colo-design/protocol";
 import { BrowserWindow, type WebContents } from "electron";
+import { describeElementInPage, ownersOfElement } from "./element-identity.js";
 import { VIEWPORT_METRICS } from "./emulation.js";
 import type { PlannerPreviewView } from "./preview-view.js";
 
@@ -991,6 +993,70 @@ class PaneBrowserDriver implements BrowserDriver {
   async snapshot(): Promise<PreviewAxNode[]> {
     const dest = await this.target();
     return this.axTree(dest.contents, dest.state);
+  }
+
+  /**
+   * ref 하나의 정체 조사 (PLAN-MCP §3.E-1) — 핀 봉투의 element 와 같은 모양을
+   * element-identity.ts 의 describeElementInPage 로 페이지에서 뽑는다. 함수
+   * 소스를 건네는 이유는 핀과 같은 판정을 한 벌로 쓰기 위해서다(rectOfRef 가
+   * RECT_OF_SELF 를 건네는 것과 같은 길). DOM.resolveNode 의 objectId 는
+   * 문서의 기본 컨텍스트(메인 월드) 소속이라 React fiber expando 가 보인다 —
+   * callFunctionOn 읔 objectId 의 소유 컨텍스트에서 돌므로 owners 도 같은
+   * 세계에서 읽힌다(격리 preload 와 다른 점이 바로 이것이다).
+   */
+  async inspect(target: {
+    ref: string;
+  }): Promise<{ url: string; element: ColoDesignCommentTarget }> {
+    const dest = await this.target();
+    const backendNodeId = dest.state.refs.get(target.ref);
+    if (backendNodeId === undefined) {
+      throw new Error(
+        `${target.ref} 는 지금 화면의 것이 아닙니다 — snapshot 으로 다시 읽으십시오.`,
+      );
+    }
+    const objectId = await this.resolveNode(dest.contents, target.ref, backendNodeId);
+    const runInPage = (declaration: string): Promise<unknown> =>
+      dest.contents.debugger
+        .sendCommand("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: declaration,
+          returnByValue: true,
+        })
+        .then((raw) => {
+          const result = raw as {
+            result?: { value?: unknown };
+            exceptionDetails?: { exception?: { description?: string; value?: unknown } };
+          };
+          if (result.exceptionDetails) {
+            const detail = result.exceptionDetails.exception;
+            throw new Error(
+              `페이지의 함수가 던졌습니다: ${
+                typeof detail?.value === "string"
+                  ? detail.value
+                  : (detail?.description ?? "알 수 없는 오류")
+              }`,
+            );
+          }
+          return result.result?.value;
+        });
+    const element = (await runInPage(
+      describeElementInPage.toString(),
+    )) as ColoDesignCommentTarget | null;
+    if (element === null || typeof element !== "object" || typeof element.path !== "string") {
+      throw new Error(`${target.ref} 를 화면에서 찾지 못했습니다 — snapshot 으로 다시 읽으십시오.`);
+    }
+    // owners 는 실패가 칸 하나의 값일 뿐이다 — 핀 relay 와 같은 판정으로 읽는다.
+    const owners = (await runInPage(ownersOfElement.toString()).catch(() => null)) as
+      | string[]
+      | null;
+    if (
+      Array.isArray(owners) &&
+      owners.length > 0 &&
+      owners.every((name) => typeof name === "string")
+    ) {
+      element.owners = owners;
+    }
+    return { url: dest.contents.getURL(), element };
   }
 
   /**

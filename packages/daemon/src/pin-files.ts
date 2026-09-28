@@ -349,8 +349,9 @@ const EXCERPT_MAX_CHARS = 6_000;
 /** 발췌를 얹을 최소 점수 — testid(4) · 첫 컴포넌트 정의(3) 만. */
 const EXCERPT_MIN_SCORE = 3;
 
-/** 적중 자리 주변의 코드 — 블록 안쪽의 세 칸 들여쓰기를 유지한다. */
-function excerptLines(file: string, content: string, at: number): string[] {
+/** 발췌의 재료 — 줄 범위와 코드. 핀 블록(excerptLines)과 browser_inspect 의
+ *  보강(enrichIdentity)이 같은 판정을 쓰는 자리다. */
+function excerptRange(content: string, at: number): { from: number; to: number; code: string } {
   if (at < 0) at = 0;
   const lines = content.split("\n");
   const line = content.slice(0, at).split("\n").length; // 1-based
@@ -358,8 +359,60 @@ function excerptLines(file: string, content: string, at: number): string[] {
   const to = Math.min(lines.length, line + EXCERPT_RADIUS_LINES);
   let code = lines.slice(from - 1, to).join("\n");
   if (code.length > EXCERPT_MAX_CHARS) code = code.slice(0, EXCERPT_MAX_CHARS);
+  return { from, to, code };
+}
+
+/** 적중 자리 주변의 코드 — 블록 안쪽의 세 칸 들여쓰기를 유지한다. 핀 턴과
+ *  browser_inspect 보강이 같은 발췌를 쓰므로 export 한다(PLAN-MCP §3.E-1). */
+export function excerptLines(file: string, content: string, at: number): string[] {
+  const range = excerptRange(content, at);
   return [
-    `   파일 발췌 ${file} ${from}-${to}줄:`,
-    ...code.split("\n").map((codeLine) => `   ${codeLine}`),
+    `   파일 발췌 ${file} ${range.from}-${range.to}줄:`,
+    ...range.code.split("\n").map((codeLine) => `   ${codeLine}`),
   ];
+}
+
+/** browser_inspect 의 파일 보강 결과 — 후보와 발췌, 관찰 출처 여부. */
+export interface IdentityFiles {
+  /** 레포 루트 상대 경로, 정확도 순(상한 3). */
+  candidates: string[];
+  /** 후보가 관찰 지도(screen-map)에서 왔는가 — 핀 턴의 `(관찰)` 표식과 같은 말이다. */
+  observed: boolean;
+  /** 첫 정확한 적중(점수 3 이상)의 발췌 — 머리줄이 만들어지는 재료. */
+  excerpt?: { file: string; from: number; to: number; code: string };
+}
+
+/**
+ * browser_inspect 의 정체 보강 (PLAN-MCP §3.E-1): enrichCommentsTurn 과 같은
+ * 순서 · 같은 기준으로 클론을 훑는다 — 정체(testid·owners·글자)로
+ * huntPinFiles 를 돌려 후보(상한 3)를, 첫 정확한 적중(점수 3 이상)이면
+ * 발췌를 얹는다. 정체가 빈손이면 핀 턴처럼 관찰 지도의 마지막 길을 얻는다.
+ * 요소 하나를 조사하는 자리라 블록 조립은 없고 재료만 돌려준다 — 문장을
+ * 만드는 것은 renderIdentity(browser-snapshot)다.
+ */
+export async function enrichIdentity(
+  root: string,
+  hint: SessionPinHint,
+  observed?: { projectRoot: string } | null,
+): Promise<IdentityFiles> {
+  const found = await huntPinFiles(root, [hint]);
+  const hits = found.get(hint.id) ?? [];
+  if (hits.length > 0) {
+    const files: IdentityFiles = { candidates: hits.map((hit) => hit.file), observed: false };
+    const top = hits[0];
+    if (top !== undefined && top.score >= EXCERPT_MIN_SCORE) {
+      const content = await readCodeFile(root, top.file, join(root, top.file));
+      if (content !== null) {
+        files.excerpt = { file: top.file, ...excerptRange(content, top.at) };
+      }
+    }
+    return files;
+  }
+  if (observed && hint.screen !== undefined) {
+    const files = await observedFilesFor(observed.projectRoot, root, hint.screen).catch(
+      () => [] as string[],
+    );
+    if (files.length > 0) return { candidates: files, observed: true };
+  }
+  return { candidates: [], observed: false };
 }
