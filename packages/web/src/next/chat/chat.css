@@ -37,6 +37,12 @@
   padding: 22px 20px 10px;
 }
 
+/* 한 턴은 촘촘히, 턴 사이는 사람 말의 위 여백 하나로 연다 — 형제의 세로 여백이
+   겹치는 이 블록 상자에서는 그쪽이 가장 넓은 자리다. 맨 위 첫 블록은 여백이 없다. */
+.nx-thread > :first-child {
+  margin-top: 0;
+}
+
 .nx-thread > * {
   animation: nx-chat-rise 0.22s;
 }
@@ -81,10 +87,11 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  margin: 0 0 18px;
+  margin: 28px 0 16px;
 }
 
 .nx-bub {
+  position: relative;
   max-width: 88%;
   background: var(--panel-2);
   border-radius: 16px 16px 4px 16px;
@@ -107,6 +114,21 @@
   gap: 4px;
   padding: 2px 6px;
   border-radius: 6px;
+}
+
+/* 보낸 말의 고쳐서 다시 보내기 — 말풍선의 오른쪽 아래 모서리에 매달린다(마우스를
+   올리면 보인다). 말풍선이 칸 오른쪽에 붙어 있으니 단추는 왼쪽으로만 자라 칸을
+   넘지 않는다. 흐름에서 빠지므로 세로 자리를 먹지 않고, 대기 줄의 늘 보이는
+   단추(`.nx-bq-acts` 안)와는 무관하다. 줄 높이를 16px 로 눌러 사람 말 아래
+   16px 틈에 들어가 다음 요소를 덮지 않게 했다. */
+.nx .nx-bub > .nx-ue {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 0;
+  padding: 0 6px;
+  line-height: 16px;
+  white-space: nowrap;
 }
 
 .nx-m-user:hover .nx-ue,
@@ -284,13 +306,17 @@
   color: inherit;
 }
 
-/* 접힌 과정의 머리 줄 — 답이 끝난 뒤 과정은 이 한 줄로 접힌다. */
-.nx-m-fold {
-  display: inline-flex;
+/* 접힌 과정의 머리 줄 — 답이 끝난 뒤 과정은 이 한 줄로 접힌다. 글자는 답
+   본문과 같은 세로줄(32px)에서 시작하고, 화살표(14px)는 얼굴 칸(0–32px)에
+   매달린다 — 왼쪽 들여쓰기 14px + 아이콘 + 4px 틈 = 32px. 선택자가
+   `.nx button`(next.css 의 버튼 초기화, 특이도 0-1-1)보다 앞서야 하므로
+   이 파일의 관례대로 `.nx` 를 붙인다. */
+.nx .nx-m-fold {
+  display: flex;
   align-items: center;
   gap: 4px;
-  margin: 0 0 6px 24px;
-  padding: 0;
+  margin: 0 0 6px;
+  padding: 0 0 0 14px;
   border: 0;
   background: none;
   font: inherit;
