@@ -3,12 +3,16 @@ import { test } from "node:test";
 import type { PlanUsage } from "@colo-design/protocol";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
+import type { FastWords } from "../src/next/lib/thread.ts";
 import {
   chipLabel,
   dedupeScreens,
   EFFORT_OF,
   effortWord,
   failureCards,
+  fastBlockedWords,
+  fastChip,
+  fastTipWords,
   fastToast,
   handoffOpen,
   noteAllowed,
@@ -196,4 +200,141 @@ test("noteAllowed: 영수증의 `한마디 더` — 그 요청이 열려 있을 
   // changes_requested 는 리뷰의 판정이지 닫힘이 아니다(감독자와 같은 잣대).
   assert.equal(handoffOpen({ state: "changes_requested" }), true);
   assert.equal(noteAllowed(block, { number: 7, state: "changes_requested" }), true);
+});
+
+// 빠르게 문장 묶음의 가짜 — 진짜 문장 대신 짧은 표식으로 어느 칸이 골라졌는지 본다.
+const fast: FastWords = {
+  offTitle: "off",
+  nextTitle: "next",
+  onTitle: "on",
+  costClaude: "cost-c",
+  costMidway: "midway",
+  costOmp: "cost-o",
+  costOther: "cost-x",
+  blocked: {
+    creditsGone: "cg",
+    credits: "cr",
+    org: "og",
+    orgModels: "om",
+    network: "nw",
+    evaluation: "ev",
+    cooldown: "cd",
+  },
+};
+
+test("fastChip: 켜져 있으면 능력을 몰라도 보인다 — 끌 길은 남긴다", () => {
+  // 켜짐 — omp 의 `-fast` 변종으로 도는 대화. 능력 · 행을 몰라도 끌 길이 있어야 한다.
+  assert.equal(fastChip({ capability: false, row: undefined, on: true }), true);
+  // 꺼짐 · 능력 없음 — 보이지 않는다.
+  assert.equal(fastChip({ capability: false, row: undefined, on: false }), false);
+  // 행을 모른다(선택자가 오기 전 잠깐) — 능력만으로 낙관한다.
+  assert.equal(fastChip({ capability: true, row: undefined, on: false }), true);
+  // 행이 알아 주면 능력과 함께, 거절하면 숨는다.
+  assert.equal(fastChip({ capability: true, row: { supportsFastMode: true }, on: false }), true);
+  assert.equal(fastChip({ capability: true, row: { supportsFastMode: false }, on: false }), false);
+});
+
+test("fastBlockedWords: CLI 영어 원문을 단서로 가른다 — 단서의 순서가 곧 우선순위", () => {
+  assert.equal(fastBlockedWords("Fast mode requires usage credits", fast.blocked), "cr");
+  assert.equal(
+    fastBlockedWords("Fast mode disabled · usage credits exhausted", fast.blocked),
+    "cg",
+  );
+  assert.equal(
+    fastBlockedWords("Fast mode has been disabled by your organization.", fast.blocked),
+    "og",
+  );
+  // organization 을 품긴 문장이지만 allowed models 단서가 이긴다.
+  assert.equal(
+    fastBlockedWords("claude-opus-5 is not in your organization's allowed models", fast.blocked),
+    "om",
+  );
+  assert.equal(
+    fastBlockedWords("Fast mode unavailable due to network connectivity issues", fast.blocked),
+    "nw",
+  );
+  assert.equal(
+    fastBlockedWords(
+      "Fast mode unavailable during evaluation. Please purchase credits.",
+      fast.blocked,
+    ),
+    "ev",
+  );
+  assert.equal(fastBlockedWords("rate limit cooldown", fast.blocked), "cd");
+  // 모르는 원문은 지어내지 않고 그대로 — 빈 원문도 그대로 돌아가 호출자가 판단한다.
+  assert.equal(fastBlockedWords("Something entirely new", fast.blocked), "Something entirely new");
+  assert.equal(fastBlockedWords("", fast.blocked), "");
+});
+
+test("fastTipWords: 주인과 상태가 제목과 비고 줄을 고른다", () => {
+  // 꺼짐 · next — 다음 대화 문장과 비용 한 줄.
+  assert.deepEqual(
+    fastTipWords({ subject: "next", on: false, blocked: null, provider: "claude" }, fast),
+    {
+      title: "next",
+      notes: ["cost-c"],
+    },
+  );
+  // 꺼짐 · session — Claude 는 대화 중간에 켠 계산 한 줄이 더 선다.
+  assert.deepEqual(
+    fastTipWords({ subject: "session", on: false, blocked: null, provider: "claude" }, fast),
+    { title: "off", notes: ["cost-c", "midway"] },
+  );
+  // omp · 그 밖의 AI — 비용 줄은 하나.
+  assert.deepEqual(
+    fastTipWords({ subject: "session", on: false, blocked: null, provider: "omp" }, fast),
+    {
+      title: "off",
+      notes: ["cost-o"],
+    },
+  );
+  assert.deepEqual(
+    fastTipWords({ subject: "session", on: false, blocked: null, provider: "codex" }, fast),
+    { title: "off", notes: ["cost-x"] },
+  );
+  // 켜짐 — 주인을 묻지 않는다.
+  assert.deepEqual(
+    fastTipWords({ subject: "session", on: true, blocked: null, provider: "claude" }, fast),
+    {
+      title: "on",
+      notes: ["cost-c"],
+    },
+  );
+  assert.deepEqual(
+    fastTipWords({ subject: "next", on: true, blocked: null, provider: "codex" }, fast),
+    {
+      title: "on",
+      notes: ["cost-x"],
+    },
+  );
+  // 막힘(session) — 이유 하나뿐, 비고는 없다.
+  assert.deepEqual(
+    fastTipWords(
+      { subject: "session", on: false, blocked: "usage credits exhausted", provider: "claude" },
+      fast,
+    ),
+    { title: "cg", notes: [] },
+  );
+  // next 는 몸이 없어 blocked 가 와도 무시한다.
+  assert.deepEqual(
+    fastTipWords(
+      { subject: "next", on: false, blocked: "usage credits exhausted", provider: "claude" },
+      fast,
+    ),
+    { title: "next", notes: ["cost-c"] },
+  );
+});
+
+test("fastToast: blocked 묶음을 넘기면 거절 이유가 한국어로, 안 넘기면 원문이다", () => {
+  const translated = { on: "켜졌어요", off: "꺼졌어요", fail: "못했어요", blocked: fast.blocked };
+  assert.equal(fastToast(true, false, "Fast mode requires usage credits", translated), "cr");
+  // 선택 칸 — 묶음이 없는 부르는 쪽은 지금처럼 원문이 그대로 옮겨진다.
+  assert.equal(
+    fastToast(true, false, "Fast mode requires usage credits", {
+      on: "켜졌어요",
+      off: "꺼졌어요",
+      fail: "못했어요",
+    }),
+    "Fast mode requires usage credits",
+  );
 });
