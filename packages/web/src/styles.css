@@ -1684,6 +1684,7 @@ select {
   align-items: flex-start;
   justify-content: center;
   padding: 10vh 20px 24px;
+  animation: nx-fade 0.12s;
 }
 .palette__panel {
   width: 100%;
@@ -1695,6 +1696,7 @@ select {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  animation: paletterise 0.16s ease-out;
 }
 .palette__panel:focus {
   outline: none;
@@ -1737,7 +1739,7 @@ select {
 .palette__group {
   padding: 8px 8px 2px;
   color: var(--muted);
-  font: 600 var(--font-ui-110) var(--mono);
+  font: 600 var(--font-ui-110) var(--sans);
   letter-spacing: 0.02em;
 }
 .palette__row {
@@ -1758,6 +1760,12 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.palette__label mark {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 .palette__icon {
   display: inline-flex;

@@ -4,10 +4,23 @@ import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { timeAgo } from "../../lib/format";
 import { composing } from "../../lib/ime";
 import { type HiddenThreads, visibleThreads } from "../../lib/thread-visibility";
+import { L } from "../../next/labels";
+import { Spin } from "../../next/ui/icons";
 import { GearIcon, type PlusIcon, SearchIcon } from "../icons";
+import { matchRange, rank } from "./palette-match";
 
-/** The walk is grouped 대화 → 화면 → 프로젝트 → 명령; a header prints on each turn. */
-type Group = "대화" | "화면" | "프로젝트" | "명령";
+/** The walk is grouped conversations → screens → projects → commands; a header
+ * prints on each turn. The keys are the walk's own words — the printed header
+ * comes from `L` (labels.ts), same words as the sidebar. */
+type Group = "convs" | "screens" | "projects" | "commands";
+
+/** The printed group headers — one per walk group, in the sidebar's words. */
+const GROUP_LABEL: Record<Group, string> = {
+  convs: L.sidebar.convs,
+  screens: L.palette.screens,
+  projects: L.sidebar.projects,
+  commands: L.palette.commands,
+};
 
 type Row =
   | {
@@ -43,29 +56,10 @@ type Row =
     };
 
 /**
- * Substring beats subsequence: `결제` ranks an answer that starts with it
- * above one that merely scatters its letters. Plain lowercase matching —
- * the planner's words are Korean and short.
- */
-function rank(query: string, text: string): number {
-  const q = query.trim().toLowerCase();
-  if (!q) return 0;
-  const t = text.toLowerCase();
-  const at = t.indexOf(q);
-  if (at >= 0) return at === 0 ? 1 : 2;
-  let i = 0;
-  for (const ch of t) {
-    if (ch === q[i]) i += 1;
-    if (i === q.length) return 3;
-  }
-  return -1;
-}
-
-/**
  * One overlay the frame's every jump lives behind (⌘K): every project's
- * conversations newest first (the daemon's threads), the other projects,
- * and — as chips under the list — the few commands that exist
- * (오버레이 목업 05).
+ * conversations newest first, the projects themselves, and the common
+ * commands as chips under the list. The words are the sidebar's (labels.ts)
+ * — the palette is the sidebar's index, not a second vocabulary.
  */
 export function Palette({
   titleForThread,
@@ -141,20 +135,20 @@ export function Palette({
         // pile per project. Unparseable clocks keep the daemon's order.
         const stamp = Date.parse(thread.updatedAt);
         // The right side reads like the sidebar's row: the state word and
-        // the clock together (작업 중 · 4분 전), the bare clock when the
+        // the clock together (만드는 중 · 4분 전), the bare clock when the
         // conversation is quiet — plus the project's name where the
         // frame-wide walk reaches into another project.
         const clock = Number.isNaN(stamp) ? "" : timeAgo(stamp);
         const state =
           thread.state === "running"
             ? clock
-              ? `작업 중 · ${clock}`
-              : "작업 중"
+              ? `${L.journey.making} · ${clock}`
+              : L.journey.making
             : thread.state === "awaiting"
-              ? "확인 대기"
+              ? L.sidebar.waitingAnswer
               : clock;
         const hint = now
-          ? "지금 열림"
+          ? L.palette.nowOpen
           : [projectSlug || project.slug === activeSlug ? null : project.name, state]
               .filter(Boolean)
               .join(" · ");
@@ -163,7 +157,7 @@ export function Palette({
           recency: Number.isNaN(stamp) ? 0 : -stamp,
           row: {
             kind: "session",
-            group: "대화",
+            group: "convs",
             key: `${project.slug}:${thread.id}`,
             label,
             dot:
@@ -193,16 +187,16 @@ export function Palette({
         recency: 0,
         row: {
           kind: "project",
-          group: "프로젝트",
+          group: "projects",
           key: project.slug,
           label: project.name,
-          hint: "프로젝트",
+          hint: L.sidebar.projects,
           run: async () => {
             try {
               await onActivateProject(project.slug);
               onClose();
             } catch {
-              setError("프로젝트로 옮기지 못했습니다 — 잠시 뒤 다시 시도해 주세요.");
+              setError(L.palette.moveFailed);
             }
           },
         },
@@ -211,7 +205,7 @@ export function Palette({
     // Groups keep their walk order; inside one, the better match leads, and
     // equal ranks keep the timeline — the sort is stable, so the recency key
     // only decides where ranks tie (a query-less walk, mostly).
-    const order: Record<Group, number> = { 대화: 0, 화면: 1, 프로젝트: 2, 명령: 3 };
+    const order: Record<Group, number> = { convs: 0, screens: 1, projects: 2, commands: 3 };
     return out
       .sort(
         (a, b) =>
@@ -239,8 +233,8 @@ export function Palette({
     const commands: Array<{ label: string; hint: string; icon: typeof PlusIcon; run: () => void }> =
       [
         {
-          label: "설정",
-          hint: "AI · 알림 · 연결 · 업데이트",
+          label: L.sidebar.settings,
+          hint: L.palette.settingsHint,
           icon: GearIcon,
           run: () => onOpenSettings(),
         },
@@ -294,8 +288,8 @@ export function Palette({
             ref={searchRef}
             className="palette__search"
             value={query}
-            placeholder={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 프로젝트 찾기"}
-            aria-label={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 프로젝트 찾기"}
+            placeholder={projectSlug ? L.palette.findInProject : L.palette.find}
+            aria-label={projectSlug ? L.palette.findInProject : L.palette.find}
             role="combobox"
             aria-expanded="true"
             aria-controls="palette-list"
@@ -316,25 +310,28 @@ export function Palette({
               </span>
               <span>
                 {query.trim()
-                  ? `'${query.trim()}'와 맞는 것이 없습니다.`
+                  ? L.palette.noMatch(query.trim())
                   : projectSlug
-                    ? "이 프로젝트에 아직 대화가 없습니다."
-                    : "아직 대화가 없습니다."}
+                    ? L.palette.noConvsInProject
+                    : L.palette.noConvs}
               </span>
             </li>
           )}
           {rows.map((row, i) => {
             const header =
               i === 0 || rows[i - 1]?.group !== row.group
-                ? row.group === "대화"
+                ? row.group === "convs"
                   ? scopedName
-                    ? `${scopedName}의 대화`
+                    ? L.palette.projectConvs(scopedName)
                     : query.trim()
-                      ? "대화"
-                      : "최근 대화"
-                  : row.group
+                      ? L.sidebar.convs
+                      : L.palette.recentConvs
+                  : GROUP_LABEL[row.group]
                 : null;
             const Icon = row.kind === "action" ? row.icon : null;
+            // The typed letters, inked where they landed — only the contiguous
+            // match has a shape to hold (matchRange scatters to null).
+            const range = matchRange(query, row.label);
             return (
               <Fragment key={row.kind + row.key}>
                 {header && (
@@ -353,13 +350,26 @@ export function Palette({
                   onMouseMove={() => setHighlight(i)}
                   onClick={() => run(row)}
                 >
-                  {row.kind === "session" && row.dot && <span className={`dot dot--${row.dot}`} />}
+                  {row.kind === "session" && row.dot === "live" && <Spin />}
+                  {row.kind === "session" && row.dot !== null && row.dot !== "live" && (
+                    <span className={`dot dot--${row.dot}`} aria-hidden="true" />
+                  )}
                   {Icon && (
                     <span className="palette__icon">
                       <Icon />
                     </span>
                   )}
-                  <span className="palette__label">{row.label}</span>
+                  <span className="palette__label">
+                    {range ? (
+                      <>
+                        {row.label.slice(0, range[0])}
+                        <mark>{row.label.slice(range[0], range[1])}</mark>
+                        {row.label.slice(range[1])}
+                      </>
+                    ) : (
+                      row.label
+                    )}
+                  </span>
                   {row.hint && <span className="palette__hint">{row.hint}</span>}
                 </li>
               </Fragment>
@@ -405,13 +415,13 @@ export function Palette({
         )}
         <div className="palette__foot" aria-hidden="true">
           <span>
-            <kbd>↑↓</kbd> 이동
+            <kbd>↑↓</kbd> {L.palette.move}
           </span>
           <span>
-            <kbd>↵</kbd> 열기
+            <kbd>↵</kbd> {L.palette.open}
           </span>
           <span>
-            <kbd>esc</kbd> 닫기
+            <kbd>esc</kbd> {L.palette.close}
           </span>
         </div>
       </div>

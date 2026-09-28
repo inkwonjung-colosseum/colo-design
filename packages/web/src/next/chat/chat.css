@@ -25,7 +25,7 @@
   inset: 6px;
   border: 2px dashed var(--accent);
   border-radius: var(--r-lg);
-  background: rgba(248, 247, 243, 0.6);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
   pointer-events: none;
   z-index: 20;
 }
@@ -116,7 +116,7 @@
 }
 
 .nx .nx-ue:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--nx-hover);
   color: var(--ink2);
 }
 
@@ -445,7 +445,7 @@
 }
 
 .nx .nx-settle button:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--nx-hover);
   color: var(--ink2);
 }
 
@@ -827,7 +827,7 @@
 }
 
 .nx .nx-tbtn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--nx-hover);
   color: var(--ink);
 }
 
@@ -1012,7 +1012,7 @@
   display: flex;
   gap: 2px;
   margin: 4px 8px 8px;
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--nx-hover);
   border-radius: var(--r);
   padding: 2px;
 }

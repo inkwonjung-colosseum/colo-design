@@ -1,4 +1,5 @@
 import type { ThreadSummary } from "@colo-design/protocol";
+import type { Ref } from "react";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
@@ -25,6 +26,8 @@ export function Sidebar({
   onPalette,
   onCollapse,
   onRenameSession,
+  hidden = false,
+  containerRef,
 }: {
   daemon: Daemon;
   /** `useSessions` 의 결과 — 대화 목록의 지우기 · 이름 바꾸기가 쓴다. */
@@ -39,6 +42,11 @@ export function Sidebar({
   onCollapse: () => void;
   /** 이름 바꾸기 — 설정의 대화 제목에 남는다(셸의 `onRenameSession`). */
   onRenameSession: (sessionId: string, title: string) => void;
+  /** 접힘(넓은 창) · 닫힘(좁은 창 서랍) — 초점과 접근 이름이 안으로 들어가지
+      않게 한다(작업 기록 서랍과 같은 패턴). */
+  hidden?: boolean;
+  /** 셸이 서랍을 열 때 첫 줄로 초점을 옮기기 위해 쥐는 자리. */
+  containerRef?: Ref<HTMLElement>;
 }) {
   const projects = daemon.projects;
   const active = projects.find((project) => project.slug === daemon.activeSlug) ?? null;
@@ -51,7 +59,7 @@ export function Sidebar({
   );
 
   return (
-    <aside className="nx-sidebar">
+    <aside className="nx-sidebar" aria-hidden={hidden} inert={hidden} ref={containerRef}>
       <div className="nx-side-top">
         <span className="nx-brand">
           <img src="/colonova-icon.svg" alt="" width={20} height={20} />

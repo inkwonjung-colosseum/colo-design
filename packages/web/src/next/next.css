@@ -40,6 +40,10 @@
   --green-soft: color-mix(in srgb, var(--ok) 12%, transparent);
   --red: var(--danger);
   --red-soft: var(--danger-soft);
+  /* 강조의 두 단계 — 검정 반투명이던 옛 값과 달리 잉크 색을 섞으므로
+     어두운 팔레트에서도 행이 보인다. */
+  --nx-hover: color-mix(in srgb, var(--ink) 6%, transparent);
+  --nx-selected: color-mix(in srgb, var(--ink) 10%, transparent);
   --font:
     -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR",
     "Segoe UI", sans-serif;
@@ -106,4 +110,65 @@ html[data-theme="github-light"] .nx {
 html[data-theme="claude"] .nx {
   --cmp: #fff;
   --cmp-line: var(--line);
+}
+
+/*
+ * 눌림 — 어디를 눌러도 같은 손맛. 작은 단추는 살짝 줄어들고, 온전한 줄(사이드바 ·
+ * 메뉴의 행)은 줄어드는 대신 hover 보다 한 단계 짙어진다. 80ms — 눌림은 인정이지
+ * 애니메이션이 아니다.
+ */
+.nx button:active:not(:disabled) {
+  transform: scale(0.97);
+  transition-duration: 80ms;
+}
+
+.nx .nx-side-row:active:not(:disabled),
+.nx .nx-orow:active:not(:disabled),
+.nx .nx-conv:active:not(:disabled),
+.nx .nx-me:active:not(:disabled),
+.nx .nx-mi:active:not(:disabled),
+.nx .nx-irow:active:not(:disabled) {
+  transform: none;
+  background: var(--nx-selected);
+  transition-duration: 80ms;
+}
+
+/* 덮개(좁은 창 서랍 뒤의 어린 화면)는 눌러도 움직이지 않는다 — 화면이 통째로
+   줄어들면 지금 뭘 닫으려는지 알 수 없다. */
+.nx .nx-scrim:active:not(:disabled) {
+  transform: none;
+}
+
+/*
+ * 동작 줄이기 — 셸 전체의 움직임을 사실상 0 으로. 두 가지는 모양을 바꿔 산다:
+ * 도는 표시는 멈춘 각도로 서면 깨진 것처럼 보이므로 천천히 깜빡이고, 끝없는
+ * 진행 막대는 트랙 밖에서 멈춰 빈 막대처럼 보이지 않게 안쪽에 멈춘 모양을 얻는다.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .nx *,
+  .nx *::before,
+  .nx *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .nx .nx-spin {
+    animation: nx-breathe 1.8s ease-in-out infinite !important;
+  }
+
+  /* 눌림의 줄어듦도 움직임이다 — 동작을 줄이는 동안은 색으로만 답한다. */
+  .nx button:active:not(:disabled) {
+    transform: none;
+  }
+
+  .nx .nx-bar > i {
+    animation: none !important;
+    transform: none;
+  }
+
+  .nx .nx-upd-bar::after {
+    animation: none !important;
+    left: 33%;
+  }
 }

@@ -5,10 +5,11 @@
   height: 100vh;
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);
-  transition: grid-template-columns 0.22s ease;
   overflow: hidden;
 }
 
+/* 접힘은 열 폭을 한 번에 갈고 옷(사이드바 자체)이 translateX 로 미끄러진다 —
+   열을 매 프레임 재면 사이드바 제목들이 매 프레임 다시 잘린다. */
 .nx--collapsed {
   grid-template-columns: 0 minmax(0, 1fr);
 }

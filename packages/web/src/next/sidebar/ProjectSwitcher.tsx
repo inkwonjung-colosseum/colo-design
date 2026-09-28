@@ -72,7 +72,12 @@ export function ProjectSwitcher({
         </button>
       </div>
       {pop === "list" && (
-        <Popover anchor={chevBtn} onClose={() => setPop(null)} className="nx-proj-pop">
+        <Popover
+          anchor={chevBtn}
+          onClose={() => setPop(null)}
+          className="nx-proj-pop"
+          label={L.shell.projectMenu}
+        >
           <div className="nx-mh">{L.sidebar.projects}</div>
           {projects.map((project) => {
             const row = projectStatus(project, L);
@@ -168,7 +173,7 @@ function ProjectInfo({
   const repo = repoUrl !== null && WEB_URL.test(repoUrl) ? repoUrl : null;
   const preview = daemon.repo?.phase === "ready" ? daemon.repo.previewUrl : null;
   return (
-    <Popover anchor={anchor} onClose={onClose} className="nx-proj-info">
+    <Popover anchor={anchor} onClose={onClose} className="nx-proj-info" label={project.name}>
       <div className="nx-pi-head">
         <ProjectMark slug={project.slug} name={project.name} />
         <b>{project.name}</b>

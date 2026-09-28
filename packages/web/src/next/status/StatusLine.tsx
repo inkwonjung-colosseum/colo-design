@@ -58,6 +58,11 @@ export function StatusLine({
   const [workOpen, setWorkOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const journeyRef = useRef<HTMLButtonElement>(null);
+  // 여정 단추의 접근 이름 — 보이는 몸(세 점 · 시계)은 매초 바뀌므로, 이름은
+  // `이번 작업 보기` 와 지금 점의 글자만 갖고 몸은 낭독에서 빼 둔다.
+  const workName = journey.points[journey.current]?.label
+    ? L.journey.openWorkNow(journey.points[journey.current].label)
+    : L.journey.openWork;
   const submitRef = useRef<HTMLButtonElement>(null);
   const [why, setWhy] = useState<string | null>(null);
   useEffect(() => {
@@ -163,6 +168,7 @@ export function StatusLine({
           title={L.journey.openWork}
           aria-haspopup="dialog"
           aria-expanded={workOpen}
+          aria-label={workName}
           onClick={() => {
             if (!workOpen) ledger.refresh();
             setConfirmOpen(false);
@@ -170,7 +176,7 @@ export function StatusLine({
           }}
         >
           {journey.making && (
-            <span className="nx-making">
+            <span className="nx-making" aria-hidden="true">
               <Spin />
               {makingWord}
               {turnStartedAt !== null && !narrow && (
@@ -183,7 +189,7 @@ export function StatusLine({
             </span>
           )}
           {journey.points.map((point, index) => (
-            <span key={point.label} className="nx-jwrap">
+            <span key={point.label} className="nx-jwrap" aria-hidden="true">
               {index > 0 && <span className="nx-jbar" aria-hidden="true" />}
               <span className={`nx-jstep nx-jstep--${point.state}`}>
                 <i aria-hidden="true" />
