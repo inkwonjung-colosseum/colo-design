@@ -419,3 +419,28 @@ test("noteGateCheck — fallback 칸은 되짚은 수를 싣고 0이면 싣지 �
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("noteGateCheck — 타입 검사를 돌렸으면 오류 0 도 싣는다 (PLAN-HARNESS §3.D D-5)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.noteGateCheck("s1", {
+      ms: 5,
+      screens: 0,
+      reopened: false,
+      skipped: "no-screens",
+      typeErrors: 0,
+      typeMs: 812,
+    });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false, typeErrors: 3, typeMs: 90 });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false });
+    const rows = readRows(dir).filter((r) => r.kind === "gateset");
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]?.typeErrors, 0);
+    assert.equal(rows[0]?.typeMs, 812);
+    assert.equal(rows[1]?.typeErrors, 3);
+    assert.equal("typeErrors" in (rows[2] ?? {}), false, "돌리지 않았으면 칸이 없다");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

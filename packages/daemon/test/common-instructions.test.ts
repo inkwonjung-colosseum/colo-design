@@ -5,7 +5,13 @@ import { test } from "node:test";
 import { COMMON_INSTRUCTIONS, stripCommonInstructions } from "../src/common-instructions.ts";
 
 test("공통 지침은 새 도구 이름을 말한다 — 찾기 · 조사 · 화면 파일 · 개발자 쪽지", () => {
-  for (const name of ["browser_find", "browser_inspect", "screen_files", "notify_developer"]) {
+  for (const name of [
+    "browser_find",
+    "browser_inspect",
+    "screen_files",
+    "repo_diagnostics",
+    "notify_developer",
+  ]) {
     assert.ok(COMMON_INSTRUCTIONS.includes(name), `지침이 ${name} 을 언급한다`);
   }
   assert.ok(COMMON_INSTRUCTIONS.includes("routes"), "지침이 여러 화면의 한 번에 보기를 말한다");

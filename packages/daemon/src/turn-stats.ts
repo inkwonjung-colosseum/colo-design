@@ -146,6 +146,11 @@ interface TurnGateRow {
   rescued?: number;
   /** 바뀐 파일에서 되짚은 화면 수(PLAN-HARNESS §3.B B-4) — 0 이면 싣지 않는다. */
   fallback?: number;
+  /** 게이트의 타입 검사(PLAN-HARNESS §3.D D-5) — 이번에 바뀐 TypeScript 파일의
+   *  오류 수와 검사 시간(ms). 검사를 돌렸으면 0 도 싣는다(돌리지 않은 게이트와
+   *  오류 0 인 게이트를 가른다). */
+  typeErrors?: number;
+  typeMs?: number;
 }
 
 /** 하루 파일의 한 줄 — 턴 행이거나 게이트 행. */
@@ -384,6 +389,8 @@ export class TurnStats {
       netLines?: number;
       rescued?: number;
       fallback?: number;
+      typeErrors?: number;
+      typeMs?: number;
     },
   ): void {
     const row: TurnGateRow = {
@@ -403,6 +410,8 @@ export class TurnStats {
       ...(outcome.fallback !== undefined && outcome.fallback > 0
         ? { fallback: outcome.fallback }
         : {}),
+      ...(outcome.typeErrors !== undefined ? { typeErrors: outcome.typeErrors } : {}),
+      ...(outcome.typeMs !== undefined ? { typeMs: outcome.typeMs } : {}),
     };
     this.write(row);
   }

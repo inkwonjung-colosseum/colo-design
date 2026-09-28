@@ -24,15 +24,26 @@ const SHOT_EXTENSIONS: Record<string, string> = {
   "image/png": ".png",
 };
 
+/** 게이트가 타입 검사를 돌렸다면 갈래를 가리지 않고 붙는 칸(PLAN-HARNESS §3.D D-3) —
+ *  돌리지 않았으면 칸이 아예 안 선다. */
+export interface GateTypeCheck {
+  /** 이번에 바뀐 TypeScript 파일에서 나온 오류 수 — 0 도 싣는다. */
+  typeErrors?: number;
+  /** 타입 검사에 걸린 밀리초. */
+  typeMs?: number;
+}
+
 /** 게이트 한 바퀴의 결과(2026-09-22) — 서버가 통계 행으로 내려앉히는 것. */
-export type GateOutcome =
+export type GateOutcome = (
   | { status: "trouble"; kept: number; troubles: ScreenTrouble[] }
   | { status: "ok"; kept: number }
   | { status: "broken" }
   | {
       status: "skipped";
       reason: "no-driver" | "no-session" | "no-screens" | "no-preview" | "busy";
-    };
+    }
+) &
+  GateTypeCheck;
 
 /** 게이트 한 바퀴를 통계 행의 칸으로 — kept 는 dedupe·origin 필터를 통과한
  *  화면 수다. 못 돈 이유와 판정 상세가 같은 모양으로 흘러 noteGateCheck 에
@@ -45,7 +56,13 @@ export function gateOutcomeStats(outcome: GateOutcome): {
   consoleLines?: number;
   netLines?: number;
   rescued?: number;
+  typeErrors?: number;
+  typeMs?: number;
 } {
+  const typeCheck =
+    outcome.typeErrors === undefined
+      ? {}
+      : { typeErrors: outcome.typeErrors, typeMs: outcome.typeMs };
   if (outcome.status === "trouble") {
     return {
       screens: outcome.kept,
@@ -54,10 +71,15 @@ export function gateOutcomeStats(outcome: GateOutcome): {
       consoleLines: outcome.troubles.reduce((sum, trouble) => sum + trouble.consoleCount, 0),
       netLines: outcome.troubles.reduce((sum, trouble) => sum + trouble.netCount, 0),
       rescued: outcome.troubles.filter((trouble) => trouble.rescued).length,
+      ...typeCheck,
     };
   }
-  if (outcome.status === "ok") return { screens: outcome.kept };
-  return { screens: 0, skipped: outcome.status === "broken" ? "broken" : outcome.reason };
+  if (outcome.status === "ok") return { screens: outcome.kept, ...typeCheck };
+  return {
+    screens: 0,
+    skipped: outcome.status === "broken" ? "broken" : outcome.reason,
+    ...typeCheck,
+  };
 }
 
 /** 캡처 파일 이름 — 주소를 무난한 조각으로 눌러 쓴다. */
@@ -86,6 +108,13 @@ export interface PreviewDriverDeps {
   session(sessionId: string): Session | undefined;
   sessions(): Iterable<Session>;
   notice(notice: DaemonNotice): void;
+  /**
+   * (PLAN-HARNESS §3.D D-3) 게이트 브리프의 타입 절 — 이 턴이 바꾼
+   * TypeScript 파일이 있을 때만 서버가 증분 검사를 돌려 만든다. 없으면
+   * null(게이트마다 tsc 를 돌리지 않는다). 오류가 없어도 검사를 돌렸으면
+   * lines 가 빈 채로 돌아온다 — 통계가 그 사실을 남긴다.
+   */
+  typeTroubles?(sessionId: string): Promise<{ lines: string[]; errors: number; ms: number } | null>;
 }
 
 /**
@@ -153,6 +182,10 @@ export class PreviewDrivers {
    * 게이트는 제 드라이버를 만든다: `open` 이 콘솔 기록을 비우므로 여기서
    * 읽는 줄이 정확히 그 화면의 것이 되고, 사용자가 보고 있는 창도
    * 건드리지 않는다.
+   *
+   * (PLAN-HARNESS §3.D D-3) 타입 갈래가 끼는 자리는 정해져 있다 —
+   * no-driver·no-session 뒤, 화면 없음 판정 앞에서 타입 검사를 돌려 그
+   * 줄을 모든 결과에 싣고, 화면 문제가 없어도 타입 줄이면 게이트 턴이 선다.
    */
   async runGate(sessionId: string, turnDurationMs?: number): Promise<GateOutcome> {
     const screens = [...(this.pinnedThisTurn.get(sessionId)?.values() ?? [])];
@@ -175,54 +208,79 @@ export class PreviewDrivers {
     const factory = this.deps.factory();
     if (!factory) return done(), { status: "skipped", reason: "no-driver" };
     if (!session) return done(), { status: "skipped", reason: "no-session" };
-    if (screens.length === 0) return done(), { status: "skipped", reason: "no-screens" };
+    // (D-3 ②) 타입 검사 — 서버가 이 턴에 바꾼 TypeScript 파일이 있을 때만
+    // 돌렸다. 실패는 null 이고, 돌렸다는 사실은 모든 갈래의 typeErrors ·
+    // typeMs 로 흘러간다.
+    const typeTroubles = (await this.deps.typeTroubles?.(sessionId).catch(() => null)) ?? null;
+    const typeLines = typeTroubles?.lines ?? [];
+    const typeFields: GateTypeCheck =
+      typeTroubles === null ? {} : { typeErrors: typeTroubles.errors, typeMs: typeTroubles.ms };
+    // (D-3 ③) 모인 화면이 없고 타입 줄도 없으면 지금처럼 no-screens.
+    if (screens.length === 0 && typeLines.length === 0) {
+      return done(), { status: "skipped", reason: "no-screens", ...typeFields };
+    }
     // 게이트는 이 세션이 사는 프로젝트를 기준으로 판정한다 — 활성 프로젝트가
     // 아니라. 턴 도중 프로젝트를 전환한 뒤 끝난 턴의 핀을 활성 레포의 주소로
     // 다시 열면 전혀 다른 앱의 콘솔이 이 세션의 판정이 된다.
     const repo = this.deps.repoForSession?.(sessionId) ?? this.deps.activeRepo();
     const status = await repo?.status().catch(() => null);
-    if (!status?.previewUrl) return done(), { status: "skipped", reason: "no-preview" };
-    // preview origin 밖의 주소는 게이트가 재검증할 대상이 아니다 — 허용된
-    // 추가 origin 은 레포의 다른 서버이지, 게이트가 다시 열 화면이 아니다.
-    const origin = new URL(status.previewUrl).origin;
+    const previewUrl = status?.previewUrl;
+    // (F1) 모인 화면이 있는데 미리보기 주소가 없으면 확인 불능이다 — 타입 줄도
+    // 없으면 통과가 아닌 no-preview 로 끝낸다(타입 줄이 있을 때만 화면 없이
+    // 계속 간다, D-3 ④).
+    if (!previewUrl && typeLines.length === 0) {
+      return done(), { status: "skipped", reason: "no-preview", ...typeFields };
+    }
     const kept: GateScreen[] = [];
-    const seen = new Set<string>();
-    for (const screen of screens) {
-      try {
-        const u = new URL(screen.route, origin);
-        if (u.origin !== origin) continue;
-        // 사람의 pin 은 경로로, 에이전트의 navigate·openTab 은 전체 주소로
-        // 온다 — 같은 화면을 두 번 열지 않게 경로로 정규화해 중복을 접는다.
-        const route = u.pathname + u.search + u.hash;
-        if (seen.has(route)) continue;
-        seen.add(route);
-        kept.push({ route });
-      } catch {
-        // 못 읽는 주소는 게이트 입력이 아니다.
+    let troubles: ScreenTrouble[] = [];
+    if (previewUrl) {
+      // preview origin 밖의 주소는 게이트가 재검증할 대상이 아니다 — 허용된
+      // 추가 origin 은 레포의 다른 서버이지, 게이트가 다시 열 화면이 아니다.
+      const origin = new URL(previewUrl).origin;
+      const seen = new Set<string>();
+      for (const screen of screens) {
+        try {
+          const u = new URL(screen.route, origin);
+          if (u.origin !== origin) continue;
+          // 사람의 pin 은 경로로, 에이전트의 navigate·openTab 은 전체 주소로
+          // 온다 — 같은 화면을 두 번 열지 않게 경로로 정규화해 중복을 접는다.
+          const route = u.pathname + u.search + u.hash;
+          if (seen.has(route)) continue;
+          seen.add(route);
+          kept.push({ route });
+        } catch {
+          // 못 읽는 주소는 게이트 입력이 아니다.
+        }
+      }
+      if (kept.length > 0) {
+        const driver = factory.forIsolated(previewUrl);
+        /** 게이트 스스로 깨진 것 — 판정이 아니라 확인 불능이다. */
+        let broken = false;
+        try {
+          troubles = await inspectScreens(driver, kept);
+        } catch {
+          // 게이트가 깨지는 것은 턴의 실패가 아니다 — 확인을 못 했을 뿐이다. 그러나
+          // 못했다는 사실까지 삼키면 확인 못 한 턴과 통과한 턴이 같은 침묵이 된다.
+          broken = true;
+        } finally {
+          await driver.destroy().catch(() => undefined);
+        }
+        // (D-3 ⑤) 게이트 자신이 깨지면 타입 줄도 버리고 broken 으로 끝난다 —
+        // 드물고, 다음 사람의 턴이 다시 본다.
+        if (broken) {
+          done("화면 확인을 실행하지 못했습니다 — 다음 말에 핀을 다시 찍어 확인해 주세요.");
+          return { status: "broken", ...typeFields };
+        }
       }
     }
-    if (kept.length === 0) return done(), { status: "ok", kept: 0 };
-    const driver = factory.forIsolated(status.previewUrl);
-    let troubles: ScreenTrouble[] = [];
-    /** 게이트 스스로 깨진 것 — 판정이 아니라 확인 불능이다. */
-    let broken = false;
-    try {
-      troubles = await inspectScreens(driver, kept);
-    } catch {
-      // 게이트가 깨지는 것은 턴의 실패가 아니다 — 확인을 못 했을 뿐이다. 그러나
-      // 못했다는 사실까지 삼키면 확인 못 한 턴과 통과한 턴이 같은 침묵이 된다.
-      broken = true;
-    } finally {
-      await driver.destroy().catch(() => undefined);
-    }
-    if (broken) {
-      done("화면 확인을 실행하지 못했습니다 — 다음 말에 핀을 다시 찍어 확인해 주세요.");
-      return { status: "broken" };
+    // (D-3 ⑥) 화면 문제도 타입 줄도 없으면 ok — origin 을 지난 화면이 0 이면
+    // kept 도 0 이다.
+    if (troubles.length === 0 && typeLines.length === 0) {
+      return done(), { status: "ok", kept: kept.length, ...typeFields };
     }
     // 사용자가 그 사이 다시 보냈으면 이 판정은 낡았다 — 도는 턴에 끼어들지 않는다.
-    if (troubles.length === 0) return done(), { status: "ok", kept: kept.length };
     if (this.deps.session(sessionId)?.state !== "idle") {
-      return done(), { status: "skipped", reason: "busy" };
+      return done(), { status: "skipped", reason: "busy", ...typeFields };
     }
     this.gatedSessions.add(sessionId);
     this.deps.notice({
@@ -245,12 +303,12 @@ export class PreviewDrivers {
         : [],
     );
     try {
-      session.send(gateBrief(troubles), captures);
+      session.send(gateBrief(troubles, typeLines), captures);
     } catch {
       // 질의가 방금 죽었다 — 완료로 닫는 편이 아무 말도 없는 것보다 낫다.
       done();
     }
-    return { status: "trouble", kept: kept.length, troubles };
+    return { status: "trouble", kept: kept.length, troubles, ...typeFields };
   }
 
   /**

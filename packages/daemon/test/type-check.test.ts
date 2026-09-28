@@ -22,10 +22,13 @@ import { BROWSER_TOOLS } from "../dist/browser-tools.js";
 import { repoCommandEnv } from "../dist/repo-bringup.js";
 import {
   diagnosticsAnswer,
+  isTypeScriptFile,
+  MAX_TYPE_LINES,
   parseTscOutput,
   TypeChecker,
   type TypeCheckResult,
   typeCheckPlan,
+  typeTroublesOf,
 } from "../dist/type-check.js";
 
 // ————— 파싱 —————
@@ -294,6 +297,69 @@ test("repo_diagnostics 도구 — submit_for_review 바로 앞에 선다", () =>
   assert.equal(tool?.op, "repoDiagnostics");
   assert.deepEqual(tool?.properties, {});
   assert.equal(tool?.required, undefined);
+});
+
+// ————— 게이트의 타입 절 (PLAN-HARNESS §3.D D-1) —————
+
+test("isTypeScriptFile — ts · tsx · mts · cts 는 참, 다른 확장자는 거짓", () => {
+  for (const yes of ["a.ts", "a.tsx", "a.mts", "a.cts", "b.d.ts", "src/screens/A.screen.tsx"]) {
+    assert.equal(isTypeScriptFile(yes), true, yes);
+  }
+  for (const no of ["a.js", "a.jsx", "server.js", "a.ts.bak", "README.md", "a.json"]) {
+    assert.equal(isTypeScriptFile(no), false, no);
+  }
+  // 윈도우 표기도 레포 루트 상대 슬래시 표기와 같게 본다.
+  assert.equal(isTypeScriptFile("src\\screens\\A.tsx"), true);
+});
+
+test("typeTroublesOf — 바뀐 파일의 오류만 줄로 실고 errors 는 그 전체 수다", () => {
+  const result: TypeCheckResult = {
+    status: "ok",
+    ms: 800,
+    diagnostics: [
+      { file: "src/a.ts", line: 3, col: 7, code: "TS2322", message: "형식이 맞지 않습니다" },
+      { file: "src/b.tsx", line: 1, col: 1, code: "TS7006", message: "암시적 any" },
+      { file: "src/old.ts", line: 9, col: 2, code: "TS2345", message: "옛 오류" },
+    ],
+  };
+  const troubles = typeTroublesOf(result, ["src/a.ts", "src\\b.tsx"]);
+  assert.notEqual(troubles, null);
+  assert.equal(troubles?.errors, 2);
+  assert.deepEqual(troubles?.lines, [
+    "- src/a.ts:3:7 TS2322 형식이 맞지 않습니다",
+    "- src/b.tsx:1:1 TS7006 암시적 any",
+  ]);
+});
+
+test("typeTroublesOf — 상한 10줄을 넘으면 나머지 수만 알린다", () => {
+  const diagnostics = Array.from({ length: 12 }, (_, i) => ({
+    file: "src/a.ts",
+    line: i + 1,
+    col: 1,
+    code: "TS2322",
+    message: `오류 ${i + 1}`,
+  }));
+  const troubles = typeTroublesOf({ status: "ok", ms: 5, diagnostics }, ["src/a.ts"]);
+  assert.equal(troubles?.errors, 12);
+  assert.equal(troubles?.lines.length, MAX_TYPE_LINES + 1);
+  assert.equal(troubles?.lines[MAX_TYPE_LINES], "… 나머지 2건");
+});
+
+test("typeTroublesOf — ok 아닌 결과와 오류 0 은 null", () => {
+  for (const result of [
+    { status: "unavailable" as const, reason: "tsconfig.json 이 없습니다" },
+    { status: "timeout" as const, ms: 1000 },
+    { status: "failed" as const, reason: "이유" },
+  ]) {
+    assert.equal(typeTroublesOf(result, ["a.ts"]), null);
+  }
+  assert.equal(typeTroublesOf({ status: "ok", ms: 5, diagnostics: [] }, ["a.ts"]), null);
+  const elsewhere: TypeCheckResult = {
+    status: "ok",
+    ms: 5,
+    diagnostics: [{ file: "src/old.ts", line: 1, col: 1, code: "TS2322", message: "옛 오류" }],
+  };
+  assert.equal(typeTroublesOf(elsewhere, ["src/a.ts"]), null);
 });
 
 // ————— 진짜 tsc —————

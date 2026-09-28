@@ -260,8 +260,11 @@ export function normalizeScreenCheckArgs(
  * AI 에게 가는 턴. `gate` 마커를 달아 대화록이 카드로 그리고(components
  * 의 `${step}에서 멈췄습니다`), 본문은 화면 하나당 한 묶음이다. 파일 경로도
  * 컴포넌트 이름도 쓰지 않는다 — 다른 기계 턴들과 같은 규칙이다.
+ * typeLines(PLAN-HARNESS §3.D D-2)는 이번 턴이 고친 TypeScript 파일의
+ * 타입 오류 — 화면 문제 뒤의 `### 타입 검사` 절로 실리며, 화면 문제가
+ * 없으면 그 절만으로 게이트가 선다.
  */
-export function gateBrief(troubles: ScreenTrouble[]): string {
+export function gateBrief(troubles: ScreenTrouble[], typeLines: string[] = []): string {
   const blocks = troubles.map((trouble) => {
     const head = trouble.route;
     const reasons: string[] = [];
@@ -274,11 +277,22 @@ export function gateBrief(troubles: ScreenTrouble[]): string {
     for (const line of trouble.lines) reasons.push(`${line.level}: ${line.text}`);
     return [`### ${head}`, ...reasons].join("\n");
   });
+  // 화면 문제가 없고 타입 절만 있으면 머리 문장이 그 사실을 말한다 —
+  // 둘째 인자가 없는 옛 호출은 지금의 문장 그대로를 받는다.
+  const head =
+    troubles.length > 0 || typeLines.length === 0
+      ? "사용자가 가리킨 화면을 도구가 다시 열어 봤습니다. 아래를 고친 뒤 답해 주세요."
+      : "이번 턴에 고친 파일을 도구가 타입 검사했습니다. 아래를 고친 뒤 답해 주세요.";
+  const typeBlock =
+    typeLines.length > 0
+      ? [
+          "### 타입 검사",
+          "이번 턴에 고친 파일에서 타입 검사가 찾은 오류입니다.",
+          ...typeLines,
+        ].join("\n")
+      : null;
   return markTurn(
     { kind: "gate", step: "화면 확인" },
-    [
-      "사용자가 가리킨 화면을 도구가 다시 열어 봤습니다. 아래를 고친 뒤 답해 주세요.",
-      ...blocks,
-    ].join("\n\n"),
+    [head, ...blocks, ...(typeBlock !== null ? [typeBlock] : [])].join("\n\n"),
   );
 }
