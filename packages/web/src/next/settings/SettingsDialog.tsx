@@ -4,6 +4,7 @@ import {
   type UpdateCheckResult,
 } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
+import { useInstallStep } from "../../hooks/use-install-step";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import type { Daemon } from "../../lib/daemon-client";
 import { requestInvitePicker } from "../../lib/invite-bus";
@@ -54,6 +55,11 @@ export function SettingsDialog({
   useEffect(() => {
     panel.current?.focus();
   }, []);
+
+  // 설치 · 업데이트 진행기의 날 줄은 화면에 내리지 않는다 — 단계 말만 선다.
+  const installStep = useInstallStep(daemon.install?.line ?? null);
+  const installStepWord =
+    installStep === null ? L.settings.installBusy : L.onboarding.installSteps[installStep];
 
   // ── AI — 설치가 끝나면 목록이 스스로 바뀌게: 옛 대화상자의 고침과 같은 길.
   const [fixBusy, setFixBusy] = useState<string | null>(null);
@@ -309,7 +315,13 @@ export function SettingsDialog({
         {copy.state === "running" && (
           <div className="nx-prog">
             <div className="nx-upd-bar" />
-            <div>{daemon.install?.kind === `update-${id}` ? daemon.install.line : null}</div>
+            <div role="status">
+              {daemon.install?.kind === `update-${id}` ? (
+                <span key={installStepWord} className="nx-inst-word">
+                  {installStepWord}
+                </span>
+              ) : null}
+            </div>
           </div>
         )}
         {agentError?.id === id && (
@@ -322,7 +334,15 @@ export function SettingsDialog({
   };
 
   return (
-    <div className="nx-set-back">
+    // 배경을 누르면 창이 물러난다 — 눌린 곳이 배경 자신일 때만(안의 창은 제외).
+    // biome-ignore lint/a11y/noStaticElementInteractions: 배경 누름은 포인터의 길이다 — 키보드는 Esc 와 닫기 단추로 같은 곳에 닿는다.
+    <div
+      className="nx-set-back"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <div
         ref={panel}
         className="nx-set"
@@ -377,8 +397,12 @@ export function SettingsDialog({
                       {(provider.id === "claude" || provider.id === "codex") &&
                         (daemon.install?.kind ===
                         (provider.id === "codex" ? "install-codex" : "install-claude") ? (
-                          <span className="nx-snote">
-                            {L.settings.installing(daemon.install.line)}
+                          <span
+                            key={installStepWord}
+                            className="nx-snote nx-inst-word"
+                            role="status"
+                          >
+                            {installStepWord}
                           </span>
                         ) : (
                           <button
@@ -387,7 +411,7 @@ export function SettingsDialog({
                             disabled={fixBusy !== null}
                             onClick={() => void installAgent(provider.id)}
                           >
-                            {fixBusy === provider.id ? L.update.checking : L.settings.install}
+                            {fixBusy === provider.id ? L.settings.installBusy : L.settings.install}
                           </button>
                         ))}
                     </div>
@@ -405,7 +429,7 @@ export function SettingsDialog({
                           disabled={fixBusy !== null}
                           onClick={() => void loginAgent(provider.id)}
                         >
-                          {fixBusy === provider.id ? L.update.checking : L.settings.login}
+                          {fixBusy === provider.id ? L.settings.loginBusy : L.settings.login}
                         </button>
                       )}
                     </div>
@@ -596,7 +620,7 @@ export function SettingsDialog({
                           disabled={appPhase === "installing"}
                           onClick={() => void installApp()}
                         >
-                          {appPhase === "installing" ? L.update.checking : L.update.runApp}
+                          {appPhase === "installing" ? L.update.appBusy : L.update.runApp}
                         </button>
                       ) : (
                         <a
@@ -751,7 +775,7 @@ function AgentLoginCode({ daemon }: { daemon: Daemon }) {
         disabled={!code.trim() || busy}
         onClick={() => void send()}
       >
-        {busy ? L.update.checking : L.settings.loginCodeSend}
+        {busy ? L.settings.codeSending : L.settings.loginCodeSend}
       </button>
       {error && <span className="nx-snote nx-snote--red">{error}</span>}
     </span>

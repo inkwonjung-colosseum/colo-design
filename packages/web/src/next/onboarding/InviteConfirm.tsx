@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { InviteImportState } from "../../hooks/use-invite-import";
+import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
 import { inviteRowsCopy } from "../lib/invite-rows";
@@ -34,32 +35,34 @@ export function InviteConfirm({
 }) {
   const [authorDraft, setAuthorDraft] = useState("");
   const [discardState, setDiscardState] = useState<"idle" | "done" | "failed">("idle");
+  const panel = useRef<HTMLDivElement>(null);
+  const live = state.phase !== "idle";
+  // 초점의 가두기와 되돌림 — 닫힐 때 열던 곳으로 돌려 놓는 것까지 맡는다.
+  useModalFocus(panel, live);
+  // Esc 는 맨 위 층만 답한다 — 적용이 도는 동안은 물러서지 않는다.
+  useModalEscape(panel, onClose, live && state.phase !== "applying");
 
   // 새 확인판이 열리면 지난 판의 흔적을 지운다.
   useEffect(() => {
     if (state.phase === "confirm") {
       setDiscardState("idle");
+      // 주 단추(가져오기)에 초점을 심는다 — 가두기는 훅이, 심기는 이 판이.
+      panel.current?.querySelector<HTMLElement>(".nx-mfoot .nx-btn--pri")?.focus();
     }
   }, [state.phase]);
-
-  // Escape 도 나가는 길이다 — 적용이 도는 동안과 팔레트가 위에 떠 있는 동안은 물러선다.
-  useEffect(() => {
-    if (state.phase === "idle" || state.phase === "applying") return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (document.querySelector(".palette")) return;
-      onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [state.phase, onClose]);
 
   if (state.phase === "idle") return null;
 
   return (
     <div className="nx nx-modal-host">
       <div className="nx-modal-back" role="presentation">
-        <div className="nx-modal" role="dialog" aria-modal="true" aria-label={L.invite.title}>
+        <div
+          ref={panel}
+          className="nx-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={L.invite.title}
+        >
           <div className="nx-mhd">
             <h2>{L.invite.title}</h2>
             {state.phase !== "applying" && (
@@ -78,9 +81,12 @@ export function InviteConfirm({
 
             {state.phase === "error" && (
               <>
-                <p className="nx-snote nx-ob-d--red" role="alert">
-                  {state.error}
-                </p>
+                {/* 첫 실행의 체크리스트가 같은 오류를 이미 말한다 — 이중으로 세지 않는다. */}
+                {!state.firstRun && (
+                  <p className="nx-snote nx-ob-d--red" role="alert">
+                    {state.error}
+                  </p>
+                )}
                 <div className="nx-mfoot">
                   <button type="button" className="nx-btn" onClick={onOpenPicker}>
                     {L.invite.otherFile}
@@ -100,6 +106,7 @@ export function InviteConfirm({
                 discardState={discardState}
                 onAuthorDraft={setAuthorDraft}
                 onApply={onApply}
+                onClose={onClose}
                 onDiscard={(path) => {
                   void window.coloDesignDesktop?.invite?.discard(path).then(
                     () => {
@@ -140,6 +147,7 @@ function ConfirmBody({
   discardState,
   onAuthorDraft,
   onApply,
+  onClose,
   onDiscard,
 }: {
   daemon: Daemon;
@@ -148,6 +156,7 @@ function ConfirmBody({
   discardState: "idle" | "done" | "failed";
   onAuthorDraft: (value: string) => void;
   onApply: (authorDraft: string, openRepoUrl?: string) => void;
+  onClose: () => void;
   onDiscard: (path: string) => void;
 }) {
   const copy = inviteRowsCopy(state.rows, L, daemon.projects);
@@ -253,7 +262,8 @@ function ConfirmBody({
       </div>
 
       <div className="nx-mfoot">
-        <button type="button" className="nx-btn nx-btn--ghost" onClick={() => onApply(authorDraft)}>
+        {/* 그만두기는 아무것도 가져오지 않는다 — 확인판만 물러난다. */}
+        <button type="button" className="nx-btn nx-btn--ghost" onClick={onClose}>
           {L.invite.cancel}
         </button>
         <button type="button" className="nx-btn nx-btn--pri" onClick={() => onApply(authorDraft)}>

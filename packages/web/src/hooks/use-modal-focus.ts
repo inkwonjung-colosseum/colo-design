@@ -72,11 +72,39 @@ export function useModalFocus(panel: RefObject<HTMLElement | null>, open: boolea
  * pressed Escape once and lost two layers. The rule is stacking, not
  * registration order: the palette (z-70) paints above a dialog (z-60) even
  * when the markup puts the modal last, so an open palette is the layer
- * Escape dismisses; with no palette open, the last `.modal` / `.palette` /
- * `.onboarding` in the DOM is.
+ * Escape dismisses; with no palette open, the last overlay in the DOM is.
  *
  * Menus and folds are not overlays — they keep their own Escape handlers.
  */
+
+/** 덮개의 뿌리가 되는 클래스 — 낡은 셸의 것과 새 셸의 창 · 확인판이 함께 산다. */
+export const MODAL_ROOT_SELECTOR = [
+  ".modal",
+  ".palette",
+  ".onboarding",
+  ".nx-set-back",
+  ".nx-modal-back",
+].join(", ");
+
+/** Esc 닫힘의 층 판정에 필요한 최소 모양 — 시험이 DOM 없이 이 모양으로 갈아끼운다. */
+export interface OverlayLike {
+  classList: { contains(name: string): boolean };
+}
+
+/** 겹친 덮개 가운데 맨 위 층을 고른다 — 팔레트가 열려 있기만 해도 그것이 맨 위고, 없으면 문서 마지막이다. */
+export function topmostOverlay<T extends OverlayLike>(overlays: readonly T[]): T | null {
+  if (overlays.length === 0) return null;
+  return (
+    overlays.find((el) => el.classList.contains("palette")) ?? overlays[overlays.length - 1] ?? null
+  );
+}
+
+/** 이 판의 뿌리가 맨 위 층일 때만 Esc 가 닫는다 — 아래 층은 위의 것이 닫힐 때까지 기다린다. */
+export function escapeCloses(root: OverlayLike | null, overlays: readonly OverlayLike[]): boolean {
+  if (!root) return false;
+  return topmostOverlay(overlays) === root;
+}
+
 export function useModalEscape(
   panel: RefObject<HTMLElement | null>,
   onClose: () => void,
@@ -86,15 +114,12 @@ export function useModalEscape(
     if (!open) return;
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      const overlays = document.querySelectorAll(".modal, .palette, .onboarding");
-      if (overlays.length === 0) return;
+      const overlays = Array.from(document.querySelectorAll(MODAL_ROOT_SELECTOR));
       // 규칙은 겹침이다, 마크 순서가 아니다 — 팔레트(z-70)는 대화상자(z-60)보다
       // 위에 칠해지는데 마크에서는 앞에 설 수 있다. 팔레트가 열려 있기만 해도
       // 그것이 맨 위 층이다; 없을 때만 DOM 마지막이 맨 위다.
-      const palette = [...overlays].find((el) => el.classList.contains("palette"));
-      const top = palette ?? overlays[overlays.length - 1]!;
-      const root = panel.current?.closest(".modal, .palette, .onboarding");
-      if (root !== top) return;
+      const root = panel.current?.closest(MODAL_ROOT_SELECTOR);
+      if (!escapeCloses(root ?? null, overlays)) return;
       onClose();
     };
     document.addEventListener("keydown", onKeydown);
