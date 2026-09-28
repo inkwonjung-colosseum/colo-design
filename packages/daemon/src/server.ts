@@ -20,7 +20,15 @@ import { DriverRegistry } from "./agent/registry.js";
 import { AgentInstall } from "./agent-install.js";
 import { AgentUpdates } from "./agent-update.js";
 import { browserMcpEntry } from "./browser-launch.js";
-import { type BrowserFailKind, classifyBrowserFailure, submitNoteOf } from "./browser-tools.js";
+import {
+  type BrowserFailKind,
+  classifyBrowserFailure,
+  normalizeNotifyArgs,
+  notifyDeveloperAnswer,
+  screenFilesAnswer,
+  shortHash,
+  submitNoteOf,
+} from "./browser-tools.js";
 import { CommandDedupe } from "./command-dedupe.js";
 import {
   type CredentialStore,
@@ -28,7 +36,7 @@ import {
   migratePlaintextSecrets,
   migrateProjectPats,
 } from "./credentials.js";
-import { DeveloperNotice, describeProblem } from "./developer-notice.js";
+import { AGENT_NOTICE_KEY_PREFIX, DeveloperNotice, describeProblem } from "./developer-notice.js";
 import { RequestRouter } from "./dispatch.js";
 import { buildStatus, resolveClaudeExecutable } from "./environment.js";
 import { Escalation } from "./escalation.js";
@@ -43,6 +51,7 @@ import { MachineSetting } from "./machine-setting.js";
 import { type DaemonNotice, noticeForState } from "./notices.js";
 import { AgentLogin } from "./onboarding.js";
 import { realpathBestEffort } from "./paths.js";
+import { huntPinFiles } from "./pin-files.js";
 import { PlanTracker } from "./plan-tracker.js";
 import { daemonOwnedPorts } from "./preview-claim.js";
 import type {
@@ -56,6 +65,7 @@ import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
 import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
 import { MAX_LINES_PER_SCREEN, TROUBLE_LEVELS } from "./screen-gate.js";
+import { observedFilesFor } from "./screen-map.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { TurnStats } from "./turn-stats.js";
@@ -93,7 +103,9 @@ const HANDOFF_POLL_MS = 2 * 60_000;
  * `screenCheck` 는 pane 이 아니라 검증 창(forIsolated)에서 돈다 — 게이트의
  * 판정을 턴 안에서 앞당겨 보는 길이다. `submitForReview` (PLAN L6) 는 pane
  * 없이 감독자에 의도만 적는다 — 브라우저가 없는 세계에서도 대화로 제출은
- * 된다(도구 실림은 lifecycle.submitFromChat 이 정한다).
+ * 된다(도구 실림은 lifecycle.submitFromChat 이 정한다). `screenFiles` ·
+ * `notifyDeveloper` (PLAN-MCP §3.E) 도 pane 이 없다 — 전자는 관찰 지도와
+ * 클론 사냥만, 후자는 DeveloperNotice 의 기존 길만 쓴다.
  */
 const BROWSER_OPS: Record<string, true> = {
   navigate: true,
@@ -113,6 +125,8 @@ const BROWSER_OPS: Record<string, true> = {
   waitFor: true,
   screenCheck: true,
   submitForReview: true,
+  screenFiles: true,
+  notifyDeveloper: true,
 };
 
 /** 요청 본문 한도 — evaluate 식·콘솔 요청 등을 다 담는 충분한 크기. */
@@ -135,6 +149,10 @@ const BROWSER_QUIET_OPS: Record<string, true> = {
   consoleLines: true,
   waitFor: true,
   screenCheck: true,
+  // pane 을 겨누지 않는 두 도구도 관찰이다 — 쪽지(쓰기)는 GitHub 으로 가지,
+  // 사용자의 미리보기 화면은 건드리지 않는다.
+  screenFiles: true,
+  notifyDeveloper: true,
 };
 
 /**
@@ -1419,6 +1437,92 @@ export class DaemonServer {
         ok: true,
         result: "개발자에게 보냈어요 — 진행은 상단의 상태 칩이 알려 줍니다.",
       });
+      return;
+    }
+    // screen_files (PLAN-MCP §3.E) — pane 이 아니라 관찰 지도(screen-map.jsonl)와
+    // 클론 사냥만 본다. 미리보기를 띄우지 않은 세션·브라우저 개발 경로에서도
+    // 답한다. 겨냥은 screen_check 와 같이 활성 프로젝트가 아니라 세션의
+    // 프로젝트다.
+    if (op === "screenFiles") {
+      const workspaces = this.workspaceOfSession(sessionId);
+      const args = params as Record<string, unknown>;
+      const route = typeof args.route === "string" ? args.route.trim() : "";
+      if (workspaces === null || route === "") {
+        this.observeBrowserOp(sessionId, op, Date.now() - opStart, "other");
+        reply(200, {
+          ok: false,
+          error:
+            workspaces === null
+              ? "이 세션의 프로젝트를 찾지 못했습니다."
+              : "화면의 경로(route)가 필요합니다.",
+        });
+        return;
+      }
+      const title = typeof args.title === "string" ? args.title.trim() : "";
+      const observed = await observedFilesFor(
+        workspaces.paths.root,
+        workspaces.paths.repoRoot,
+        route,
+      ).catch(() => [] as string[]);
+      // 제목이 있으면 관찰 다음의 한 번 더 — 핀 턴의 글자 사냥과 같은 바늘이다.
+      let hunted: string[] = [];
+      if (title !== "") {
+        const hits = await huntPinFiles(workspaces.paths.repoRoot, [
+          { id: "screen-files", text: title },
+        ])
+          .then((found) => found.get("screen-files") ?? [])
+          .catch(() => []);
+        hunted = hits.map((hit) => hit.file);
+      }
+      this.observeBrowserOp(sessionId, op, Date.now() - opStart);
+      reply(200, { ok: true, result: screenFilesAnswer(observed, hunted, title) });
+      return;
+    }
+    // notify_developer (PLAN-MCP §3.E) — AI 도 고칠 수 없는 문제를 개발자에게
+    // 올리는 길이다. 열린 요청이 있으면 그 PR 의 코멘트, 없으면 이슈 —
+    // DeveloperNotice 의 기존 배달 그대로다. 문제 문장(notices)은 세우지 않는
+    // 것이 기본이라 `agent:` 키가 화면 주의에서 걸러진다. 실림 조건은 없다 —
+    // 예산(하루 3통)이 울타리다.
+    if (op === "notifyDeveloper") {
+      const workspaces = this.workspaceOfSession(sessionId);
+      const args = normalizeNotifyArgs(params as Record<string, unknown>);
+      if (workspaces === null || args === null) {
+        this.observeBrowserOp(sessionId, op, Date.now() - opStart, "other");
+        reply(200, {
+          ok: false,
+          error:
+            args === null
+              ? "title · what · ask 세 인자가 모두 필요합니다."
+              : "이 세션의 프로젝트를 찾지 못했습니다.",
+        });
+        return;
+      }
+      if (!workspaces.supervisor.spendAgentNotice()) {
+        this.observeBrowserOp(sessionId, op, Date.now() - opStart, "other");
+        reply(200, {
+          ok: true,
+          result: "오늘은 더 보낼 수 없습니다 — 답변에 이유를 적어 두십시오",
+        });
+        return;
+      }
+      const sessionTitle = this.manager.get(sessionId)?.title;
+      const via = await this.developerNotice.raise({
+        key: `${AGENT_NOTICE_KEY_PREFIX}${shortHash(args.title)}`,
+        slug: workspaces.slug,
+        title: args.title,
+        what: args.what,
+        tried: "AI 가 대화 안에서 시도한 것 — 답변 참조",
+        ask: args.ask,
+        // 자세히는 세션 제목 한 줄 — 개발자가 어느 대화의 쪽지인지 안다.
+        ...(sessionTitle === undefined ? {} : { detail: sessionTitle }),
+      });
+      this.observeBrowserOp(
+        sessionId,
+        op,
+        Date.now() - opStart,
+        via === "none" ? "other" : undefined,
+      );
+      reply(200, { ok: true, result: notifyDeveloperAnswer(via) });
       return;
     }
     const factory = this.config.browserDriverFactory;

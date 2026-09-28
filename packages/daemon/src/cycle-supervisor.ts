@@ -74,7 +74,7 @@ import {
   type CycleSnapshot,
   nextCycleAction,
 } from "./cycle-reconcile.js";
-import { SCREEN_QUIET_KEYS } from "./developer-notice.js";
+import { isScreenQuietKey } from "./developer-notice.js";
 import { extractDeveloperReplies, replyFooter } from "./developer-replies.js";
 import { COLO_DESIGN_DIR } from "./environment.js";
 import type { GitHubClient, PullRequestRef } from "./github.js";
@@ -287,7 +287,7 @@ export class CycleSupervisor {
       // 화면에 서지 않는 조용한 알림(U17)은 재료에서 뺀다 — 원장에는 남아
       // 개발자 알림의 장부로 살되, 문제 문장은 늘어나지 않는다.
       notices: Object.fromEntries(
-        Object.entries(this.ledger.notices).filter(([key]) => !SCREEN_QUIET_KEYS[key]),
+        Object.entries(this.ledger.notices).filter(([key]) => !isScreenQuietKey(key)),
       ),
     };
   }
@@ -305,6 +305,19 @@ export class CycleSupervisor {
     this.ledger = { ...this.ledger, notices };
     writeLedger(this.ledgerPath, this.ledger);
     this.deps.onChange?.();
+  }
+
+  /**
+   * 대화의 개발자 쪽지(notify_developer, PLAN-MCP §3.E)의 예산 — 하루 3통을
+   * 원장의 budgets 로 센다. 도구가 부르는 문이며, 다하면 false — 도구가 문장으로
+   * 답해 답변에 이유를 적게 한다. 제출 단계의 셈(recordSubmitFailure)과 같이
+   * onChange 는 걷지 않는다 — budgets 는 RepoStatus 로 방송되지 않는다.
+   */
+  spendAgentNotice(): boolean {
+    const spent = spend(this.ledger.budgets, "agentNotice", BUDGETS.agentNotice, this.now());
+    this.ledger = { ...this.ledger, budgets: spent.ledger };
+    writeLedger(this.ledgerPath, this.ledger);
+    return spent.allowed;
   }
 
   /** 원장의 pendingOp — 충돌 중 자동 보관 건너뛰기가 읽는다. */
