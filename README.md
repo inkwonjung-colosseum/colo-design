@@ -17,7 +17,7 @@
 ![코딩 지식 필요 없어요](https://img.shields.io/badge/%EC%BD%94%EB%94%A9%20%EC%A7%80%EC%8B%9D-%ED%95%84%EC%9A%94%20%EC%97%86%EC%96%B4%EC%9A%94-2ea44f)
 ![터미널 안 열어요](https://img.shields.io/badge/%ED%84%B0%EB%AF%B8%EB%84%90-%EC%95%88%20%EC%97%B4%EC%96%B4%EC%9A%94-2ea44f)
 ![관리자 권한 안 써요](https://img.shields.io/badge/%EA%B4%80%EB%A6%AC%EC%9E%90%20%EA%B6%8C%ED%95%9C-%EC%95%88%20%EC%8D%A8%EC%9A%94-2ea44f)
-![version](https://img.shields.io/badge/version-0.5.0-blue)
+![version](https://img.shields.io/badge/version-0.6.0-blue)
 
 <br/>
 
