@@ -123,8 +123,8 @@ const T = {
   updateRun: "업데이트",
   latest: "최신이에요",
   updatedAt: "에 업데이트했어요",
-  thinkShort: "짧게",
-  thinkLong: "길게",
+  thinkShort: "low",
+  thinkLong: "high",
   fast: "빠르게",
   chatTab: "대화",
   screenTab: "화면 · ",
@@ -966,7 +966,7 @@ TASK[8] = async () => {
     await shot(page, 8, "model-chip");
     const text = await bodyText(page);
     check(text.includes("생각 시간"), "생각 시간 없음");
-    check(text.includes(T.thinkShort) && text.includes(T.thinkLong), "짧게 · 길게 없음");
+    check(text.includes(T.thinkShort) && text.includes(T.thinkLong), "low · high 없음");
     // 빠르게 칩은 아이콘만 서고 이름은 aria-label 이 입는다 — 말뭉치(text)엔 없다.
     const fast =
       text.includes(T.fast) || (await page.getByRole("button", { name: T.fast }).count()) > 0;

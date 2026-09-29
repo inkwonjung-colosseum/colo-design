@@ -27,7 +27,7 @@ node scripts/bench/bench.mjs run \
   --endpoint /tmp/nova-bench.json \
   --project nova-beta-fixture \
   --scenarios scripts/bench/scenarios/fixture.json \
-  --provider omp --model devin/swe-2 --effort high \
+  --provider claude --model opus --effort high \
   --label before
 
 # CDS 레포 — fixture 가 아니면 --yes 가 필요하다(원격에 작업 가지가 올라간다)

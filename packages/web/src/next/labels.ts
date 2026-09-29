@@ -203,11 +203,6 @@ export const L = {
     filterPlaceholder: "모델 이름으로 고르세요",
     noMatch: "맞는 모델이 없어요",
     think: "생각 시간",
-    thinkShort: "짧게",
-    thinkNormal: "보통",
-    thinkLong: "길게",
-    thinkLonger: "아주 길게",
-    thinkMax: "최대",
     usage: "사용량",
     loggedIn: "로그인됨",
   },
@@ -223,7 +218,6 @@ export const L = {
     onTitle: "빠르게 켜짐 · 누르면 꺼요",
     costClaude: "요금제 사용량과 별도로 사용량 크레딧에서 빠져요 · 같은 답에 약 2배",
     costMidway: "대화 중간에 켜면 지금까지의 대화도 한 번 더 계산해요",
-    costOmp: "빠른 변종 모델로 답해요 · 사용량이 더 빨리 닳을 수 있어요",
     costOther: "사용량이 더 빨리 닳아요",
     blocked: {
       creditsGone: "사용량 크레딧이 다 떨어져 보통 속도로 답해요",
@@ -476,6 +470,10 @@ export const L = {
     kindImage: "그림",
     kindInput: "입력칸",
     kindOther: "화면 부분",
+    /** 호버 패널의 겉모습 줄 — 게스트 오버레이가 입는 말(선로로 건너간다). */
+    statColor: "색",
+    statBackground: "배경",
+    statFont: "글꼴",
   },
   history: {
     title: "작업 기록",

@@ -2,8 +2,8 @@ import type { ChatEvent } from "@nova-design/protocol";
 
 /**
  * 다시 연 대화에 턴 끝을 세운다 (PLAN-THREAD T-1). 라이브는 턴마다 `turn.end`
- * 가 나가지만 저장된 대화록에는 그 자리가 없다 — 세 드라이버의 재생(claude
- * import.ts · codex replayRollout · omp replayOmpSession) 어느 것도 내지
+ * 가 나가지만 저장된 대화록에는 그 자리가 없다 — 두 드라이버의 재생(claude
+ * import.ts · codex replayRollout) 어느 것도 내지
  * 않으므로, 드라이버마다 고치는 대신 재생 결과에 한 번 입힌다. 턴 끝 블록이
  * 있어야 웹이 `고친 화면` 카드와 정산 줄(걸린 시간 · 여기서 새 대화)을 그린다.
  *

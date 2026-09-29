@@ -16,7 +16,7 @@ import { contextBridge, ipcRenderer } from "electron";
  *    크롬은 뷰가 찍는 순간에 채운다(재설계 C4). 핀 상태의 진실은 웹이 쥐고,
  *    웹의 전체 동기화(`nova-overlay:pins`)를 번호 배지로 투영한다 — 영역 핀은
  *    배지와 점선 테두리를 좌표(rect)로 다시 앵커한다. 봉투는 요소의
- *    HTML·스타일·a11y·속성 을 옵션으로 싣고, 클릭
+ *    HTML·스타일·a11y·속성·XPath·주변 글자 를 옵션으로 싣고, 클릭
  *    요소의 `data-nova-pick` 스탬프로 뷰가 main world 에서 React owner
  *    이름을 읽는다(fiber 는 이 isolated world 에서 보이지 않는다).
  */
@@ -123,6 +123,36 @@ function accentAlpha(alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+/**
+ * A computed color as the short hex the stats panel reads — `rgb()`/`rgba()`
+ * (쉼표든 빈칸이든, 알파가 퍼센트든) 를 #RRGGBB 로 누른다. 알파가 0 이하면
+ * `transparent`; 파싱이 안 되면 원문 그대로.
+ */
+function hexColor(value: string): string {
+  const match = value.match(/rgba?\(([^)]+)\)/);
+  if (!match) return value;
+  const parts = match[1]!.split(/[,/\s]+/).filter((part) => part !== "");
+  const r = Number.parseFloat(parts[0] ?? "");
+  const g = Number.parseFloat(parts[1] ?? "");
+  const b = Number.parseFloat(parts[2] ?? "");
+  const alpha = parts[3] === undefined ? 1 : Number.parseFloat(parts[3]);
+  if (
+    !Number.isFinite(r) ||
+    !Number.isFinite(g) ||
+    !Number.isFinite(b) ||
+    !Number.isFinite(alpha)
+  ) {
+    return value;
+  }
+  if (alpha <= 0) return "transparent";
+  const byte = (n: number) =>
+    Math.round(Math.min(255, Math.max(0, n)))
+      .toString(16)
+      .padStart(2, "0")
+      .toUpperCase();
+  return `#${byte(r)}${byte(g)}${byte(b)}`;
+}
+
 const Z = "2147483000";
 const root = document.createElement("div");
 root.setAttribute("data-nova-design-overlay", "");
@@ -155,12 +185,25 @@ let hoverTarget: Element | null = null;
  * The hover box's name tag — the planner's words (the accent tab, the same
  * name the bubble and the tray row use) and, when an interactive element
  * carries no accessible name at all, the yellow 이름 없음 under it. Lives and
- * dies with `hover`.
+ * dies with `hover`. The dark stats panel under the tag is the element's own
+ * appearance — tag, size (live, in the hover loop) and the computed color ·
+ * background · font, read once per hover target.
  */
 let hoverTag: {
   box: HTMLElement;
   label: HTMLElement;
   warn: HTMLElement;
+  stats: HTMLElement;
+  statsTag: HTMLElement;
+  statsSize: HTMLElement;
+  statsColorLabel: HTMLElement;
+  statsColor: HTMLElement;
+  /** 배경 줄 전체 — 투명이면 줄이 통째로 숨는다. */
+  statsBackgroundRow: HTMLElement;
+  statsBackgroundLabel: HTMLElement;
+  statsBackground: HTMLElement;
+  statsFontLabel: HTMLElement;
+  statsFont: HTMLElement;
 } | null = null;
 
 /** The tags a planner can pin asking "this does not say what it does" —
@@ -183,11 +226,13 @@ function kindWord(element: Element): string {
 /**
  * The tag's one line: the name the pin bubble would show — own words, a
  * declared label, or the easy kind when the element says nothing. An
- * interactive element whose name is nowhere (no aria-label/title/alt, no own
- * words, no placeholder/value) also says 이름 없음: that gap is the one thing
- * a planner can pin and ask fixed in the same breath. The name is asked of
- * the nearest interactive element — the hover usually lands on the icon or
- * label inside it.
+ * interactive element whose name is nowhere (no aria-label/title/alt, no
+ * words anywhere inside it, no placeholder/value) also says 이름 없음: that
+ * gap is the one thing a planner can pin and ask fixed in the same breath.
+ * The name is asked of the nearest interactive element — the hover usually
+ * lands on the icon or label inside it. The words count from the whole
+ * subtree, as the browser names a link: a card link whose title and caption
+ * sit in child h · p · span is named, not 이름 없음.
  */
 function hoverName(element: Element): { name: string; unnamed: boolean } {
   const interactive = element.closest(INTERACTIVE_SELECTOR);
@@ -195,7 +240,9 @@ function hoverName(element: Element): { name: string; unnamed: boolean } {
   if (interactive) {
     const it = interactive.tagName.toLowerCase();
     const named =
-      ownText(interactive) !== "" ||
+      (interactive.textContent ?? "").trim() !== "" ||
+      interactive.querySelector('img[alt]:not([alt=""]), [aria-label]:not([aria-label=""])') !==
+        null ||
       interactive.getAttribute("aria-label") !== null ||
       interactive.getAttribute("title") !== null ||
       (it !== "input" && it !== "textarea" && interactive.getAttribute("alt") !== null) ||
@@ -322,6 +369,10 @@ function layoutHover(): void {
   if (hoverTag) {
     const height = hoverTag.box.offsetHeight;
     hoverTag.box.style.top = rect.y >= height + 2 ? `${-height - 1}px` : "0px";
+    // The size is the panel's one live number — it follows the element
+    // while the box does, from the same rect.
+    const size = `${Math.round(rect.width)}×${Math.round(rect.height)}`;
+    if (hoverTag.statsSize.textContent !== size) hoverTag.statsSize.textContent = size;
   }
 }
 
@@ -420,10 +471,52 @@ document.addEventListener(
         "background:rgba(17,17,17,.88);color:#fbbf24;border-radius:0 0 4px 4px;padding:1px 6px;font-size:10px;line-height:1.5;white-space:nowrap;",
         words.unnamed ?? "",
       );
+      // The element's own appearance, under the name — tag and size on the
+      // head line, color · background · font under it. One label-value pair
+      // per row; the background row hides itself when there is nothing to
+      // see through.
+      const stats = el(
+        "div",
+        "margin-top:2px;display:flex;flex-direction:column;gap:1px;background:rgba(17,24,39,.92);color:#e5e7eb;border-radius:6px;padding:4px 8px;font-size:10px;line-height:1.5;max-width:240px;",
+      );
+      const statsHead = el("div", "display:flex;gap:6px;white-space:nowrap;max-width:100%;");
+      const statsTag = el("span", "font-weight:700;color:#fff;");
+      const statsSize = el("span", "color:#9ca3af;margin-left:auto;");
+      statsHead.append(statsTag, statsSize);
+      stats.appendChild(statsHead);
+      const statsRow = (): { row: HTMLElement; label: HTMLElement; value: HTMLElement } => {
+        const row = el("div", "display:flex;gap:6px;white-space:nowrap;max-width:100%;");
+        const label = el("span", "color:#9ca3af;flex:none;");
+        const value = el(
+          "span",
+          "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-width:0;overflow:hidden;text-overflow:ellipsis;",
+        );
+        row.append(label, value);
+        stats.appendChild(row);
+        return { row, label, value };
+      };
+      const colorRow = statsRow();
+      const backgroundRow = statsRow();
+      const fontRow = statsRow();
       box.appendChild(label);
       box.appendChild(warn);
+      box.appendChild(stats);
       hover.appendChild(box);
-      hoverTag = { box, label, warn };
+      hoverTag = {
+        box,
+        label,
+        warn,
+        stats,
+        statsTag,
+        statsSize,
+        statsColorLabel: colorRow.label,
+        statsColor: colorRow.value,
+        statsBackgroundRow: backgroundRow.row,
+        statsBackgroundLabel: backgroundRow.label,
+        statsBackground: backgroundRow.value,
+        statsFontLabel: fontRow.label,
+        statsFont: fontRow.value,
+      };
       root.appendChild(hover);
       startHoverLoop();
     }
@@ -434,6 +527,20 @@ document.addEventListener(
       hoverTag.label.style.borderRadius = unnamed ? "4px 4px 0 0" : "4px";
       hoverTag.warn.textContent = words.unnamed ?? "";
       hoverTag.warn.style.display = unnamed ? "" : "none";
+      // What the element looks like — read once per hover target; only the
+      // size line keeps following the element (in the hover loop below).
+      const computed = window.getComputedStyle(hoverTarget);
+      hoverTag.statsTag.textContent = hoverTarget.tagName.toLowerCase();
+      hoverTag.statsColorLabel.textContent = words.statColor ?? "";
+      hoverTag.statsColor.textContent = hexColor(computed.color);
+      const background = hexColor(computed.backgroundColor);
+      hoverTag.statsBackgroundLabel.textContent = words.statBackground ?? "";
+      hoverTag.statsBackground.textContent = background;
+      hoverTag.statsBackgroundRow.style.display = background === "transparent" ? "none" : "";
+      hoverTag.statsFontLabel.textContent = words.statFont ?? "";
+      const fontSpec = `${computed.fontSize} ${computed.fontFamily}`.trim();
+      hoverTag.statsFont.textContent =
+        fontSpec.length > 60 ? `${fontSpec.slice(0, 60)}…` : fontSpec;
     }
   },
   true,

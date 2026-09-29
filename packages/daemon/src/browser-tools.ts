@@ -1,11 +1,7 @@
 /**
- * 인앱 브라우저 도구의 계약과 데몬 중계 — 두 소비자가 함께 읽는 한 벌.
- *
- * - `browser-mcp.ts`: stdio MCP 서버(claude · codex · ACP 에이전트가 자식
- *   프로세스로 띄운다). 목록을 `tools/list`로 내고 `tools/call`을 중계한다.
- * - `agent/drivers/omp/session.ts`: omp 의 rpc-ui 는 host tool 와이어
- *   (`set_host_tools` → `host_tool_call` → `host_tool_result`)를 가지므로
- *   자식 프로세스 없이 데몬이 같은 도구를 in-process 로 답한다.
+ * 인앱 브라우저 도구의 계약과 데몬 중계 — `browser-mcp.ts`(stdio MCP 서버,
+ * claude · codex 가 자식 프로세스로 띄운다)가 읽는 한 벌. 목록을 `tools/list`로
+ * 내고 `tools/call`을 중계한다.
  *
  * 상태 없음: 탭과 스냅샷의 진실은 데몬과 pane 이 소유하고, 여기는 와이어
  * 번역만 한다. 실패도 도구 결과다 — 데몬의 ok:false·401·404 와 도달 실패는
@@ -42,7 +38,7 @@ export interface ToolDef {
   required?: string[];
 }
 
-/** 데몬으로 가는 중계의 좌표 — MCP 자식은 env 에서, omp 세션은 명세에서 읽는다. */
+/** 데몬으로 가는 중계의 좌표 — MCP 자식이 env 에서 읽는다. */
 export interface BrowserRelay {
   daemonUrl: string;
   secret: string;
@@ -322,8 +318,8 @@ export const BROWSER_TOOLS: ToolDef[] = [
 /**
  * 세션에 실을 도구 목록 (PLAN L6 · O6) — `submit_for_review` 는 프로젝트의
  * `lifecycle.submitFromChat`(초대 v4, 기본 true)이 켜진 세션에만 실린다.
- * MCP 자식은 같은 판정을 env 플래그(NOVA_BROWSER_SUBMIT)로 받고, omp 는
- * launch.browserMcp.env 에서 읽는다 — 셋 모두 같은 근거를 쓴다.
+ * MCP 자식은 같은 판정을 env 플래그(NOVA_BROWSER_SUBMIT)로 받는다 — 둘 다
+ * 같은 근거를 쓴다.
  */
 export function browserTools(submitFromChat: boolean): ToolDef[] {
   return submitFromChat
@@ -481,8 +477,8 @@ export const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set(
 );
 
 /**
- * 도구 이름이 브라우저 도구인가 — 세 프로바이더가 각각 다르게 부르는 이름
- * 셋을 본다: 맨 이름(omp host tool), `mcp__<server>__<name>`(claude),
+ * 도구 이름이 브라우저 도구인가 — 프로바이더마다 다르게 부르는 이름 셋을
+ * 본다: 맨 이름, `mcp__<server>__<name>`(claude),
  * `<server>/<name>`(codex). 서버 이름은 상수만 본다 — RENAME 계획이 값을
  * 바꿔도 이 판정은 흔들리지 않는다.
  *
@@ -537,7 +533,7 @@ export function refused(message: string): ToolOutcome {
 
 /**
  * 도구 호출 → 데몬 중계. HTTP 상태·ok:false·도달 실패 모두 도구 결과로
- * 맞춘다 — MCP 자식이든 omp 세션이든 모델이 읽는 실패 문장은 하나다.
+ * 맞춘다 — 모델이 읽는 실패 문장은 하나다.
  */
 export async function callBrowserTool(
   tool: ToolDef,

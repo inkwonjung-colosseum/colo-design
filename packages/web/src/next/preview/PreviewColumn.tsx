@@ -44,6 +44,9 @@ const OVERLAY_WORDS: Record<string, string> = {
   kindImage: L.pin.kindImage,
   kindInput: L.pin.kindInput,
   kindOther: L.pin.kindOther,
+  statColor: L.pin.statColor,
+  statBackground: L.pin.statBackground,
+  statFont: L.pin.statFont,
 };
 
 /** 팔레트가 바뀌면 오버레이의 색도 따라간다 — 테마는 뿌리의 data-theme 에 선다. */

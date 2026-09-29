@@ -20,13 +20,13 @@ import type { NovaDesignCommentTarget } from "@nova-design/protocol";
  * 주인이다(select 가 RECT_OF_SELF 에서 그렇게 하는 것과 같은 정규화다).
  */
 export function describeElementInPage(this: unknown, el?: unknown): NovaDesignCommentTarget | null {
-  /** 요소의 직접 텍스트 노드만 — 공백을 누르고 80자에서 자른다. */
+  /** 요소의 직접 텍스트 노드만 — 공백을 누르고 400자에서 자른다. */
   const ownText = (element: Element): string => {
     let text = "";
     for (const child of Array.from(element.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) text += child.textContent ?? "";
     }
-    return text.replace(/\s+/g, " ").trim().slice(0, 80);
+    return text.replace(/\s+/g, " ").trim().slice(0, 400);
   };
 
   /** body 부터의 CSS 경로 — 같은 태그의 형제가 둘 이상일 때만 nth-of-type.
@@ -50,6 +50,25 @@ export function describeElementInPage(this: unknown, el?: unknown): NovaDesignCo
     }
     return ["body", ...parts].join(" > ");
   };
+
+  /** body 부터의 XPath — cssPath 와 같은 결(같은 태그의 형제가 둘 이상일
+   *  때만 위치), locator 도구가 읽는 주소 모양이다. */
+  const xpathPath = (element: Element): string => {
+    const parts: string[] = [];
+    for (
+      let node: Element | null = element;
+      node && node !== document.body;
+      node = node.parentElement
+    ) {
+      const current = node;
+      const siblings = Array.from(current.parentElement?.children ?? []).filter(
+        (candidate) => candidate.tagName === current.tagName,
+      );
+      const index = siblings.length > 1 ? `[${siblings.indexOf(current) + 1}]` : "";
+      parts.unshift(`${current.tagName.toLowerCase()}${index}`);
+    }
+    return ["/body", ...parts].join("/");
+  };
   /** rect 의 네 칸을 정수로 — 핀 봉투의 rect 모양 그대로. */
   const roundRect = (rect: DOMRect): { x: number; y: number; width: number; height: number } => ({
     x: Math.round(rect.x),
@@ -69,7 +88,7 @@ export function describeElementInPage(this: unknown, el?: unknown): NovaDesignCo
         node.remove();
       }
       const html = clone.outerHTML;
-      return html === "" ? undefined : html.length > 1500 ? `${html.slice(0, 1500)}…` : html;
+      return html === "" ? undefined : html.length > 3000 ? `${html.slice(0, 3000)}…` : html;
     } catch {
       return undefined;
     }
@@ -108,15 +127,45 @@ export function describeElementInPage(this: unknown, el?: unknown): NovaDesignCo
     return styles;
   };
 
-  /** 페이지가 선언한 접근성 정체 — role 속성만(암시적 역할은 태그의 일)과
-   *  처음으로 걸리는 이름. 연결된 label 까지는 손이 안 닿는다. */
+  /** 태그가 암시하는 역할 — 페이지가 role 을 밝히지 않았을 때의 판정.
+   *  명세의 전부가 아니라 기획자가 짚을 만한 것만 담는다. */
+  const implicitRole = (element: Element): string | undefined => {
+    const tag = element.tagName.toLowerCase();
+    if (tag === "button") return "button";
+    if (tag === "a" && element.getAttribute("href") !== null) return "link";
+    if (tag === "img") return "img";
+    if (tag === "textarea") return "textbox";
+    if (tag === "select") return "combobox";
+    if (tag === "input") {
+      const type = (element.getAttribute("type") ?? "text").toLowerCase();
+      if (type === "hidden") return undefined;
+      if (type === "checkbox") return "checkbox";
+      if (type === "radio") return "radio";
+      if (type === "submit" || type === "button" || type === "reset" || type === "image") {
+        return "button";
+      }
+      return "textbox";
+    }
+    if (/^h[1-6]$/.test(tag)) return "heading";
+    if (tag === "nav") return "navigation";
+    if (tag === "main") return "main";
+    if (tag === "aside") return "complementary";
+    if (tag === "form") return "form";
+    if (tag === "ul" || tag === "ol") return "list";
+    if (tag === "li") return "listitem";
+    return undefined;
+  };
+
+  /** 접근성 정체 — 선언된 role, 없으면 태그가 암시하는 role 과 처음으로
+   *  걸리는 이름. 연결된 label 까지는 손이 안 닿는다. */
   const describeA11y = (element: Element): NovaDesignCommentTarget["a11y"] | undefined => {
     try {
-      const role = element.getAttribute("role") ?? undefined;
+      const role = element.getAttribute("role") ?? implicitRole(element);
       const name =
         element.getAttribute("aria-label") ??
         element.getAttribute("alt") ??
         element.getAttribute("title") ??
+        element.getAttribute("placeholder") ??
         undefined;
       if (!role && !name) return undefined;
       const a11y: { role?: string; name?: string } = {};
@@ -128,19 +177,48 @@ export function describeElementInPage(this: unknown, el?: unknown): NovaDesignCo
     }
   };
 
-  /** 레포가 시험에 남긴 고리 — id · test id 하나 · 클래스 다섯 개까지. */
+  /** 레포가 시험에 남긴 고리(id · test id · 클래스)와 locator 가 읽는
+   *  링크 · 입력 속성 — 값마다 200자에서 자른다. 무엇을 실을지는 이 리스트가
+   *  전부다: `value` 는 일부러 없다(사용자가 친 글은 핀의 짐이 아니다). */
   const describeAttrs = (element: Element): NovaDesignCommentTarget["attrs"] | undefined => {
     try {
       const id = element.id || undefined;
       const testId =
         element.getAttribute("data-testid") ?? element.getAttribute("data-test") ?? undefined;
       const classes = Array.from(element.classList).slice(0, 5);
-      if (!id && !testId && classes.length === 0) return undefined;
-      const attrs: { id?: string; testId?: string; classes?: string[] } = {};
+      const attrs: {
+        id?: string;
+        testId?: string;
+        classes?: string[];
+        href?: string;
+        src?: string;
+        name?: string;
+        type?: string;
+        placeholder?: string;
+      } = {};
       if (id) attrs.id = id;
       if (testId) attrs.testId = testId;
       if (classes.length > 0) attrs.classes = classes;
-      return attrs;
+      for (const key of ["href", "src", "name", "type", "placeholder"] as const) {
+        const value = element.getAttribute(key);
+        if (value === null || value === "") continue;
+        attrs[key] = value.length > 200 ? `${value.slice(0, 200)}…` : value;
+      }
+      return Object.keys(attrs).length === 0 ? undefined : attrs;
+    } catch {
+      return undefined;
+    }
+  };
+
+  /** 핀이 서 있는 말들 — 가장 가까운 구획(article · section · form · 행…)
+   *  의 글자 300자. 요소 자신이 거의 아무 말도 없을 때의 위치 설명이다. */
+  const describeNearby = (element: Element): string | undefined => {
+    try {
+      const landmark = element.closest("article,section,main,form,li,tr,dialog");
+      if (!(landmark instanceof HTMLElement)) return undefined;
+      const text = landmark.innerText.replace(/\s+/g, " ").trim();
+      if (text === "") return undefined;
+      return text.length > 300 ? `${text.slice(0, 300)}…` : text;
     } catch {
       return undefined;
     }
@@ -153,6 +231,7 @@ export function describeElementInPage(this: unknown, el?: unknown): NovaDesignCo
     component: element.tagName.toLowerCase(),
     text: ownText(element),
     path: cssPath(element),
+    xpath: xpathPath(element),
     rect: roundRect(element.getBoundingClientRect()),
   };
   // 보강 — 모든 칸이 선택이고, 실패는 칸 하나의 값일 뿐 핀을 죽이지 않는다.
@@ -164,6 +243,8 @@ export function describeElementInPage(this: unknown, el?: unknown): NovaDesignCo
   if (a11y) target.a11y = a11y;
   const attrs = describeAttrs(element);
   if (attrs) target.attrs = attrs;
+  const nearby = describeNearby(element);
+  if (nearby) target.nearby = nearby;
   return target;
 }
 

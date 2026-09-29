@@ -605,10 +605,11 @@
   align-items: center;
   gap: 8px;
   padding: 6px 8px 6px 12px;
-  background: var(--accent-soft);
+  /* 틴트를 불투명한 바탕 위에 겹친다 — 반투명 알약은 레포 화면의 사진 · 그림 위에서 글자가 녹는다. */
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg);
   border: 1px solid var(--accent-line);
   border-radius: var(--r-pill);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--pop);
   font-size: 12.5px;
   color: var(--accent);
   white-space: nowrap;
@@ -621,6 +622,7 @@
 }
 
 .nx-pinstrip span {
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
 }

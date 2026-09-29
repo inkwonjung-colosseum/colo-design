@@ -68,16 +68,52 @@ export function Popover({
       const rect = anchorEl.getBoundingClientRect();
       let limitTop = 0;
       let limitBottom = window.innerHeight;
+      let limitLeft = 0;
+      let limitRight = window.innerWidth;
       for (let parent = el.parentElement; parent; parent = parent.parentElement) {
         const style = getComputedStyle(parent);
-        if (style.overflowY === "visible" || style.display === "contents") continue;
+        if (style.display === "contents") continue;
         const box = parent.getBoundingClientRect();
-        limitTop = Math.max(limitTop, box.top);
-        limitBottom = Math.min(limitBottom, box.bottom);
+        if (style.overflowY !== "visible") {
+          limitTop = Math.max(limitTop, box.top);
+          limitBottom = Math.min(limitBottom, box.bottom);
+        }
+        if (style.overflowX !== "visible") {
+          limitLeft = Math.max(limitLeft, box.left);
+          limitRight = Math.min(limitRight, box.right);
+        }
       }
       // 여백 12px — 가장자리에 딱 붙이지 않는다.
       const space = Math.max(140, (up ? rect.top - limitTop : limitBottom - rect.bottom) - 12);
       el.style.maxHeight = `${Math.floor(space)}px`;
+      /* 옆으로도 같다 — 오른쪽에 맞춘(end) 넓은 팝은 대화 칸을 좁히면 왼쪽 끝이
+         창 밖으로 나가 잘렸다(모델 팝, 실사). 팝이 서는 기준은 부모(`nx-anchor`)
+         의 한쪽 끝이라 그 끝에서 반대쪽 면까지를 폭 상한으로 묶는다. */
+      const base = el.parentElement?.getBoundingClientRect() ?? rect;
+      const room = Math.max(
+        200,
+        (align === "end" ? base.right - limitLeft : limitRight - base.left) - 12,
+      );
+      el.style.maxWidth = `${Math.floor(room)}px`;
+
+      // 가로도 같다 — 좁은 창 칸(대화 칸)에서 팝이 옆 칸 아래로 들어가 잘린다.
+      // 자르는 면 안쪽으로 팝을 밀어 넣는다(오른쪽 우선, 그다음 왼쪽).
+      el.style.marginLeft = "";
+      el.style.marginRight = "";
+      const box = el.getBoundingClientRect();
+      const margin = 8;
+      const overRight = box.right - (limitRight - margin);
+      const overLeft = limitLeft + margin - box.left;
+      const shift =
+        overRight > 0
+          ? -Math.min(overRight, box.left - limitLeft - margin)
+          : overLeft > 0
+            ? overLeft
+            : 0;
+      if (shift !== 0) {
+        if (align === "end") el.style.marginRight = `${-shift}px`;
+        else el.style.marginLeft = `${shift}px`;
+      }
     };
     clamp();
     window.addEventListener("resize", clamp);
@@ -86,7 +122,7 @@ export function Popover({
       window.removeEventListener("resize", clamp);
       document.removeEventListener("scroll", clamp, true);
     };
-  }, [anchor, up]);
+  }, [anchor, up, align]);
   const classes = ["nx-pop", `nx-pop--${align}`, up ? "nx-pop--up" : "", className ?? ""]
     .filter(Boolean)
     .join(" ");

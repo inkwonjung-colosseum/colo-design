@@ -489,8 +489,7 @@ export class Session {
       this.fastMode = on;
       this.fastModeBlocked = blocked;
       // 부탁 안에서 답한 보고다 — setFastMode 의 낙관 적기가 이 사실을 덮지
-      // 못하게 도장을 찍는다(omp 는 티어의 active 와 모델 바꿈의 몸을 그대로
-      // 올린다; 그 뒤를 정정할 fast_mode_state 는 오지 않는다).
+      // 못하게 도장을 찍는다.
       this.fastModeAnswered = true;
     },
   };
@@ -1403,8 +1402,7 @@ export class Session {
     // 바로 실어 보내기(steer)는 그 사이의 길이다 — 드라이버가 도는 턴에 실을
     // 와이어를 내주면 그 턴에 그대로 실리고(codex turn/steer), 그런 길이 없는
     // 에이전트는 '지금 보내기'와 같은 기계로 '바로'를 이행한다: 도는 턴을
-    // 끊고 이 말을 첫 번째 새 턴으로 세운다(omp 는 스스로도 도는 중 프롬프트를
-    // cancel + 새 턴으로 다루므로, 그 에이전트의 말투와 같은 길이다).
+    // 끊고 이 말을 첫 번째 새 턴으로 세운다.
     // 준비 중(PLAN-UI U8)에는 도는 턴이 없어도 기다린다 — 바로 실어 보낼 턴도 없다.
     if (this.preparing && this.turnStartedAt === null) {
       this.held.push(item);
@@ -1683,16 +1681,15 @@ export class Session {
 
   /**
    * 빠르게 (fast mode): 같은 모델을 더 빠른 응답으로 돌린다. 켜 달라는 부탁일
-   * 뿐이다 — 받아들여졌는지는 드라이버의 보고(티어의 active · 변종의 몸,
-   * claude 는 다음 메시지의 `fast_mode_state`)가 말한다.
+   * 뿐이다 — 받아들여졌는지는 드라이버의 보고(claude 는 다음 메시지의
+   * `fast_mode_state`)가 말한다.
    */
   async setFastMode(fast: boolean): Promise<void> {
     if (!this.agent?.setFastMode) throw new Error("이 에이전트는 빠르게를 지원하지 않습니다.");
     this.fastModeAnswered = false;
     await this.agent.setFastMode(fast);
-    // 드라이버가 부탁 도중 상태를 보고했으면 그 답이 이긴다 — omp 는 티어의
-    // active 를, 모델 바꿈은 변종의 몸을 보고했고, 그 뒤를 정정하는 메시지는
-    // 없다. 보고가 없던 부탁만(claude 의 빈 응답) 낙관이 채우고, 거절이면
+    // 드라이버가 부탁 도중 상태를 보고했으면 그 답이 이긴다. 보고가 없던
+    // 부탁만(claude 의 빈 응답) 낙관이 채우고, 거절이면
     // 첫 메시지의 fast_mode_state 가 되돌린다.
     if (!this.fastModeAnswered) this.fastMode = fast;
     // 켜는 쪽의 사유는 이제 옛말이다. 거절이면 다음 메시지가 다시 적는다.

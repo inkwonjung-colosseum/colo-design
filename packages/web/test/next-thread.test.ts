@@ -181,7 +181,6 @@ const fast: FastWords = {
   onTitle: "on",
   costClaude: "cost-c",
   costMidway: "midway",
-  costOmp: "cost-o",
   costOther: "cost-x",
   blocked: {
     creditsGone: "cg",
@@ -195,7 +194,7 @@ const fast: FastWords = {
 };
 
 test("fastChip: 켜져 있으면 능력을 몰라도 보인다 — 끌 길은 남긴다", () => {
-  // 켜짐 — omp 의 `-fast` 변종으로 도는 대화. 능력 · 행을 몰라도 끌 길이 있어야 한다.
+  // 켜짐 — 능력 · 행을 몰라도 끌 길이 있어야 한다.
   assert.equal(fastChip({ capability: false, row: undefined, on: true }), true);
   // 꺼짐 · 능력 없음 — 보이지 않는다.
   assert.equal(fastChip({ capability: false, row: undefined, on: false }), false);
@@ -208,7 +207,6 @@ test("fastChip: 켜져 있으면 능력을 몰라도 보인다 — 끌 길은 �
 
 test("fastCost: 프로바이더별 비용 문장 — 툴팁과 토스트가 같은 문장을 쓴다", () => {
   assert.equal(fastCost("claude", fast), "cost-c");
-  assert.equal(fastCost("omp", fast), "cost-o");
   assert.equal(fastCost("codex", fast), "cost-x");
 });
 
@@ -258,14 +256,7 @@ test("fastTipWords: 주인과 상태가 제목과 비고 줄을 고른다", () =
     fastTipWords({ subject: "session", on: false, blocked: null, provider: "claude" }, fast),
     { title: "off", notes: ["cost-c", "midway"] },
   );
-  // omp · 그 밖의 AI — 비용 줄은 하나.
-  assert.deepEqual(
-    fastTipWords({ subject: "session", on: false, blocked: null, provider: "omp" }, fast),
-    {
-      title: "off",
-      notes: ["cost-o"],
-    },
-  );
+  // 그 밖의 AI — 비용 줄은 하나.
   assert.deepEqual(
     fastTipWords({ subject: "session", on: false, blocked: null, provider: "codex" }, fast),
     { title: "off", notes: ["cost-x"] },

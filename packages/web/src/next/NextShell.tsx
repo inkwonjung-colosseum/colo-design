@@ -58,7 +58,7 @@ export function NextShell(props: NextShellProps) {
   }, [connection, api]);
 
   // 설정에 남은 프로바이더가 이 데몬에 없으면 첫 쓸 수 있는 것으로 옮긴다 — 두지
-  // 않으면 첫 보내기가 `알 수 없는 에이전트입니다` 로 죽는다(개발 실행의 omp 흔적).
+  // 않으면 첫 보내기가 `알 수 없는 에이전트입니다` 로 죽는다(옛 설정에 남은 공급자).
   useEffect(() => {
     const rows = daemon.status?.providers;
     if (!rows?.length || rows.some((entry) => entry.id === settings.chat.provider)) return;

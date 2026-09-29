@@ -34,9 +34,8 @@ const SCAN_TTL_MS = 10 * 60 * 1000;
 const MAX_QUEUED_SCANS = 4;
 
 /**
- * 도구 이름 → 통계 묶음. 프로바이더마다 이름이 다르니 세 표의 합(tool-names.ts)을
- * 읽는다 — 옛 표는 omp 의 `read` · `edit` · `bash` 를 몰라 omp 턴을 전부
- * `other` 로 세고 firstEditMs · pinHit 를 늘 null 로 남겼다(2026-09-23).
+ * 도구 이름 → 통계 묶음. 프로바이더마다 이름이 다르니 두 표의 합(tool-names.ts)을
+ * 읽는다.
  */
 const READ_TOOLS = STATS_READ_TOOLS;
 const EDIT_TOOLS = STATS_EDIT_TOOLS;

@@ -273,12 +273,11 @@ export interface AgentDriver {
   /** The vendor's transcript store; absent when the provider keeps none. */
   store?: TranscriptStore;
   /**
-   * The CLI's model rows without a thread — a driver whose CLI can list
-   * models on its own (`omp models --json`) or whose SDK can probe one
-   * (`probeModels`, Claude) answers here, so the daemon's per-provider cache
-   * fills before any session exists. Absent = a live session is the only
-   * source (Codex); the cache then waits for the first session's report as
-   * before.
+   * The CLI's model rows without a thread — a driver whose SDK can probe
+   * one (`probeModels`, Claude) or whose bare app-server can (`model/list`,
+   * Codex) answers here, so the daemon's per-provider cache fills before any
+   * session exists. Absent = a live session is the only source; the cache
+   * then waits for the first session's report.
    */
   listModels?(opts: { cwd: string; signal?: AbortSignal }): Promise<SessionModelInfo[]>;
   /**

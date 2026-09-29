@@ -8,8 +8,8 @@
  * 고르는 순서:
  *   1. 그 클론의 살아 있는 보낼 수 있는 대화 — 가장 최근에 움직인 것.
  *   2. 새 대화의 공급자 — 그 클론의 가장 최근 대화의 공급자 → 프로젝트의
- *      defaults.provider(초대 v4) → 등록 순서(claude → codex; omp 는 개발
- *      실행에서만 등록된다 — registerAgentDrivers). 판정은 드라이버의
+ *      defaults.provider(초대 v4) → 등록 순서(claude → codex —
+ *      registerAgentDrivers). 판정은 드라이버의
  *      isAvailable 이다: 설치되고(ok + executable) 로그인이 확인된 첫 것,
  *      없으면 설치만 된 첫 것. 로그아웃된 CLI 도 브리프를 받을 자리다 — 그
  *      턴은 로그인을 기다렸다가 스스로 다시 나간다(PLAN L12). 옛 길도 로그인을
@@ -47,7 +47,7 @@ export interface AutoThreadRequest {
 /**
  * 새 자동 대화의 공급자 — 앞에서부터 설치 · 로그인된 첫 것, 없으면 설치만 된
  * 첫 것(모듈 머리). `preferred` 는 등록 순서보다 앞서 볼 후보들이다. 등록되지
- * 않은 이름(개발 실행 밖의 omp 등)은 건너뛴다.
+ * 않은 이름(옛 설정에 남은 공급자 등)은 건너뛴다.
  */
 export async function pickAutoThreadProvider(
   drivers: Pick<DriverRegistry, "get" | "all">,

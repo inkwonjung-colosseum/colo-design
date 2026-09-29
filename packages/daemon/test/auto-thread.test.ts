@@ -211,11 +211,14 @@ test("공급자 고르기 — 로그인이 확인된 것이 먼저, 없으면 �
     await pickAutoThreadProvider(registryOf(loggedOut(CLAUDE), loggedOut(CODEX)), ["codex"]),
     { provider: "codex", executable: "/opt/codex" },
   );
-  // 등록되지 않은 이름(개발 실행 밖의 omp)은 건너뛴다.
-  assert.deepEqual(await pickAutoThreadProvider(registryOf(CLAUDE, CODEX), ["omp", undefined]), {
-    provider: "claude",
-    executable: "/opt/claude",
-  });
+  // 등록되지 않은 이름(옛 설정에 남은 공급자)은 건너뛴다.
+  assert.deepEqual(
+    await pickAutoThreadProvider(registryOf(CLAUDE, CODEX), ["retired", undefined]),
+    {
+      provider: "claude",
+      executable: "/opt/claude",
+    },
+  );
   // 실행 파일이 없는 판정은 쓸 수 없는 것이다.
   assert.equal(await pickAutoThreadProvider(registryOf({ ok: true }, MISSING), []), null);
 });

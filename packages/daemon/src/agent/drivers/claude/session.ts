@@ -668,7 +668,7 @@ export async function probePlanUsage(options: {
 
 /**
  * The model rows with no thread in the way. Claude's CLI has no list-them
- * verb of its own (`omp models --json` has no counterpart), so the probe is
+ * verb of its own, so the probe is
  * the only source before a session exists — the same question a live session
  * answers, asked of a CLI booted for a second with no turn and no tokens.
  *

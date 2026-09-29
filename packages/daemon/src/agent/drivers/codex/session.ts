@@ -188,6 +188,77 @@ export async function probeCodexUsage(options: {
 }
 
 /**
+ * `model/list`, every page, as the picker's rows — one reading shared by a
+ * live session and the session-less probe below. Throws on a wire failure;
+ * callers decide that it means "no rows".
+ */
+async function readModelList(transport: JsonRpcTransport): Promise<SessionModelInfo[]> {
+  const rows: Wire[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = (await transport.request(
+      "model/list",
+      {
+        ...(cursor ? { cursor } : {}),
+      },
+      10_000,
+    )) as Wire;
+    rows.push(...(Array.isArray(page?.data) ? (page.data as Wire[]) : []));
+    cursor = typeof page?.nextCursor === "string" ? page.nextCursor : null;
+  } while (cursor);
+  return rows.map((m) => {
+    const efforts = (
+      Array.isArray(m.supportedReasoningEfforts)
+        ? (m.supportedReasoningEfforts as Wire[]).map((o) => String(o?.reasoningEffort ?? ""))
+        : []
+    ).filter((e) => EFFORT_LEVELS.includes(e)) as EffortLevel[];
+    return {
+      value: String(m.id ?? m.model ?? ""),
+      displayName: String(m.displayName ?? m.id ?? ""),
+      resolvedModel: String(m.model ?? m.id ?? "") || null,
+      description: String(m.description ?? ""),
+      supportsEffort: efforts.length > 0,
+      supportedEffortLevels: efforts,
+      supportsFastMode: false,
+    };
+  });
+}
+
+/**
+ * The picker's codex rows before any codex thread — the same bare
+ * app-server the usage probe rides, asked `model/list` instead. Without it
+ * the daemon's catalog only filled once a codex session had reported, so a
+ * planner choosing the AI for a new thread saw an empty codex list. Any
+ * failure is an empty list; the catalog gate asks again after its window.
+ */
+export async function probeCodexModels(options: {
+  executable: string | null;
+  cwd: string;
+  signal?: AbortSignal;
+}): Promise<SessionModelInfo[]> {
+  if (!options.executable || options.signal?.aborted) return [];
+  const transport = new JsonRpcTransport(options.executable, ["app-server"], options.cwd, {
+    onRequest: async () => {
+      throw new Error("model probe answers no requests");
+    },
+    onNotify: () => undefined,
+    onEnd: () => undefined,
+  });
+  const abandon = () => transport.close();
+  options.signal?.addEventListener("abort", abandon, { once: true });
+  try {
+    await transport.request("initialize", INITIALIZE_PARAMS, 15_000);
+    transport.notify("initialized");
+    return await readModelList(transport);
+  } catch {
+    return [];
+  } finally {
+    options.signal?.removeEventListener("abort", abandon);
+    transport.close();
+  }
+}
+
+/**
  * An AgentSession over Codex's `app-server` JSON-RPC protocol: one child
  * process per session, stdio framing. The handshake is async, so calls made
  * before `thread/start` (or resume/fork) resolves queue behind `ready` — the
@@ -535,35 +606,7 @@ export class CodexAgentSession implements AgentSession {
   async models(): Promise<SessionModelInfo[]> {
     await this.ready;
     try {
-      const rows: Wire[] = [];
-      let cursor: string | null = null;
-      do {
-        const page = (await this.transport.request(
-          "model/list",
-          {
-            ...(cursor ? { cursor } : {}),
-          },
-          10_000,
-        )) as Wire;
-        rows.push(...(Array.isArray(page?.data) ? (page.data as Wire[]) : []));
-        cursor = typeof page?.nextCursor === "string" ? page.nextCursor : null;
-      } while (cursor);
-      return rows.map((m) => {
-        const efforts = (
-          Array.isArray(m.supportedReasoningEfforts)
-            ? (m.supportedReasoningEfforts as Wire[]).map((o) => String(o?.reasoningEffort ?? ""))
-            : []
-        ).filter((e) => EFFORT_LEVELS.includes(e)) as EffortLevel[];
-        return {
-          value: String(m.id ?? m.model ?? ""),
-          displayName: String(m.displayName ?? m.id ?? ""),
-          resolvedModel: String(m.model ?? m.id ?? "") || null,
-          description: String(m.description ?? ""),
-          supportsEffort: efforts.length > 0,
-          supportedEffortLevels: efforts,
-          supportsFastMode: false,
-        };
-      });
+      return await readModelList(this.transport);
     } catch {
       return [];
     }

@@ -225,14 +225,13 @@ export interface FastWords {
   onTitle: string;
   costClaude: string;
   costMidway: string;
-  costOmp: string;
   costOther: string;
   blocked: FastBlockedWords;
 }
 
 /**
  * ⚡ 토글을 보이는 규칙(§5.1) — 켜져 있으면 능력을 몰라도 보인다: 끌 길은
- * 남겨야 하므로(omp 의 `-fast` 변종으로 도는 대화가 이 경우). 꺼져 있을 때는
+ * 남겨야 하므로. 꺼져 있을 때는
  * 프로바이더 능력을 요구하고, 모델 행을 모르면(선택자가 오기 전 잠깐) 능력만으로
  * 낙관한다 — 행이 오면 정정된다.
  */
@@ -269,10 +268,9 @@ export function fastBlockedWords(reason: string, words: FastBlockedWords): strin
  */
 export function fastCost(
   provider: string,
-  words: Pick<FastWords, "costClaude" | "costOmp" | "costOther">,
+  words: Pick<FastWords, "costClaude" | "costOther">,
 ): string {
   if (provider === "claude") return words.costClaude;
-  if (provider === "omp") return words.costOmp;
   return words.costOther;
 }
 

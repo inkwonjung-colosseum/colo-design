@@ -7,7 +7,7 @@
  *     --endpoint /tmp/nova-bench.json   # 또는 --url ws://127.0.0.1:7823/?token=…
  *     --project nova-beta-fixture \
  *     --scenarios scripts/bench/scenarios/fixture.json \
- *     [--provider omp --model devin/swe-2 --effort high] \
+ *     [--provider claude --model opus --effort high] \
  *     [--label before] [--only search,form] [--repeat 3] [--yes]
  *
  *   node scripts/bench/bench.mjs compare bench-results/…-before.json bench-results/…-after.json

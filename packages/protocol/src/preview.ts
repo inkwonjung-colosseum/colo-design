@@ -26,6 +26,8 @@ export interface NovaDesignCommentTarget {
   text: string;
   /** CSS path from the page's `body` down to the element. */
   path: string;
+  /** The same address as `path`, in XPath — the form locator tools read. */
+  xpath?: string;
   /** Viewport rect of the element at pin time. */
   rect: { x: number; y: number; width: number; height: number };
   /**
@@ -40,14 +42,38 @@ export interface NovaDesignCommentTarget {
    * second box; their `rect` already is the viewport's.
    */
   rectView?: { x: number; y: number; width: number; height: number };
-  /** outerHTML, overlay nodes stripped, capped at 1.5KB (재설계 C9). */
+  /** outerHTML, overlay nodes stripped, capped at 3KB (재설계 C9). */
   html?: string;
   /** A computed-style subset worth quoting: color, font, spacing, size. */
   styles?: Record<string, string>;
-  /** The element's accessible identity, when the page declares one. */
+  /**
+   * The element's accessible identity: the role the page declares, or —
+   * absent one — the role the tag itself implies (`button`, `a[href]`,
+   * `h1~h6`…); the first name the element answers to.
+   */
   a11y?: { role?: string; name?: string };
-  /** Stable hooks the repo may have left: id, test id, a few classes. */
-  attrs?: { id?: string; testId?: string; classes?: string[] };
+  /**
+   * Stable hooks the repo may have left: id, test id, a few classes — and
+   * the link/form attributes a locator reads (href · src · name · type ·
+   * placeholder, each capped). `value` is deliberately absent: what the
+   * user typed into the page is not the pin's to carry.
+   */
+  attrs?: {
+    id?: string;
+    testId?: string;
+    classes?: string[];
+    href?: string;
+    src?: string;
+    name?: string;
+    type?: string;
+    placeholder?: string;
+  };
+  /**
+   * The words around the pin: text of the nearest landmark section
+   * (article · section · main · form · li · tr · dialog), capped — where
+   * the element sits, when the element itself says almost nothing.
+   */
+  nearby?: string;
   /** React component names, nearest first, ≤3 (재설계 C9). Dev builds only. */
   owners?: string[];
 }

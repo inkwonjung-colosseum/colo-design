@@ -57,7 +57,7 @@ export interface PlanTrackerDeps {
   onChanged: () => void;
   /**
    * Session-less model catalogs a driver can answer without a thread —
-   * `omp models --json`, Claude's probe. A failed or empty read is asked
+   * Claude's probe, Codex's `model/list`. A failed or empty read is asked
    * again after the gate's retry window, not on every status broadcast.
    */
   catalogSources: Array<{ provider: string; read: () => Promise<SessionModelInfo[]> }>;

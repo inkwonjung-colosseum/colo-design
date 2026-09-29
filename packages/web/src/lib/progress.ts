@@ -186,7 +186,7 @@ export function attachProgress(blocks: Block[], event: ProgressEvent): Block[] {
 export interface AgentBrief {
   /** 그 에이전트를 띄운 도구 호출의 id — 하위 대화의 `agentId` 와 같은 값. */
   id: string;
-  /** 에이전트 종별("scout", "swe-2"…). 시작 사건이 아직 없으면 null. */
+  /** 에이전트 종별("Explore", "Plan"…). 시작 사건이 아직 없으면 null. */
   type: string | null;
   /** 무엇을 하러 보냈는가 — 작업 설명. 아직 모르면 빈 문자열. */
   label: string;

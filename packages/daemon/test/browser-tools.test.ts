@@ -241,8 +241,8 @@ test("browser-mcp 악수 — initialize → tools/list → 모르는 도구와 �
   }
 });
 
-test("isBrowserToolName — 세 프로바이더의 이름 형태를 모두 본다", () => {
-  assert.equal(isBrowserToolName("screen_check"), true, "omp — 맨 이름");
+test("isBrowserToolName — 프로바이더들의 이름 형태를 모두 본다", () => {
+  assert.equal(isBrowserToolName("screen_check"), true, "맨 이름");
   assert.equal(isBrowserToolName("mcp__nova-browser__screen_check"), true, "claude — mcp__ 접두");
   assert.equal(isBrowserToolName("nova-browser/browser_snapshot"), true, "codex — 슬래시 접두");
   assert.equal(isBrowserToolName("browser_teleport"), false, "browser_ 접두만 같은 이름은 아니다");

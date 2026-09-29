@@ -60,9 +60,9 @@ export function pinsToTurn(
     })),
   };
   const blocks = pins.map((pin, index) => {
-    // AI 본문 줄의 이름 — 이름표와 달리 태그 이름을 단서로 쓴다.
-    const head =
-      pin.element.kind === "region" ? pinLabel(pin) : pin.element.text || pin.element.component;
+    // AI 본문 줄의 이름 — 이름표와 달리 태그 이름을 단서로 쓰고 요소의 글자는
+    // 인용으로 한 번만 실는다(머리에 글자를 또 쓰면 두벌이 된다).
+    const head = pin.element.kind === "region" ? pinLabel(pin) : pin.element.component;
     const rows = [
       `${index + 1}. ${head}${pin.element.text ? ` — "${pin.element.text}"` : ""}${
         spread ? ` · ${titleFor(pin.screen) ?? pin.screen}` : ""
@@ -87,25 +87,40 @@ export function pinsToTurn(
       rows.push(
         `   위치: ${pin.element.path} (rect ${rect.x},${rect.y} ${rect.width}×${rect.height})`,
       );
+      // XPath — locator 도구가 바로 읽는 주소; CSS 경로와 같은 요소의 다른 말.
+      if (pin.element.xpath) rows.push(`   xpath: ${pin.element.xpath}`);
       if (pin.element.attrs?.testId) {
         rows.push(`   셀렉터: [data-testid="${pin.element.attrs.testId}"]`);
       }
+      // 링크 · 입력 속성 — 요소가 스스로 밝히는 쓰임새 (무엇을 실을지는
+      // element-identity 의 화이트리스트가 정한다).
+      const attrs = pin.element.attrs;
+      const attrFacts = [
+        ...(attrs?.type ? [`type="${attrs.type}"`] : []),
+        ...(attrs?.placeholder ? [`placeholder="${attrs.placeholder}"`] : []),
+        ...(attrs?.name ? [`name="${attrs.name}"`] : []),
+        ...(attrs?.href ? [`href="${attrs.href}"`] : []),
+        ...(attrs?.src ? [`src="${attrs.src}"`] : []),
+      ];
+      if (attrFacts.length > 0) rows.push(`   속성: ${attrFacts.join(" · ")}`);
       const a11yFacts = [
         ...(pin.element.a11y?.role ? [`role ${pin.element.a11y.role}`] : []),
         ...(pin.element.a11y?.name ? [`이름 "${pin.element.a11y.name}"`] : []),
       ];
       if (a11yFacts.length > 0) rows.push(`   접근성: ${a11yFacts.join(" · ")}`);
+      // 주변 글자 — 요소가 거의 아무 말도 없을 때의 위치 설명.
+      if (pin.element.nearby) rows.push(`   주변: ${pin.element.nearby}`);
     }
     // 계산된 스타일의 일부 — the planner saw these values.
     const styleRows = Object.entries(pin.element.styles ?? {})
       .slice(0, 6)
       .map(([key, value]) => `${key} ${value}`);
     if (styleRows.length > 0) rows.push(`   스타일: ${styleRows.join(" · ")}`);
-    // outerHTML — one line; the markup is context, not a file. 500 of the
-    // envelope's 1,500: a utility-class tag alone eats the old 200 before
-    // the element's own attributes begin.
+    // outerHTML — one line; the markup is context, not a file. 800 of the
+    // envelope's 3,000: a utility-class tag eats its share before the
+    // element's own attributes begin, and the agent can ask for more.
     if (pin.element.html) {
-      rows.push(`   HTML: ${pin.element.html.replace(/\s+/g, " ").trim().slice(0, 500)}`);
+      rows.push(`   HTML: ${pin.element.html.replace(/\s+/g, " ").trim().slice(0, 800)}`);
     }
     return rows.join("\n");
   });

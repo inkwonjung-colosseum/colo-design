@@ -7,8 +7,8 @@
  *   pnpm --filter @nova-design/web exec vite --port 29185 --strictPort
  *   → http://127.0.0.1:29185/dev/chip-fixture.html
  *
- * 벌 a–e 는 묶음 D 의 검수 항목: next 의 카드 · 켜짐 · 막힘 이유 · 받지 않는
- * 모델(번개가 사라짐) · omp. 툴팁 카드는 번개에 마우스를 올리거나 Tab 으로
+ * 벌 a–d 는 묶음 D 의 검수 항목: next 의 카드 · 켜짐 · 막힘 이유 · 받지 않는
+ * 모델(번개가 사라짐). 툴팁 카드는 번개에 마우스를 올리거나 Tab 으로
  * 포커스하면 뜬다.
  */
 
@@ -46,7 +46,6 @@ const CLAUDE_MODELS = [
     supportsFastMode: false,
   }),
 ];
-const OMP_MODELS = [row({ value: "gpt-5.3", displayName: "GLM 5.3", description: "기본" })];
 
 /** 가짜 데몬 — 칩이 실제로 읽는 칸(providers · planUsageByProvider)만 채운다. */
 const daemon = {
@@ -55,13 +54,6 @@ const daemon = {
       {
         id: "claude",
         label: "Claude",
-        available: true,
-        loggedIn: true,
-        capabilities: { fastMode: true },
-      },
-      {
-        id: "omp",
-        label: "omp",
         available: true,
         loggedIn: true,
         capabilities: { fastMode: true },
@@ -156,18 +148,6 @@ function Fixture() {
         title="d · 대화 칸 session · Claude Sonnet · 번개 없음"
         variant="thread"
         chip={target({ model: "sonnet" })}
-      />
-      <Case
-        id="e"
-        title="e · 대화 칸 session · omp · 켜짐"
-        variant="thread"
-        chip={target({
-          provider: "omp",
-          key: "session:omp",
-          model: "gpt-5.3",
-          models: OMP_MODELS,
-          fastMode: true,
-        })}
       />
     </div>
   );

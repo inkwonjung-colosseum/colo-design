@@ -70,7 +70,7 @@ test("makingPhase: 도는 것이 우선한다 — 끝난 읽기 뒤에 도는 �
 });
 
 test("makingPhase: 도는 것이 둘이면 마지막 것 — 읽다가 편집으로 옮겨 간 참", () => {
-  assert.equal(makingPhase([user(), tool("Read", false), tool("write", false)]), "file");
+  assert.equal(makingPhase([user(), tool("Read", false), tool("Write", false)]), "file");
 });
 
 test("makingPhase: 도는 것이 없으면 그 턴의 마지막 도구 — 끝난 편집 뒤 검사", () => {
@@ -82,9 +82,9 @@ test("makingPhase: 백그라운드로 맡긴 검사는 끝난 행에도 도는 �
 });
 
 test("makingPhase: 하위 에이전트의 도구도 이 턴의 걸음이다", () => {
-  assert.equal(makingPhase([user(), tool("Edit", true), tool("bash", false, "sub-1")]), "command");
+  assert.equal(makingPhase([user(), tool("Edit", true), tool("Bash", false, "sub-1")]), "command");
   assert.equal(
-    makingPhase([user(), tool("bash", true, "sub-1"), tool("edit", false, "sub-2")]),
+    makingPhase([user(), tool("Bash", true, "sub-1"), tool("Edit", false, "sub-2")]),
     "file",
   );
 });

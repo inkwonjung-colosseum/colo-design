@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChipTarget, Sessions } from "../../hooks/useSessions";
-import { modelOptions, modelRowOf } from "../../lib/chat-options";
+import { modelName, modelOptions, modelRowOf } from "../../lib/chat-options";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
 import { chipLabel, EFFORT_OF, type EffortWord, effortWord } from "../lib/thread";
@@ -14,15 +14,7 @@ import {
   usageRows,
 } from "../lib/usage";
 import { Popover } from "../ui/Popover";
-import { CheckIcon, ChevIcon } from "./icons";
-
-const EFFORT_WORDS: Record<EffortWord, string> = {
-  short: L.model.thinkShort,
-  normal: L.model.thinkNormal,
-  long: L.model.thinkLong,
-  longer: L.model.thinkLonger,
-  max: L.model.thinkMax,
-};
+import { CheckIcon, ChevIcon, ProviderMark } from "./icons";
 
 /** 이 개수부터는 모델 줄을 눈으로 걷지 않고 거르는 편이 빠르다. */
 const MODEL_FILTER_MIN = 8;
@@ -82,8 +74,8 @@ export function ModelChip({
   const showEffort = modelRow?.supportsEffort !== false;
   const think = effortWord(target.effort);
   const label = chipLabel(
-    modelRow?.displayName ?? providerLabel,
-    showEffort ? EFFORT_WORDS[think] : null,
+    modelName(target.models, target.model) ?? providerLabel,
+    showEffort ? EFFORT_OF[think] : null,
   );
   const plan = daemon.status?.planUsageByProvider?.[provider];
   const reading = usageReading(plan);
@@ -118,6 +110,7 @@ export function ModelChip({
           if (!open) sessions.refreshUsage();
         }}
       >
+        <ProviderMark provider={provider} />
         <span className="nx-model-label">{label}</span>
         <ChevIcon />
       </button>
@@ -140,6 +133,7 @@ export function ModelChip({
                       setModelQuery("");
                     }}
                   >
+                    <ProviderMark provider={p.id} />
                     <span className="nx-mt">
                       <b>{p.label}</b>
                       <small>{L.model.loggedIn}</small>
@@ -160,6 +154,7 @@ export function ModelChip({
                 {/* 열린 대화의 AI 는 태어날 때 정해진다 — 고르는 줄이 아니라
                     이름과 안내만 한 줄 선다(D1). */}
                 <div className="nx-mi nx-mi--static">
+                  <ProviderMark provider={provider} />
                   <span className="nx-mt">
                     <b>{providerLabel}</b>
                     <small>{L.model.aiFixed}</small>
@@ -228,7 +223,7 @@ export function ModelChip({
                     className={think === word ? "nx-on" : ""}
                     onClick={() => void target.setEffort(EFFORT_OF[word])}
                   >
-                    {EFFORT_WORDS[word]}
+                    {EFFORT_OF[word]}
                   </button>
                 ))}
               </div>

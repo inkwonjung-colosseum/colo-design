@@ -60,12 +60,56 @@ export function modelRowOf(
   return models.find((model) => model.value === picked || model.resolvedModel === picked);
 }
 
+/** The Claude CLI's alias for "whatever it would pick" — the row a never-pinned choice means. */
+const CLI_DEFAULT = "default";
+
+/** `claude-opus-5[1m]` → `claude-opus-5`: the context-window tag the CLI appends to some ids. */
+function bareId(id: string): string {
+  return id.replace(/\[[^\]]*\]$/, "");
+}
+
+/**
+ * A model id read as a name — `claude-sonnet-5-5` → `Sonnet 5.5`. Ids that do
+ * not follow Claude's shape (`gpt-5.2-codex`) are already a name and stay.
+ */
+function idName(id: string): string {
+  const claude = /^claude-([a-z]+)-(\d+(?:-\d{1,2})?)(?:-\d{8})?$/.exec(bareId(id));
+  if (!claude) return id;
+  const [, family = "", version = ""] = claude;
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${version.replace("-", ".")}`;
+}
+
+/**
+ * The model name the chip leads with — the provider's mark already stands
+ * beside it, so the provider's name would only repeat it. A never-pinned
+ * choice (`null`) is the CLI's `default` row, and that row's own label
+ * ("Default (recommended)") names no model: it borrows the name of the row
+ * that resolves to the same model. An id the list does not carry (a session
+ * reporting the wire id it runs) is read as a name rather than dropped.
+ * `null` only when nothing names a model — then the caller says the provider.
+ */
+export function modelName(models: SessionModelInfo[], picked: string | null): string | null {
+  const row =
+    modelRowOf(models, picked) ??
+    (picked == null
+      ? models.find((model) => model.value === CLI_DEFAULT)
+      : models.find(
+          (model) => model.resolvedModel != null && bareId(model.resolvedModel) === bareId(picked),
+        ));
+  if (!row) return picked ? idName(picked) : null;
+  if (row.value !== CLI_DEFAULT) return row.displayName;
+  const twin = models.find(
+    (model) =>
+      model !== row && model.resolvedModel != null && model.resolvedModel === row.resolvedModel,
+  );
+  return twin?.displayName ?? (row.resolvedModel ? idName(row.resolvedModel) : row.displayName);
+}
+
 /**
  * The CLI lists an alias row and the pinned id it resolves to as two rows that
  * read alike — a planner would see "Opus" twice with nothing to choose between.
- * First one wins. Rows that read alike but say different ids stay: omp's
- * catalog repeats a displayName across providers, and the id is the only
- * thing telling those rows apart.
+ * First one wins. Rows that read alike but say different ids stay: the id is
+ * the only thing telling those rows apart.
  */
 export function modelOptions(
   models: SessionModelInfo[],

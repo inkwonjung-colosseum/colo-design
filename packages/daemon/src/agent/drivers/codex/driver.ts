@@ -4,7 +4,7 @@ import { realpath, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { PlanUsage } from "@nova-design/protocol";
+import type { PlanUsage, SessionModelInfo } from "@nova-design/protocol";
 import { meaningfulFirstLine } from "../../../common-instructions.js";
 import { NOVA_DESIGN_DATA_DIR } from "../../../environment.js";
 import type {
@@ -18,7 +18,7 @@ import type {
   TranscriptStore,
 } from "../../driver.js";
 import { codexOneShot } from "./one-shot.js";
-import { CodexAgentSession, probeCodexUsage } from "./session.js";
+import { CodexAgentSession, probeCodexModels, probeCodexUsage } from "./session.js";
 import {
   codexHome,
   collectPrompts,
@@ -230,6 +230,15 @@ export class CodexDriver implements AgentDriver {
   probeUsage(options: { cwd: string; signal: AbortSignal }): Promise<PlanUsage | null> {
     if (!codexPlanLogin()) return Promise.resolve(null);
     return probeCodexUsage({ ...options, executable: this.exe() });
+  }
+
+  /**
+   * The picker's rows before any thread — a bare app-server's `model/list`.
+   * No login yet reads as an empty list; the catalog gate asks again later.
+   */
+  listModels(opts: { cwd: string; signal?: AbortSignal }): Promise<SessionModelInfo[]> {
+    if (!codexLoggedIn()) return Promise.resolve([]);
+    return probeCodexModels({ ...opts, executable: this.exe() });
   }
 
   /**

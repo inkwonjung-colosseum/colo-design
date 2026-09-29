@@ -243,9 +243,8 @@ async function bootApp(): Promise<void> {
       // 브라우저 MCP 자식의 serverInfo.version 이 앱 버전을 말하게 한다
       // (DaemonConfig.appVersion — NOVA_APP_VERSION 으로 자식까지 간다).
       appVersion: app.getVersion(),
-      // 개발용 에이전트(omp)는 패키징되지 않은 실행(`pnpm dev:desktop` ·
-      // `pnpm --filter @nova-design/desktop dev`)에만 — 실사용자의 앱은 Claude
-      // Code · Codex 두 native 선로만 받는다(DaemonConfig.devAgents).
+      // 개발 전용 면은 패키징되지 않은 실행(`pnpm dev:desktop` ·
+      // `pnpm --filter @nova-design/desktop dev`)에만(DaemonConfig.devAgents).
       devAgents: !app.isPackaged,
     });
 

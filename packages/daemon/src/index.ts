@@ -173,7 +173,7 @@ async function main(): Promise<void> {
     // 단독 실행의 버전 출처 — 데몬 package.json. 브라우저 MCP 자식의
     // serverInfo.version 이 그 값을 말한다(DaemonConfig.appVersion).
     appVersion: daemonVersion(),
-    // 개발용 에이전트(omp)는 이 변수로만 열린다 — 브라우저 개발
+    // 개발 실행(DaemonStatus.dev)은 이 변수로만 열린다 — 브라우저 개발
     // 경로(`pnpm dev:daemon`)가 켠다. 데스크톱은 자기 `app.isPackaged` 로 정한다.
     devAgents: process.env.NOVA_DESIGN_DEV_AGENTS === "1",
   });

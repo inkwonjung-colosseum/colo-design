@@ -10,11 +10,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RepoSettingsWarning } from "@nova-design/protocol";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { CONFIG_DIR, currentPlatform } from "./environment.js";
 
 /**
- * 클론과 각 에이전트(Claude Code · omp) 사이의 네 가지 — 레포가
+ * 클론과 에이전트(Claude Code) 사이의 네 가지 — 레포가
  * 스스로 넓힌 권한을 잘라 내고 원본을 보관하는 일(`sanitizeRepoAgentSettings`),
  * 잘라 낸 사실을 사용자에게 보이게 하는 경고(`repoSettingsWarning`), 데스크톱이
  * 실어 온 런타임을 레포 명령의 PATH 앞에 붙이는 일(`extraPathPrefix`), 그리고
@@ -27,9 +26,6 @@ import { CONFIG_DIR, currentPlatform } from "./environment.js";
  * `server → onboarding → repo` 순환도 끊긴다.
  */
 
-/** How a driver's project settings file parses (and therefore re-serializes). */
-type SettingsFormat = "json" | "yaml";
-
 /** What one file gave up: the widening keys removed, and the object left behind. */
 interface SettingsCut {
   removed: string[];
@@ -37,12 +33,11 @@ interface SettingsCut {
 }
 
 /**
- * One settings file a repo can ship that a driver's project tier loads
- * verbatim — plus how to parse it and which of its keys widen.
+ * One settings file (JSON) a repo can ship that a driver's project tier loads
+ * verbatim — plus which of its keys widen.
  */
 interface AgentSettingsFile {
   rel: string;
-  format: SettingsFormat;
   /** null = nothing widening present, or the file is broken (the CLI's news). */
   strip: (parsed: unknown) => SettingsCut | null;
 }
@@ -107,123 +102,22 @@ function stripClaudeSettings(parsed: unknown): SettingsCut | null {
   return { removed, next: out };
 }
 
-/**
- * omp — `.omp/config.yml` · `.omp/config.yaml` · `.omp/settings.json`. The
- * settings schema's own words: `tools.approval` allow entries "auto-approve"
- * and are "honored in every approval mode"; `approvalMode: write|yolo`
- * auto-approves whole tiers (`ask` narrows, so it survives); `bash.patterns`
- * allow rules pre-approve bash commands; `bash.allowCompoundCommands: true`
- * lets an allow rule cover a whole `&&` chain. `extensions` loads code at
- * startup. `bash.patterns` deny/prompt entries and per-tool prompt/deny
- * entries only narrow, so they survive.
- */
-function stripOmpSettings(parsed: unknown): SettingsCut | null {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const src = parsed as Record<string, unknown>;
-  const removed: string[] = [];
-  const out: Record<string, unknown> = { ...src };
-  const approval = src.tools;
-  if (approval && typeof approval === "object" && !Array.isArray(approval)) {
-    const rest: Record<string, unknown> = {};
-    let toolsCut = false;
-    for (const [tool, policy] of Object.entries(approval as Record<string, unknown>)) {
-      if (tool === "approval") {
-        if (policy && typeof policy === "object" && !Array.isArray(policy)) {
-          const kept: Record<string, unknown> = {};
-          for (const [name, rule] of Object.entries(policy as Record<string, unknown>)) {
-            if (rule === "allow") toolsCut = true;
-            else kept[name] = rule;
-          }
-          if (toolsCut) {
-            if (!removed.includes("tools.approval:allow")) removed.push("tools.approval:allow");
-            if (Object.keys(kept).length > 0) rest.approval = kept;
-          } else {
-            rest.approval = policy;
-          }
-        } else {
-          rest.approval = policy;
-        }
-        continue;
-      }
-      if (tool === "approvalMode" && (policy === "write" || policy === "yolo")) {
-        if (!removed.includes("tools.approvalMode")) removed.push("tools.approvalMode");
-        toolsCut = true;
-        continue;
-      }
-      rest[tool] = policy;
-    }
-    if (toolsCut) {
-      if (Object.keys(rest).length > 0) out.tools = rest;
-      else delete out.tools;
-    }
-  }
-  const bash = src.bash;
-  if (bash && typeof bash === "object" && !Array.isArray(bash)) {
-    const rest: Record<string, unknown> = {};
-    let bashCut = false;
-    for (const [key, value] of Object.entries(bash as Record<string, unknown>)) {
-      if (key === "allowCompoundCommands" && value === true) {
-        if (!removed.includes("bash.allowCompoundCommands")) {
-          removed.push("bash.allowCompoundCommands");
-        }
-        bashCut = true;
-        continue;
-      }
-      if (key === "patterns" && Array.isArray(value)) {
-        const kept: unknown[] = [];
-        let allowCut = false;
-        for (const pattern of value) {
-          const entry = pattern as Record<string, unknown> | null;
-          if (entry && typeof entry === "object" && entry.approval === "allow") {
-            allowCut = true;
-            continue;
-          }
-          kept.push(pattern);
-        }
-        if (allowCut) {
-          removed.push("bash.patterns:allow");
-          if (kept.length > 0) rest.patterns = kept;
-        } else {
-          rest.patterns = value;
-        }
-        continue;
-      }
-      rest[key] = value;
-    }
-    if (bashCut) {
-      if (Object.keys(rest).length > 0) out.bash = rest;
-      else delete out.bash;
-    }
-  }
-  if (Array.isArray(src.extensions)) {
-    removed.push("extensions");
-    delete out.extensions;
-  }
-  if (removed.length === 0) return null;
-  return { removed, next: out };
-}
-
-/** Every project settings file a repo can ship, per driver, with its format. */
+/** Every project settings file a repo can ship, per driver. */
 const REPO_AGENT_SETTINGS: AgentSettingsFile[] = [
-  { rel: ".claude/settings.json", format: "json", strip: stripClaudeSettings },
-  { rel: ".claude/settings.local.json", format: "json", strip: stripClaudeSettings },
-  { rel: ".omp/config.yml", format: "yaml", strip: stripOmpSettings },
-  { rel: ".omp/config.yaml", format: "yaml", strip: stripOmpSettings },
-  { rel: ".omp/settings.json", format: "json", strip: stripOmpSettings },
+  { rel: ".claude/settings.json", strip: stripClaudeSettings },
+  { rel: ".claude/settings.local.json", strip: stripClaudeSettings },
 ];
 
-function parseSettings(raw: string, format: SettingsFormat): unknown {
+function parseSettings(raw: string): unknown {
   try {
-    if (format === "json") return JSON.parse(raw);
-    return parseYaml(raw);
+    return JSON.parse(raw);
   } catch {
     // A broken file is the CLI's news, not ours.
     return null;
   }
 }
 
-function serializeSettings(value: unknown, format: SettingsFormat): string {
-  if (format === "yaml") return stringifyYaml(value);
+function serializeSettings(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
@@ -243,8 +137,8 @@ function readQuarantine(root: string, configDir: string): QuarantineRecord | nul
 }
 
 /**
- * Cut the widening keys out of a clone's project settings — Claude Code and
- * omp — before any session loads them. The project tier itself
+ * Cut the widening keys out of a clone's project settings — Claude Code —
+ * before any session loads them. The project tier itself
  * is deliberate — it is how the repo's CLAUDE.md reaches the session — but
  * the tier's trust is auto-accepted here (see `trustWorkspace`), so a repo
  * shipping `hooks` would otherwise run shell commands at session start, or
@@ -279,14 +173,14 @@ export function sanitizeRepoAgentSettings(root: string, configDir: string = CONF
     } catch {
       continue; // Absent (the normal repo) or unreadable — nothing to cut.
     }
-    const parsed = parseSettings(raw, settings.format);
+    const parsed = parseSettings(raw);
     if (!parsed) continue;
     const cut = settings.strip(parsed);
     if (!cut) continue;
     // temp+rename — a crash never leaves half a settings file behind.
     const file = join(root, settings.rel);
     const temporary = `${file}.nova-design-${process.pid}`;
-    writeFileSync(temporary, serializeSettings(cut.next, settings.format), { mode: 0o644 });
+    writeFileSync(temporary, serializeSettings(cut.next), { mode: 0o644 });
     renameSync(temporary, file);
     const fresh = { file: settings.rel, removed: cut.removed, originalRaw: raw };
     const existing = entries.find((entry) => entry.file === settings.rel);

@@ -884,13 +884,22 @@
 
 .nx .nx-tbtn--model {
   min-width: 0;
-  /* `Opus 5.5 · 아주 길게` 까지 — 칩이 모델 이름을 입으면서 길어졌다. */
+  /* `Opus 5.5 · medium` 까지 — 칩이 모델 이름을 입으면서 길어졌다. */
   max-width: 264px;
 }
 
 .nx-model-label {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 지금 AI 의 표식(칩 · 팝의 AI 줄) — Claude 는 제 흙빛을, Codex 는 글자색을 입는다. */
+.nx-pmark {
+  flex-shrink: 0;
+}
+
+.nx-pmark--claude {
+  color: #d97757;
 }
 
 .nx-usage-word {
@@ -1046,7 +1055,11 @@
 }
 
 .nx .nx-mseg button {
-  flex: 1;
+  /* 넓을 때는 다섯 칸이 같은 폭, 팝이 좁아지면(좁힌 대화 칸) 칸마다 제 글자
+     폭 아래로는 안 줄어 `medium` 이 칸 밖으로 넘치지 않는다. */
+  flex: 1 1 0;
+  min-width: max-content;
+  padding: 0 6px;
   height: 32px;
   border-radius: 7px;
   font-size: 13px;

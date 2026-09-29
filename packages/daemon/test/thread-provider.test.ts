@@ -37,8 +37,8 @@ test("재개 — 다른 공급자를 실어 와도 주인이 이기고 무시한
 
 test("재개 — 살아 있는 세션이 저장소와 요청을 모두 이긴다", () => {
   assert.deepEqual(
-    threadProvider({ resume: "s1", requested: "claude", live: "omp", stored: "codex" }),
-    { provider: "omp", ignored: "claude" },
+    threadProvider({ resume: "s1", requested: "claude", live: "other", stored: "codex" }),
+    { provider: "other", ignored: "claude" },
   );
 });
 

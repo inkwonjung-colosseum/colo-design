@@ -68,7 +68,7 @@
 4. 한 배포 안에서만 오가는 내부 이름(패키지명 · 타입 · IPC 채널 · 환경 변수)은 같은 0.4.0 안에서
    기계적으로 바꾼다(§7.2 F).
 5. 회사 디자인 시스템 CDS(`@colosseumcoinckr/*`), 조직명 `inkwonjung-colosseum`, 타사
-   이름(Claude · Codex · omp, 테마 이름)은 건드리지 않는다.
+   이름(Claude · Codex, 테마 이름)은 건드리지 않는다.
 
 ## 0. 결정
 
@@ -230,7 +230,6 @@ scripts 2 · workflow 2 · web public 1 · 루트 package.json 1 · README 1 · 
   (`claude/driver.ts:136-196`). 이 기계에서도
   `-Users-developjik--colo-design-projects-cds-design-first-repo-repo` 로 산다.
 - Codex — 롤아웃 첫 줄의 `cwd` 가 클론 경로와 같은 것만 고른다(`codex/driver.ts:228·312`).
-- omp — `~/.omp/agent/sessions/<인코딩된 cwd>/`(`omp/store.ts:11-52`).
 
 그래서 폴더 이름만 바꾸면 끝이 아니라, 아래 §3.3의 이주가 짝으로 가야 한다. 폴더와 함께 머무는
 것은 클론(node_modules 포함, 이 기계 1.4GB), `tools/bin` 의 Codex, git 가드 훅, 로그, 그리고
@@ -266,7 +265,6 @@ productName(`Nova Design`)이 Electron 의 기본 userData(`~/Library/Applicatio
 3. 각 클론의 `.git/config` 가 `core.hooksPath` 를 절대 경로로 적었다면 다시 쓴다.
 4. 에이전트 대화 저장소 — 클론 경로가 바뀌므로 짝으로 고친다. 새 이름이 이미 있으면 건너뛴다.
    - Claude — `~/.claude/projects/<munged(옛 경로)>` 폴더를 `<munged(새 경로)>` 로 rename.
-   - omp — `~/.omp/agent/sessions/<인코딩된 옛>` → 새(인코딩은 `omp/store.ts` 의 규칙).
    - Codex — `~/.codex/sessions` 의 롤아웃 파일 가운데 첫 줄 `cwd` 가 옛 접두면 그 필드만 다시 쓴다.
 5. `~/.claude.json` 신뢰 항목은 시작마다 다시 쓰므로 손볼 것이 없다.
 
@@ -502,7 +500,7 @@ PR-A(§7.1) 위에 얹는다(2026-09-29 결정). 묶음마다 워크트리를 �
 
 | 단계 | 할 일 | 시험 |
 |---|---|---|
-| D 저장 이주(데몬 · 프로토콜) | §3.3 전부 — 폴더 rename · projects.json/cycle.json 경로 · hooksPath · Claude/omp 폴더 rename · Codex cwd 다시 쓰기. 턴 마커 · PR 도구 구간 · 이슈 표식 · 에셋 브랜치 · 보관 ref · stash 태그 · MCP 서버 이름은 **쓰기 nova · 읽기 둘 다**(`// read-legacy`) | 임시 폴더로 이주의 순수 부분(rename · 경로 다시 쓰기 · munged 이름 · Codex cwd), 마커 이중 읽기 |
+| D 저장 이주(데몬 · 프로토콜) | §3.3 전부 — 폴더 rename · projects.json/cycle.json 경로 · hooksPath · Claude 폴더 rename · Codex cwd 다시 쓰기. 턴 마커 · PR 도구 구간 · 이슈 표식 · 에셋 브랜치 · 보관 ref · stash 태그 · MCP 서버 이름은 **쓰기 nova · 읽기 둘 다**(`// read-legacy`) | 임시 폴더로 이주의 순수 부분(rename · 경로 다시 쓰기 · munged 이름 · Codex cwd), 마커 이중 읽기 |
 | E 설치 정체성(데스크톱) | appId · userData 이주 · NSIS include(옛 GUID 제거) · executableName 기본값 · update-result 두 자리 · 서명 CN(D-14) · 시도 표식 두 자리 | installer.nsh 의 옛 GUID 문자열, identity 시험, userData 이주 순수 시험 |
 | G 웹 저장 키(웹) | §1.2 localStorage 키 rename + 부팅 때 옛 키 → 새 키 한 번 복사. dev.mjs 의 vite 인식 문자열 | 키 이주 순수 시험 |
 | F 기계적 치환(머지 뒤, 통합 브랜치) | §7.3 의 치환 — `// read-legacy` 줄과 §2.1 은 제외 | 잔여 검사 [§8.2](#82-잔여-검사) |
@@ -529,7 +527,7 @@ PR-A(§7.1) 위에 얹는다(2026-09-29 결정). 묶음마다 워크트리를 �
   `CLAUDE_LATEST_API` `CODEX_BIN` `CODEX_RELEASE_API` `COMMAND_STALL_MS` `CREDENTIAL_STORE`
   `DESKTOP_SMOKE` `DESKTOP_UNIT` `DEV_AGENTS` `DEV_SERVER` `ENFORCE_REPO_SETTINGS` `EXTRA_PATH`
   `GITHUB_API` `GITHUB_FIXTURE` `GITHUB_SLUG` `GIT_BIN` `GIT_GUARD_DIR` `LANE_STRICT` `LOG_DIR`
-  `NPMRC` `OMP_BIN` `OPEN_BIN` `PERMISSION_LOG` `PIN_EFFORT` `PLAN_USAGE` `PORT` `PROJECTS_DIR`
+  `NPMRC` `OPEN_BIN` `PERMISSION_LOG` `PIN_EFFORT` `PLAN_USAGE` `PORT` `PROJECTS_DIR`
   `PROJECTS_SETTINGS` `READY_TIMEOUT_MS` `REPO_DIR` `REPO_PAT` `REPO_SETTINGS` `REPO_URL`
   `RUN_DIR` `UNDO_LOG`, 그리고 `COLO_DAEMON_URL` · `COLO_BROWSER_SECRET` · `COLO_BROWSER_SUBMIT`.
   앱은 옛 이름을 읽지 않는다 — 앱 사용자의 기계에서는 모두 앱이 스스로 세우는 값이다. 개발자 셸에

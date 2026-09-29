@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // orphan-check — PLAN-CRASH-PROCESS.md §3.B 의 재현 도구.
 // `before` 로 프로세스 스냅샷을 ~/.nova-design/logs/orphan-before.json 에 적고,
-// 시나리오(Stop · 창 닫기 · 강제 종료) 뒤 `after` 로 새로 생긴 claude · codex · omp ·
+// 시나리오(Stop · 창 닫기 · 강제 종료) 뒤 `after` 로 새로 생긴 claude · codex ·
 // node · 셸 계열 프로세스를 표로 낸다. before 와 after 사이에 이 도구는 아무것도
 // 하지 않는다 — 재현 결과가 도구 자신으로 오염되지 않는다.
 
@@ -16,7 +16,6 @@ const SNAPSHOT_PATH = join(homedir(), ".nova-design", "logs", "orphan-before.jso
 const WATCH_NAMES = new Set([
   "claude",
   "codex",
-  "omp",
   "node",
   "bash",
   "sh",

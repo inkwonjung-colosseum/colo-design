@@ -18,7 +18,6 @@ import { type WebSocket, WebSocketServer } from "ws";
 import type { Diagnostic } from "./agent/driver.js";
 import { ClaudeDriver } from "./agent/drivers/claude/driver.js";
 import { CodexDriver } from "./agent/drivers/codex/driver.js";
-import { OmpDriver } from "./agent/drivers/omp/driver.js";
 import { DriverRegistry } from "./agent/registry.js";
 import { AgentInstall } from "./agent-install.js";
 import { AgentUpdates } from "./agent-update.js";
@@ -330,10 +329,9 @@ export interface DaemonConfig {
   token: string;
   claudeExecutable?: string;
   /**
-   * 개발용 에이전트(omp)를 프로바이더 목록에 올린다. 실사용자는 Claude Code ·
-   * Codex 만 쓴다 — omp 는 이 도구의 개발자만 쓰므로 그 길은 개발 실행에만
-   * 열어 둔다: 데스크톱은 `!app.isPackaged`, CLI 는
-   * `NOVA_DESIGN_DEV_AGENTS=1`. 패키징된 앱은 절대 켜지 않는다.
+   * 개발 실행인가 — 개발 전용 면(`DaemonStatus.dev`)을 연다. 프로바이더 목록은
+   * 이 값과 무관하게 Claude Code · Codex 둘뿐이다. 데스크톱은 `!app.isPackaged`,
+   * CLI 는 `NOVA_DESIGN_DEV_AGENTS=1`. 패키징된 앱은 절대 켜지 않는다.
    */
   devAgents?: boolean;
   /**
@@ -384,18 +382,15 @@ export interface DaemonConfig {
 
 /**
  * The provider registry's contents — registration order is the picker order
- * (registry.ts). Claude · Codex always; omp only behind `devAgents`
- * (DaemonConfig 의 주석). 함수로 떼어 둔 이유는 하나다: 어느 실행이 어떤
- * 프로바이더 목록을 받는지를 데몬을 띄우지 않고 잠그기 위해서다.
+ * (registry.ts). Claude · Codex 둘뿐이다. 함수로 떼어 둔 이유는 하나다: 어느 실행이
+ * 어떤 프로바이더 목록을 받는지를 데몬을 띄우지 않고 잠그기 위해서다.
  */
 export function registerAgentDrivers(
   registry: DriverRegistry,
-  options: { claudeExecutable: () => string | null; devAgents: boolean },
+  options: { claudeExecutable: () => string | null },
 ): void {
   registry.register(new ClaudeDriver(options.claudeExecutable));
   registry.register(new CodexDriver());
-  if (!options.devAgents) return;
-  registry.register(new OmpDriver());
 }
 
 export class DaemonServer {
@@ -662,7 +657,6 @@ export class DaemonServer {
     });
     registerAgentDrivers(this.agentDrivers, {
       claudeExecutable: () => this.claudeExecutable,
-      devAgents: config.devAgents === true,
     });
     this.manager = new SessionManager(
       {

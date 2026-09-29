@@ -217,8 +217,8 @@ test("PlanTracker — 쉬는 대화가 없으면 그 AI 의 probe 로, 있으면
       },
       catalogSources: [],
     });
-    // 읽기가 없는 AI 는 하나씩 빚진다 — codex 는 probe 가, omp 는 읽을 길이 없어 묻지 않는다.
-    tracker.currentAll(["codex", "omp"]);
+    // 읽기가 없는 AI 는 하나씩 빚진다 — codex 는 probe 가, 그 밖의 AI 는 읽을 길이 없어 묻지 않는다.
+    tracker.currentAll(["codex", "other"]);
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.deepEqual(asked, ["probe:codex"]);
     assert.equal(changed, 1);

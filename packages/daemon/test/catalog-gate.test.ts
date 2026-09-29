@@ -37,9 +37,9 @@ test("실패 뒤에는 retryMs 가 지나야 다시 묻는다", () => {
 test("프로바이더마다 따로 판정한다", () => {
   const gate = new CatalogGate();
   gate.started("claude");
-  gate.settled("omp", true, 1_000);
-  // claude 는 in-flight, omp 는 성공, codex 는 처음 — 셋이 서로를 못 잰다.
+  gate.settled("codex", true, 1_000);
+  // claude 는 in-flight, codex 는 성공, other 는 처음 — 셋이 서로를 못 잰다.
   assert.equal(gate.shouldRead("claude", 2_000), false);
-  assert.equal(gate.shouldRead("omp", 2_000), false);
-  assert.equal(gate.shouldRead("codex", 2_000), true);
+  assert.equal(gate.shouldRead("codex", 2_000), false);
+  assert.equal(gate.shouldRead("other", 2_000), true);
 });
