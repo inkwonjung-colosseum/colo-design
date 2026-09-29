@@ -106,7 +106,7 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
     const input = document.createElement("input");
     input.type = "file";
     // 개명 1단계(§4.3) — 고르기 창도 두 확장자를 다 받는다.
-    input.accept = ".colo-invite,.nova-invite"; // read-legacy — 옛 확장자도 고를 수 있다
+    input.accept = ".nova-invite";
     input.onchange = () => {
       const file = input.files?.[0];
       if (file) takeFile(file);

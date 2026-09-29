@@ -16,10 +16,6 @@
       "types": "./dist/environment.d.ts",
       "default": "./dist/environment.js"
     },
-    "./migrate-home": {
-      "types": "./dist/migrate-home.d.ts",
-      "default": "./dist/migrate-home.js"
-    },
     "./server": {
       "types": "./dist/server.d.ts",
       "default": "./dist/server.js"

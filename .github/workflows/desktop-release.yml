@@ -245,13 +245,14 @@ jobs:
             echo "- **macOS**: 처음 실행하면 Gatekeeper 가 막는다. macOS Sequoia 이상엔 우클릭 → **열기** 가 없다 — 시스템 설정 → 개인정보 보호 및 보안 → **확인 없이 열기** 를 누르고 인증한다. 터미널이면 \`xattr -dr com.apple.quarantine \"/Applications/Nova Design.app\"\`."
             echo "- **Windows**: SmartScreen 이 \"Windows PC를 보호했습니다\" 를 띄우면 **추가 정보** → **실행** 으로 진행한다."
             echo
-            # 0.4.0 개명 안내(RENAME-NOVA-PLAN §6) — 0.3.x 에서 건너오는 앱 사용자에게
-            # 미리 알릴 길이 앱 안에는 없다(앱은 latest.json 의 notes 를 읽기만 한다).
+            # 0.4.0 개명 안내(RENAME-NOVA-PLAN §6 · 완전 단절) — 0.3.x 에서 건너오는
+            # 앱 사용자에게 미리 알릴 길이 앱 안에는 없다(앱은 latest.json 의 notes 를
+            # 읽기만 한다).
             echo "### 0.3.x 에서 업데이트하는 경우"
             echo
-            echo "이름이 Nova Design 으로 바뀌었어요. 업데이트하면 대화 · 작업 · 설정은 그대로 옮겨져요. 예전 초대 파일도 그대로 열려요."
+            echo "이름이 Nova Design 으로 바뀌었어요. 지난 버전이 저장해 둔 대화 · 작업 · 설정은 이어지지 않아요 — 새 초대 파일(\`*.nova-invite\`)로 새로 시작해 주세요."
             echo
-            echo "- **mac**: 처음 한 번 \`다시 연결이 필요해요\` 가 뜨면, 개발자에게 받은 새 초대 파일을 창에 놓아 주세요."
+            echo "- **mac**: 처음 뜨는 시작 화면에서 개발자에게 받은 새 초대 파일을 창에 놓아 주세요."
             echo "- **Windows**: 업데이트가 끝난 뒤 앱이 저절로 다시 열리지 않으면 시작 메뉴의 \`Nova Design\` 을 눌러 주세요."
             echo
             echo "---"

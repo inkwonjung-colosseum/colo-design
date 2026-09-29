@@ -77,15 +77,15 @@ test("problemLineId: 초대 줄은 경로가 신원 — 문제 줄과 섞이지 
   const problem = problemFor({ attention: fixing }, REPO, L);
   assert.ok(problem !== null);
   assert.equal(
-    problemLineId({ kind: "invite", path: "/tmp/a.colo-invite" }),
-    "invite:/tmp/a.colo-invite",
+    problemLineId({ kind: "invite", path: "/tmp/a.nova-invite" }),
+    "invite:/tmp/a.nova-invite",
   );
   assert.notEqual(
-    problemLineId({ kind: "invite", path: "/tmp/a.colo-invite" }),
-    problemLineId({ kind: "invite", path: "/tmp/b.colo-invite" }),
+    problemLineId({ kind: "invite", path: "/tmp/a.nova-invite" }),
+    problemLineId({ kind: "invite", path: "/tmp/b.nova-invite" }),
   );
   assert.notEqual(
-    problemLineId({ kind: "invite", path: "/tmp/a.colo-invite" }),
+    problemLineId({ kind: "invite", path: "/tmp/a.nova-invite" }),
     problemLineId({ kind: "problem", problem }),
   );
 });

@@ -67,13 +67,6 @@ function pageContext(): { screen: string } {
 contextBridge.exposeInMainWorld("novaDesign", {
   post: (envelope: unknown) => ipcRenderer.send("nova-overlay:post", envelope),
 });
-// read-legacy — 옛 이름의 문이다(RENAME-NOVA-PLAN §1.2). 연결 레포의 코드가
-// 게스트 페이지에서 부를 수 있는 유일한 통로이므로 같은 객체를 별칭으로 남긴다.
-// read-legacy
-contextBridge.exposeInMainWorld("coloDesign", {
-  // read-legacy
-  post: (envelope: unknown) => ipcRenderer.send("nova-overlay:post", envelope),
-});
 
 // ---------------------------------------------------------------------------
 // 2. The pin picker overlay (재설계 C1). All styling inline — the repo's
@@ -1127,11 +1120,7 @@ function maybeHint(): void {
   // once per repo, by the page's own storage; a machine that cannot store it
   // simply hears it again.
   try {
-    // read-legacy — 옛 앱이 이미 말한 적이 있는 페이지는 다시 말하지 않는다.
-    const said =
-      // read-legacy
-      window.localStorage.getItem(HINT_SEEN) ?? window.localStorage.getItem("colo-design.pin-hint");
-    if (!said) {
+    if (!window.localStorage.getItem(HINT_SEEN)) {
       window.localStorage.setItem(HINT_SEEN, "1");
       const note = toast(words.hint, { hold: true });
       setTimeout(() => note.remove(), 6000);

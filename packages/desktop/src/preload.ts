@@ -47,7 +47,7 @@ contextBridge.exposeInMainWorld("novaDesignDesktop", {
   /**
    * 초대 파일(PLAN-UI U11): 끌어다 놓거나 고른 File 의 디스크 위치를 알려 주고
    * (디스크에 없는 File 은 null), 가져온 뒤 그 파일을 OS 휴지통으로 옮긴다.
-   * 메인이 `.colo-invite` 가 아닌 것은 거절한다.
+   * 메인이 `.nova-invite` 가 아닌 것은 거절한다.
    */
   invite: {
     pathOf: (file: File): string | null => {

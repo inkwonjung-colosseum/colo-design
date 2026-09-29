@@ -112,12 +112,12 @@ test("셸 이동 — 대화를 열면 서랍이 닫히고, 프로젝트가 바�
 test("셸 이동 — 지울 수 있는 초대 파일의 자리는 세우고 거둔다(U11)", () => {
   let s = initialNav(false);
   assert.equal(s.discardableInvitePath, null);
-  s = navReducer(s, { type: "invite-path", path: "/tmp/a.colo-invite" });
-  assert.equal(s.discardableInvitePath, "/tmp/a.colo-invite");
+  s = navReducer(s, { type: "invite-path", path: "/tmp/a.nova-invite" });
+  assert.equal(s.discardableInvitePath, "/tmp/a.nova-invite");
   // 프로젝트가 바뀌어도 남는다 — 파일은 프로젝트의 것이 아니다.
   s = navReducer(s, { type: "project-changed" });
-  assert.equal(s.discardableInvitePath, "/tmp/a.colo-invite");
-  assert.equal(navReducer(s, { type: "invite-path", path: "/tmp/a.colo-invite" }), s);
+  assert.equal(s.discardableInvitePath, "/tmp/a.nova-invite");
+  assert.equal(navReducer(s, { type: "invite-path", path: "/tmp/a.nova-invite" }), s);
   s = navReducer(s, { type: "invite-path", path: null });
   assert.equal(s.discardableInvitePath, null);
 });

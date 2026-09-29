@@ -1,10 +1,7 @@
 import { isAbsolute } from "node:path";
 
 /** 앱이 대신 지울 수 있는 파일의 끝 — 웹의 isInviteFile 과 같은 잣대다. */
-const INVITE_SUFFIXES = [
-  ".nova-invite",
-  ".colo-invite", // read-legacy — 옛 확장자도 지운다(개명 1단계)
-];
+const INVITE_SUFFIX = ".nova-invite";
 
 /**
  * 초대 파일 지우기(PLAN-UI U11)를 거절할 이유 — 없으면 null. 렌더러가 건넨
@@ -16,8 +13,6 @@ export function inviteDiscardRefusal(path: unknown): string | null {
     return "지울 초대 파일을 찾지 못했어요.";
   }
   if (!isAbsolute(path)) return "지울 초대 파일을 찾지 못했어요.";
-  if (!INVITE_SUFFIXES.some((suffix) => path.endsWith(suffix))) {
-    return "초대 파일만 지울 수 있어요.";
-  }
+  if (!path.endsWith(INVITE_SUFFIX)) return "초대 파일만 지울 수 있어요.";
   return null;
 }

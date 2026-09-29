@@ -28,21 +28,13 @@ export async function recoverShelfPatch(
   run: GitRun,
   root: string,
 ): Promise<"none" | "restored" | "kept"> {
-  // read-legacy — v0.3.8~0.3.10 이 채운 슬롯은 옛 이름(refs/colo-design/shelf)에
-  // 있다. 새 슬롯이 없을 때만 옛 것을 본다.
-  let shelfRef = SHELF_REF;
   try {
-    await run(["rev-parse", "-q", "--verify", shelfRef]);
+    await run(["rev-parse", "-q", "--verify", SHELF_REF]);
   } catch {
-    try {
-      await run(["rev-parse", "-q", "--verify", "refs/colo-design/shelf"]); // read-legacy
-      shelfRef = "refs/colo-design/shelf"; // read-legacy
-    } catch {
-      return "none";
-    }
+    return "none";
   }
   // 내려앉을 자리의 확인 — 클론이 없는 경우는 호출자(ShelfStore)가 이미
-  // 걸렀고, 여기는 병합 · 충돌 · 더러운 작업 폴더를 본다.
+  // 걸었고, 여기는 병합 · 충돌 · 더러운 작업 폴더를 본다.
   try {
     await run(["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
     return "kept"; // 병합이 정리를 기다리는 중
@@ -64,15 +56,15 @@ export async function recoverShelfPatch(
       "--no-renames",
       "--full-index",
       "--binary",
-      `${shelfRef}^`,
-      shelfRef,
+      `${SHELF_REF}^`,
+      SHELF_REF,
     ]);
     writeFileSync(patchFile, patch);
     // --check 는 3way 없이: `--3way` 는 충돌을 병합 표식으로 "성공"시키는
     // 시도지 판정이 아니다. 깨끗하게 얹히는 문맥인지 이 한 번이 말한다.
     await run(["apply", "--check", patchFile]);
     await run(["apply", patchFile]);
-    await run(["update-ref", "-d", shelfRef]);
+    await run(["update-ref", "-d", SHELF_REF]);
     return "restored";
   } catch {
     // --check 를 통과한 뒤의 실패는 디스크 수준의 세계 — 슬롯은 그대로 두고

@@ -117,16 +117,6 @@ export const GATE_STEP: Record<"commit" | "push" | "pr", string> = {
  * 관찰(cycle-observe)이 도구 태그의 stash 를 찾는 잣대로도 쓰인다(PLAN L3 3행).
  */
 export const STASH_MESSAGE = "Nova Design: 최신화 임시 보관";
-// read-legacy — 0.3.x 의 최신화가 남긴 임시 보관. 찾기는 둘 다, 새로 만드는
-// 태그는 새 이름이다.
-export const LEGACY_STASH_MESSAGES = ["Colo Design: 최신화 임시 보관"]; // read-legacy
-
-/** 이 줄이 도구가 남긴 임시 보관인가 — 옛 이름의 태그도 도구의 것이다. */
-export function isToolStashSubject(subject: string): boolean {
-  return (
-    subject.includes(STASH_MESSAGE) || LEGACY_STASH_MESSAGES.some((old) => subject.includes(old))
-  );
-}
 
 /** What the planner reads when a conflict needs the agent and no thread is open. */
 export const REFRESH_CONFLICT_DETAIL =
@@ -927,7 +917,7 @@ export class RepoCore {
     for (const row of list.split(/\r?\n/)) {
       if (row.trim() === "") continue;
       const [ref = "", ...subject] = row.split("\x00");
-      if (isToolStashSubject(subject.join("\x00"))) return ref.trim();
+      if (subject.join("\x00").includes(STASH_MESSAGE)) return ref.trim();
     }
     return null;
   }
@@ -1132,7 +1122,7 @@ export class RepoCore {
     } catch {
       return "none";
     }
-    const parked = list.split(/\r?\n/).find((line) => isToolStashSubject(line));
+    const parked = list.split(/\r?\n/).find((line) => line.includes(STASH_MESSAGE));
     const ref = parked?.match(/^stash@\{\d+\}/)?.[0];
     if (!ref) return "none";
     const conflicted = await this.popStash(ref);

@@ -132,12 +132,10 @@ export function mergeToolBlock(existing: string | null, block: string): string {
     inner.startsWith(TOOL_BLOCK_START) && inner.endsWith(TOOL_BLOCK_END)
       ? inner
       : `${TOOL_BLOCK_START}\n${inner}\n${TOOL_BLOCK_END}`;
-  // read-legacy
-
-  // 싸여 있다. 역참조(\1)로 짝이 같은 접두의 구간만 잡는다 — 첫 구간을 새
-  // 표식으로 바꾸고 나머지(옛 것이든 새 것이든)는 지운다.
-  // read-legacy
-  const pattern = /<!-- (nova|colo)-design:start -->[\s\S]*?<!-- \1-design:end -->\s*/g;
+  const pattern = new RegExp(
+    `${escapeRegExp(TOOL_BLOCK_START)}[\\s\\S]*?${escapeRegExp(TOOL_BLOCK_END)}\\s*`,
+    "g",
+  );
   const found = base.match(pattern);
   if (found === null) {
     // 구간이 없다 — 개발자의 글 뒤에 붙인다. 빈 본문이면 안내 문단 없이
@@ -202,7 +200,7 @@ export function readToolNote(body: string | null): string | null {
 
 /** 정규식 특수문자를 피한다 — 표식은 고정 문장이지만 이스케이프가 재사용을
  *  안전하게 만든다. */
-export function escapeRegExp(text: string): string {
+function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 

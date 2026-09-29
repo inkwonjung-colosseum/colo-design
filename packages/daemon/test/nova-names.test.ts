@@ -1,7 +1,7 @@
-// 쓰기 값 전부를 못 박는 시험 (RENAME-NOVA-PLAN §8.1 "nova-names") — 개명 뒤
-// 무엇을 쓰는지, 그리고 옛 이름이 // read-legacy 줄(과 허용 목록) 밖에 남지
-// 않았는지. 기대값의 옛 이름은 조각으로 잇는다 — 치환 스크립트가 기대값까지
-// 바꾸지 않게.
+// 쓰기 값 전부를 못 박는 시험(RENAME-NOVA-PLAN §8.1 "nova-names") — 개명은
+// 완전 단절이다: 무엇을 쓰든 하나의 이름(nova) 만 쓰고, 옛 이름은 설치 정체성을
+// 치우는 자리(installer.nsh · identity 의 LEGACY 상수)에만 남는다. 기대값의 옛
+// 이름은 조각으로 잇는다 — 치환 스크립트가 기대값까지 바꾸지 않게.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -53,8 +53,18 @@ test("Windows 교체 스크립트는 --force-run 을 넘기고 재실행은 조�
   assert.ok(source.includes("Get-Process -Name $name"));
 });
 
+test("초대 파일은 .nova-invite 하나다 — 생성기도 판독도", () => {
+  const format = readFileSync(join(ROOT, "site/invite-format.mjs"), "utf8");
+  assert.ok(format.includes('".nova-invite"'));
+  assert.ok(!format.includes(`${LEGACY}-invite`));
+  const bus = readFileSync(join(ROOT, "packages/web/src/lib/invite-bus.ts"), "utf8");
+  assert.ok(bus.includes('".nova-invite"'));
+  assert.ok(!bus.includes(`${LEGACY}-invite`));
+});
+
 // ---------------------------------------------------------------------------
-// 잔여 검사(§8.2 F 뒤) — 허용 목록 밖의 옛 이름 줄이 0 인가.
+// 잔여 검사 — 옛 이름은 설치 정체성을 치우는 자리(read-legacy 표식)와 주석에만
+// 남는다. 개명이 완전 단절이므로 그 밖의 옛 이름 줄은 0 이어야 한다.
 // ---------------------------------------------------------------------------
 
 /** 주석 줄 — 문서의 이름 이야기는 허용 목록에 든다. */
@@ -104,7 +114,7 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-test("잔여 검사 — 옛 이름은 read-legacy 줄 · 주석 · 허용 목록 안에만 있다", () => {
+test("잔여 검사 — 옛 이름은 read-legacy 줄과 주석 안에만 있다", () => {
   const files = [
     ...walk(join(ROOT, "packages")),
     ...walk(join(ROOT, "site")),
@@ -133,14 +143,12 @@ test("잔여 검사 — 옛 이름은 read-legacy 줄 · 주석 · 허용 목록
     lines.forEach((line, index) => {
       if (!pattern.test(line)) return;
       // 허용 목록 — read-legacy 표식(같은 줄 또는 바로 윗줄, // 와 ; 두 주석
-      // 다), 주석 줄, 그리고 0.4.0 이 계속 쓰는 초대 확장자(.colo-invite,
-      // 대소문자 판정 시험 포함). 포맷터(biome)가 줄을 다시 묶을 수 있어
-      // 표식은 이웃 줄에도 둔다.
+      // 다)과 주석 줄. 이 표식이 사는 곳은 installer.nsh · identity.ts 의 설치
+      // 정체성 상수와 index.ts 의 옛 환경 변수 경고뿐이어야 한다.
       if (line.includes("read-legacy") || (lines[index - 1] ?? "").includes("read-legacy")) {
         return;
       }
       if (isCommentLine(line)) return;
-      if (/\.colo-invite/i.test(line) || line.includes("COLO-INVITE")) return;
       offenders.push(`${path.replace(ROOT, "")}:${index + 1}: ${line.trim()}`);
     });
   }

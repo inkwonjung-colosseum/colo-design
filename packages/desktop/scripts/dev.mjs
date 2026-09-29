@@ -229,10 +229,7 @@ async function webDevServerRunning(url) {
   } catch {
     return false; // 아무도 없다 — 우리가 띄운다
   }
-  // read-legacy — 개명 전 소스(옛 저장 키)를 내보내는 개발 서버도 우리 것이다.
-  if (body.includes("nova-design.daemon-url") || body.includes("colo-design.daemon-url"))
-    // read-legacy
-    return true;
+  if (body.includes("nova-design.daemon-url")) return true;
   console.error(
     `${url} 을 다른 서버가 쓰고 있습니다 — 그 서버를 끄거나 NOVA_DESIGN_DEV_SERVER 로 다른 주소를 지정해 주세요.`,
   );

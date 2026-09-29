@@ -92,9 +92,6 @@ function prune(dir: string): void {
  */
 export function pruneStagedAttachments(cwd: string): void {
   prune(attachmentDir(cwd));
-  // read-legacy — 0.3.x 가 남긴 첨부 폴더도 같은 7일 규칙으로 거둔다.
-  prune(join(cwd, ".git", "colo-design-attachments")); // read-legacy
-  prune(join(cwd, ".colo-design", "attachments")); // read-legacy
 }
 
 /** 바이너리 첨부를 디스크에 적고 절대 경로를 돌려준다. */

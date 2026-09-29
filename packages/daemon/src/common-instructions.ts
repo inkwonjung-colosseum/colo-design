@@ -63,14 +63,7 @@ export function stripCommonInstructions(text: string): string {
   const lines = text.replace(COMMON_INSTRUCTIONS, "").split(/\r?\n/);
   let index = 0;
   while (index < lines.length && lines[index]?.trim() === "") index += 1;
-  // read-legacy — 옛 저장본의 머리는 "Colo Design 공통 규칙"이다. 두 머리 다
-  // 걷어낸다: 옛 대화의 제목 · 커밋 제목 파생이 규칙 문구를 삼키지 않게.
-  const header = lines[index] ?? "";
-  if (
-    header.startsWith("# Nova Design 공통 규칙") ||
-    // read-legacy — 옛 저장본의 머리.
-    header.startsWith("# Colo Design 공통 규칙")
-  ) {
+  if (lines[index]?.startsWith("# Nova Design 공통 규칙")) {
     index += 1;
     while (index < lines.length) {
       const row = lines[index]?.trim() ?? "";

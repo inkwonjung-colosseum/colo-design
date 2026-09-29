@@ -86,7 +86,6 @@ import {
   conflictBrief,
   DEFAULT_HANDOFF_TITLE,
   detailOf,
-  LEGACY_STASH_MESSAGES,
   SAVE_CONFLICT_OPEN_DETAIL,
   STASH_MESSAGE,
 } from "./repo-core.js";
@@ -1544,12 +1543,7 @@ export class CycleSupervisor {
         const list = await core.git(["stash", "list"]).catch(() => "");
         const stillOurs = list
           .split("\n")
-          .some(
-            (line) =>
-              line.startsWith(`${ref}:`) &&
-              (line.includes(STASH_MESSAGE) ||
-                LEGACY_STASH_MESSAGES.some((old) => line.includes(old))),
-          );
+          .some((line) => line.startsWith(`${ref}:`) && line.includes(STASH_MESSAGE));
         if (stillOurs) await core.git(["stash", "drop", ref]).catch(() => "");
       }
     }

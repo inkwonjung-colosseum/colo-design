@@ -1,16 +1,7 @@
 import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { bundledToolEnv, NOVA_DESIGN_DATA_DIR } from "@nova-design/daemon/environment";
-import { migrateLegacyDataHome } from "@nova-design/daemon/migrate-home";
 import type { DaemonNotice } from "@nova-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
 import { DaemonServer, daemonOwnedPorts } from "@nova-design/daemon/server";
@@ -21,7 +12,7 @@ import { loadAppZoom, saveAppZoom, stepZoom } from "./app-zoom.js";
 import { benchEndpointBody, benchEndpointPath, benchEndpointPid } from "./bench-endpoint.js";
 import { registerDesktopBridge } from "./bridge.js";
 import { loadNotificationPrefs, loadStoredPort, saveDesktopSettings } from "./desktop-settings.js";
-import { APP_BUNDLE_ID, bundleRenamePlan, migrateUserDataFolder } from "./identity.js";
+import { APP_BUNDLE_ID } from "./identity.js";
 import { buildMenuTemplate } from "./menu.js";
 import { createBrowserDriverFactory, createPreviewDriverFactory } from "./preview-driver.js";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
@@ -94,48 +85,6 @@ host.onCreated = registerCloseGuard;
  */
 const underTest =
   process.env.NOVA_DESIGN_DESKTOP_UNIT === "1" || Boolean(process.env.NOVA_DESIGN_DESKTOP_SMOKE);
-
-// ---------------------------------------------------------------------------
-// 시작 맨 앞의 개명 정리(RENAME-NOVA-PLAN §7.1 A6) — 앞 단계가 프로세스를
-// 끝내면 뒤는 돌지 않는다. 테스트 실행(단위 임포트 · 스모크)은 이 계단을
-// 밟지 않는다 — 개발 기계와 스모크 폴더에는 옛 이름이 없다.
-// ---------------------------------------------------------------------------
-if (!underTest) {
-  // 1. mac 번들 정리(D-6) — 0.3.x 교체가 새 앱을 `/Applications/Colo
-  //    Design.app` 자리에 놓았다면 이름을 바꾸고 다시 실행한다. 시도 표식을
-  //    먼저 적는다 — 실패가 재실행 고리가 되지 않게. 안 되면 옛 자리에서
-  //    그대로 돈다(다음 버전의 첫 실행이 다시 시도한다).
-  const rename = bundleRenamePlan({
-    packaged: app.isPackaged,
-    platform: process.platform,
-    execPath: process.execPath,
-    version: app.getVersion(),
-    dataDir: NOVA_DESIGN_DATA_DIR,
-    legacyDataDir: join(dirname(NOVA_DESIGN_DATA_DIR), ".colo-design"), // read-legacy
-    exists: existsSync,
-  });
-  if (rename.action === "relaunch-rename") {
-    try {
-      mkdirSync(dirname(rename.marker), { recursive: true });
-      writeFileSync(rename.marker, new Date().toISOString());
-      renameSync(rename.from, rename.to);
-      app.relaunch({ execPath: join(rename.to, "Contents", "MacOS", "Nova Design") });
-      app.exit(0);
-    } catch {
-      // 이름 바꾸기 실패 — 옛 자리에서 계속 돈다.
-    }
-  }
-  // 2. userData 이주(D-3) — 단일 인스턴스 잠금보다 **먼저** 폴더째 rename
-  //    한다(잠금이 userData 안에 산다). localStorage · desktop-settings ·
-  //    DPAPI 키(Local State)·Partitions 이 폴더를 따라 온다. 새 폴더가 이미
-  //    있으면 건드리지 않는다 — 멱원이다.
-  try {
-    migrateUserDataFolder(app.getPath("appData"));
-  } catch {
-    // 이주 실패는 앱을 죽이지 않는다 — 설정이 초기화되어 뜰 뿐이다.
-  }
-}
-
 if (underTest || app.requestSingleInstanceLock()) {
   app.on("second-instance", () => host.focusMain());
   // The preview-driver unit imports this module inside its own Electron to
@@ -233,9 +182,6 @@ function removeBenchEndpoint(): void {
 }
 
 async function bootApp(): Promise<void> {
-  // 0.4.0 저장 위치 이주(§3.3) — 데몬이 in-process 로 CONFIG_DIR · 클론 읽기를
-  // 시작하기 전에. 실패해도 앱은 뜬다(migrate-home 이 예외를 삼킨다).
-  migrateLegacyDataHome();
   // Windows 토스트 알림은 시작 메뉴 바로 가기의 AUMID 로 귀속된다. NSIS 템플릿은
   // 바로 가기에 appId 를 새기므로 같은 문자열을 여기서 직접 건다 — Squirrel 이
   // 하던 자동 맞춤이 NSIS 에는 없고, 어긋난 채 띄운 알림은 Windows 가 조용히

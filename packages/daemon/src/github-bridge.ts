@@ -124,12 +124,6 @@ export class GitHubBridge {
   /** 기동 시 디스크에서 읽은 토큰을 무장한다 — 저장도 재무장도 없다(그 일은 start 가 한다). */
   async load(): Promise<void> {
     this.pat = await loadRepoPat(this.deps.credentials);
-    // RENAME-NOVA-PLAN §5: 암호문은 있는데 풀리지 않으면(개명으로 저장 키가
-    // 바뀐 기계) 없음이 아니라 만료로 잇는다 — `다시 연결이 필요해요` 와 초대
-    // 파일 열기가 스스로 선다. 없는 토큰은 온보딩의 경고일 뿐이다.
-    if (this.pat === null && this.deps.credentials.undecryptable?.(REPO_PAT_ITEM) === true) {
-      this.noteAuth(true);
-    }
   }
 
   /**

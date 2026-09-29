@@ -5,7 +5,7 @@
  *   node scripts/make-invite.mjs --repo https://github.com/org/a.git \
  *        --repo https://github.com/org/b.git --token github_pat_… \
  *        [--name "회원 관리"] [--base main] [--author "김기획"] \
- *        [--reviewer dev1 --reviewer dev2] [--out 파일.colo-invite]
+ *        [--reviewer dev1 --reviewer dev2] [--out 파일.nova-invite]
  *
  * 초대 파일은 비밀(연결 코드)을 담는다 — 그래서 링크(nova-design://…?token=…)가
  * 아니라 파일이다: 경로만 argv 와 OS 로그에 남고 비밀은 파일 안에 있다. 파일은
@@ -69,7 +69,7 @@ if (repoUrls.length === 0 || !token) {
       "  --base     넘기기가 겨눌 기본 가지 — 없으면 토큰으로 GitHub 의 기본 가지를 묻는다(실패 시 main)",
       '  --author   넘긴 요청의 `> 작성:` 줄에 적힐 이름 (예: "김기획") — 사용자가 적을 이름을 미리 정한다',
       "  --reviewer 넘긴 요청의 리뷰를 부탁할 개발자의 GitHub 로그인 (반복 가능, 모든 프로젝트 공통)",
-      "  --out      출력 파일 경로 (기본: ./<프로젝트 이름>.colo-invite — 레포가 여럿이면 ./invite.colo-invite)",
+      "  --out      출력 파일 경로 (기본: ./<프로젝트 이름>.nova-invite — 레포가 여럿이면 ./invite.nova-invite)",
       "",
       "  초대 v4(PLAN 단계 5) — 개발자 알림과 프로젝트의 처음 값·수명:",
       "  --slack-webhook <url>   개발자 알림이 갈 Slack 웹훅 주소(https 만)",
@@ -225,7 +225,7 @@ const notify = slackWebhook
 // inviteFileName 은 작업 이름을 먼저 쓰는 같은 규칙의 다른 기본값). 레포가
 // 여럿이면 한 장이 여러 프로젝트를 싣는다는 뜻의 이름으로 둔다.
 const target = resolve(
-  out ?? `./${repoUrls.length === 1 ? inviteSlug(projects[0].name) : "invite"}.colo-invite`,
+  out ?? `./${repoUrls.length === 1 ? inviteSlug(projects[0].name) : "invite"}.nova-invite`,
 );
 
 const invite = buildInvite({ token, author, projects, ...(notify ? { notify } : {}) });

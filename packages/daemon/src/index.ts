@@ -6,7 +6,6 @@ import { createCredentialStore, loadRepoPat, migratePlaintextSecrets } from "./c
 import { buildStatus, CONFIG_DIR, childPath, resolveClaudeExecutable } from "./environment.js";
 import { createGitHubTransport, GitHubClient } from "./github.js";
 import { createFileLogger } from "./log.js";
-import { migrateLegacyDataHome, warnLegacyEnv } from "./migrate-home.js";
 import { runOnboardingChecks } from "./onboarding.js";
 import { ProjectRegistry } from "./projects.js";
 import { RepoWorkspace } from "./repo.js";
@@ -105,6 +104,18 @@ async function doctor(): Promise<number> {
 }
 
 /**
+ * 개명(0.4.0) 뒤 개발자 셸에 남은 옛 환경 변수(`COLO_DESIGN_*`)가 조용히
+ * 무시되지 않게 한다 — 값은 읽지 않고, 새 이름을 알리는 경고 한 줄만 남긴다.
+ * 앱 사용자의 기계에서는 앱이 스스로 세우는 값이므로 이 경고는 뜨지 않는다.
+ */
+function warnLegacyEnv(env: NodeJS.ProcessEnv, warn: (line: string) => void): void {
+  // read-legacy — 옛 접두로 남은 변수를 알아본다.
+  const stale = Object.keys(env).filter((key) => key.startsWith("COLO_DESIGN_"));
+  if (stale.length === 0) return;
+  warn(`무시된 옛 환경 변수가 있습니다 — 새 이름은 NOVA_DESIGN_* 입니다: ${stale.join(", ")}`);
+}
+
+/**
  * The probe `doctor` and launchd use. A live daemon answers here — a stored
  * `daemon.json` that names a healthy endpoint is another daemon's machine,
  * not a stale file.
@@ -126,11 +137,6 @@ async function main(): Promise<void> {
   // vite — is a script whose shebang resolves node through PATH. Widen it once
   // here so children inherit it instead of each spawn site remembering.
   process.env.PATH = childPath();
-
-  // 0.4.0 저장 위치 이주(RENAME-NOVA-PLAN §3.3) — CONFIG_DIR 를 읽는 그
-  // 무엇(doctor 의 레지스트리 · loadConfig)보다 먼저. 실패해도 여기서 죽지
-  // 않는다 — 남은 이주는 다음 실행이 다시 시도한다.
-  const migration = migrateLegacyDataHome();
 
   const command = process.argv[2];
 
@@ -155,7 +161,6 @@ async function main(): Promise<void> {
   }
 
   const logger = createFileLogger();
-  for (const line of migration.notes) logger.warn(line);
   warnLegacyEnv(process.env, (line) => logger.warn(line));
   process.on("uncaughtException", (error) => logger.error("미처리 예외", { err: error }));
   process.on("unhandledRejection", (reason) =>

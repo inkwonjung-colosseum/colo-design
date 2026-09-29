@@ -7,7 +7,6 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { readFile, rm, statfs, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -40,18 +39,6 @@ let swapFlight: Promise<Record<string, unknown>> | null = null;
 
 function updateResultPath(): string {
   return join(NOVA_DESIGN_DATA_DIR, "update-result.json");
-}
-
-/**
- * 교체 결과 파일의 후보 — 새 폴더 먼저. read-legacy: 0.3.x 의 교체 스크립트는
- * 옛 데이터 폴더(~/.colo-design)에 결과를 적는다. 이주가 이미 그 파일을 옮겼다
- * 면 첫 후보에서 읽히고, 아니면 둘째 후보가 닿는다.
- */
-function updateResultPaths(): string[] {
-  return [
-    updateResultPath(),
-    join(homedir(), ".colo-design", "update-result.json"), // read-legacy
-  ];
 }
 
 /** The feed carries both platforms' assets — this side picks its own. */
@@ -200,31 +187,21 @@ export class SelfUpdates {
    * 된 흔적이니 조용히 지운다. 실패의 클릭은 로그 파일을 연다.
    */
   async reportSwapResult(): Promise<void> {
-    let raw: string | null = null;
-    let path = "";
-    for (const candidate of updateResultPaths()) {
-      try {
-        raw = await readFile(candidate, "utf8");
-        path = candidate;
-        break;
-      } catch {
-        // 이 후보에는 결과 파일이 없다 — 다음 후보.
-      }
+    const path = updateResultPath();
+    let raw: string;
+    try {
+      raw = await readFile(path, "utf8");
+    } catch {
+      return; // 결과 파일이 없으면 보고할 교체가 없었다
     }
-    if (raw === null) return; // 결과 파일이 없으면 보고할 교체가 없었다
     await rm(path, { force: true });
     const result = parseSwapResult(raw);
     if (!result) return;
     if (result.outcome === "done") {
       if (result.version !== app.getVersion()) return;
-      // 0.4.x 동안: 개명(Colo Design → Nova Design)으로 건너온 첫 버전임을
-      // 한 문장으로 말한다(RENAME-NOVA-PLAN A2).
-      const renameNote = result.version.startsWith("0.4.")
-        ? " 이름이 Nova Design 으로 바뀌었어요 — 대화와 작업은 그대로예요."
-        : "";
       void this.deps.notify(
         "업데이트 완료",
-        `Nova Design ${result.version}으로 갈아입었습니다.${renameNote}`,
+        `Nova Design ${result.version}으로 갈아입었습니다.`,
         this.deps.focusMain,
       );
       return;

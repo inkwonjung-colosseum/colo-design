@@ -33,8 +33,8 @@ const FIRST_URL = opt("first-url");
 const REAL = has("real");
 const STATE = opt("state");
 const FIRST_STATE = opt("first-state");
-const INVITE = opt("invite", "/tmp/nova-smoke/invite.colo-invite");
-const INVITE2 = opt("invite2", "/tmp/nova-smoke/invite2.colo-invite");
+const INVITE = opt("invite", "/tmp/nova-smoke/invite.nova-invite");
+const INVITE2 = opt("invite2", "/tmp/nova-smoke/invite2.nova-invite");
 const LATEST_PORT = Number(opt("latest-port", "0"));
 const SHOTS = opt("shots", process.env.SHOT_DIR || "/tmp/nova-smoke/shots");
 const TASKS = opt("tasks", "1,2,3,4,5,6,7,8,9,10")
@@ -378,7 +378,7 @@ TASK[1] = async () => {
     await step(1, "처음 한 번", () => skip("--first-url 없음 (SMOKE_EMPTY=1 데몬)"));
     return;
   }
-  const copy = path.join(path.dirname(INVITE), "invite-copy.colo-invite");
+  const copy = path.join(path.dirname(INVITE), "invite-copy.nova-invite");
   fs.copyFileSync(INVITE, copy);
   appendUserPairs(FIRST_STATE, 4);
   const page = await openPage(FIRST_URL, { bridge: { native: false, invitePath: copy } });

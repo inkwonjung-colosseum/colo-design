@@ -39,15 +39,6 @@ function applyTheme(name) {
 let savedTheme = null;
 try {
   savedTheme = localStorage.getItem(THEME_KEY);
-  if (savedTheme === null) {
-    // 개명 이행 — 옛 키에 값이 있고 새 키가 비었으면 한 번 복사해 온다. 방문자의
-    // 테마가 초기화되지 않게 하는 것이 전부다(옛 키는 지우지 않는다).
-    const legacyTheme = localStorage.getItem("colo-site-theme"); // read-legacy
-    if (legacyTheme !== null) {
-      savedTheme = legacyTheme;
-      localStorage.setItem(THEME_KEY, legacyTheme);
-    }
-  }
 } catch {
   // file:// 나 저장 금지 환경 — 기본 팔레트로 만족한다.
 }

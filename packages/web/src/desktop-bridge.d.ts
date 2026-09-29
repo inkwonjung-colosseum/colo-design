@@ -62,7 +62,7 @@ declare global {
        * 가져온 초대 파일을 앱이 대신 지운다(PLAN-UI U11) — `초대 파일을 가져왔어요 ·
        * 파일 지우기`. `pathOf` 는 끌어다 놓거나 고른 File 의 디스크 위치(없으면
        * null — 그때는 지우기를 내놓지 않는다). `discard` 는 OS 휴지통으로 옮기고,
-       * `.colo-invite` 가 아니거나 없는 파일이면 거부된다.
+       * `.nova-invite` 가 아니거나 없는 파일이면 거부된다.
        */
       invite?: {
         pathOf?(file: File): string | null;

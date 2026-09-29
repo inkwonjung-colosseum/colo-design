@@ -19,9 +19,7 @@ import { CONFIG_DIR } from "./environment.js";
 
 const run = promisify(execFile);
 
-// read-legacy — 브라우저 개발 경로만 쓰는 키체인 서비스 이름. 개명 때 이주하지
-// 않는다: 개발자 기계의 옛 항목을 그대로 읽어야 개발 경로 로그인이 이어진다.
-export const CREDENTIAL_SERVICE = "Colo Design"; // read-legacy
+export const CREDENTIAL_SERVICE = "Nova Design";
 /** The credential-store item holding the machine-wide GitHub token. */
 export const REPO_PAT_ITEM = "pat";
 
@@ -43,12 +41,6 @@ export interface CredentialStore {
   save(item: string, secret: string): Promise<void>;
   load(item: string): Promise<string | null>;
   delete(item: string): Promise<void>;
-  /**
-   * 암호문은 있는데 풀 수 없은가(RENAME-NOVA-PLAN §5) — 개명으로 저장 키가
-   * 바뀐 기계에서 "없음"과 구분된다. 선택 사항: 못 박는 저장소(safeStorage)만
-   * 알리고, 나머지는 정의하지 않는다(없음과 같게 센다).
-   */
-  undecryptable?(item: string): boolean;
   readonly kind: "memory" | "keychain" | "dpapi";
 }
 

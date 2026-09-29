@@ -70,8 +70,6 @@ export interface DeveloperNoticeDeps {
 
 /** 이슈 본문의 표식 — 같은 문제의 이슈를 다시 찾는 단서 (PLAN L11). */
 export const ISSUE_MARKER = "<!-- nova-design:problem ";
-// read-legacy — 0.3.x 가 연 이슈의 표식. 찾기는 둘 다, 쓰기는 새 것.
-const LEGACY_ISSUE_MARKER = "<!-- colo-design:problem "; // read-legacy
 /** 이슈에 붙이는 라벨 — 최선의 노력으로, 실패해도 이슈는 연다. */
 export const ISSUE_LABEL = "nova-design";
 /** `자세히` 의 상한 — 30줄 · 4000자. */
@@ -238,10 +236,7 @@ export function isScreenQuietKey(key: string): boolean {
 /** 이슈 목록의 한 줄에서 이 문제의 표식을 찾는다 — 없으면 null. */
 export function findIssueMarker(body: unknown): string | null {
   if (typeof body !== "string") return null;
-  const at =
-    body.indexOf(ISSUE_MARKER) >= 0
-      ? body.indexOf(ISSUE_MARKER)
-      : body.indexOf(LEGACY_ISSUE_MARKER);
+  const at = body.indexOf(ISSUE_MARKER);
   if (at < 0) return null;
   const rest = body.slice(at + ISSUE_MARKER.length);
   const end = rest.indexOf("-->");

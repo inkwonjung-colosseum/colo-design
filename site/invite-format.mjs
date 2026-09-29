@@ -1,5 +1,5 @@
 /**
- * 초대 파일(`*.colo-invite`)의 형식 — 형식의 한 곳이다: 소개 페이지의 초대장
+ * 초대 파일(`*.nova-invite`)의 형식 — 형식의 한 곳이다: 소개 페이지의 초대장
  * 만들기(site/invite.js)와 터미널 생성기(scripts/make-invite.mjs)가 함께 읽는다.
  *
  * 바깥 봉투는 v3 — 안쪽 JSON 을 AES-256-GCM 으로 가린다(sealInvite). 읽는 쪽은
@@ -154,5 +154,5 @@ export function inviteSlug(name) {
  */
 export function inviteFileName({ out, author, name }) {
   const base = out?.trim() || author?.trim() || inviteSlug(name);
-  return base.endsWith(".colo-invite") ? base : `${base}.colo-invite`;
+  return base.endsWith(".nova-invite") ? base : `${base}.nova-invite`;
 }

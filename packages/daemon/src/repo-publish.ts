@@ -52,9 +52,6 @@ const SHOT_MEDIA_TYPES: Record<string, string> = {
 /** 캡처가 올라가는 병합되지 않는 브랜치 (PLAN L6 · O4) — 사이클 브랜치가
  *  아니므로 반영돼도 main 에 캡처가 쌓이지 않고, 지워져도 링크(sha)는 산다. */
 export const ASSETS_BRANCH = "nova-design-assets";
-// read-legacy — 0.3.x 가 캡처를 올린 브랜치. 옛 PR 본문의 그림이 여기 산다.
-// 새 캡처는 새 브랜치에 올리되, 새 브랜치가 아직 없으면 옛 것의 끝에서 잇는다.
-const LEGACY_ASSETS_BRANCH = "colo-design-assets"; // read-legacy
 /** 그 브랜치 안에서 캡처가 사는 폴더 — `<폴더>/<사이클 브랜치>/<이름>`. */
 const ASSETS_SHOTS_DIR = "shots";
 /**
@@ -638,26 +635,11 @@ export class PublishCycle {
     await this.core
       .git(["fetch", "origin", `refs/heads/${ASSETS_BRANCH}:refs/remotes/origin/${ASSETS_BRANCH}`])
       .catch(() => "");
-    let parent = (
+    const parent = (
       await this.core
         .git(["rev-parse", "--verify", `refs/remotes/origin/${ASSETS_BRANCH}`])
         .catch(() => "")
     ).trim();
-    // read-legacy — 새 브랜치가 아직 없는 클론은 옛 자산 브랜치의 끝에서 잇는다.
-    if (parent === "") {
-      await this.core
-        .git([
-          "fetch",
-          "origin",
-          `refs/heads/${LEGACY_ASSETS_BRANCH}:refs/remotes/origin/${LEGACY_ASSETS_BRANCH}`,
-        ])
-        .catch(() => "");
-      parent = (
-        await this.core
-          .git(["rev-parse", "--verify", `refs/remotes/origin/${LEGACY_ASSETS_BRANCH}`])
-          .catch(() => "")
-      ).trim();
-    }
     const scratch = mkdtempSync(join(tmpdir(), "nova-design-assets-"));
     try {
       // 임시 인덱스 — 이 클론의 index 는 한 번도 건드리지 않는다.
@@ -730,51 +712,33 @@ export class PublishCycle {
     // normalization so the lookup matches what was committed
     // (2026-09-21 상태 축 철거 — 주소만이 이름이다).
     const name = shotNamePart(route);
-    // 옛 캡처 — 사이클 브랜치의 shots 폴더 (2026-09-24 이전 제출). read-legacy —
-    // 0.3.x 의 제출은 `.colo-design/shots/` 에, 0.4.0 부터 `.nova-design/shots/`.
-    const shotsDirs = [SHOTS_DIR, ".colo-design/shots"]; // read-legacy
+    // 옛 캡처 — 사이클 브랜치의 `.nova-design/shots/` (2026-09-24 이전 제출).
     for (const ref of [`origin/${branch}`, branch]) {
-      for (const dir of shotsDirs) {
-        const listing = await this.core
-          .git(["-c", "core.quotepath=false", "ls-tree", "--name-only", ref, `${dir}/`])
-          .catch(() => "");
-        const file = listing
-          .split("\n")
-          .map((line) => line.trim())
-          .find((line) => line.startsWith(`${dir}/${name}.`));
-        if (!file) continue;
-        const data = await this.core
-          .git(["show", `${ref}:${file}`], this.core.root, {}, true)
-          .catch(() => "");
-        if (data === "") continue;
-        const ext = file.slice(file.lastIndexOf("."));
-        return { mediaType: SHOT_MEDIA_TYPES[ext] ?? "application/octet-stream", data };
-      }
+      const listing = await this.core
+        .git(["-c", "core.quotepath=false", "ls-tree", "--name-only", ref, `${SHOTS_DIR}/`])
+        .catch(() => "");
+      const file = listing
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line.startsWith(`${SHOTS_DIR}/${name}.`));
+      if (!file) continue;
+      const data = await this.core
+        .git(["show", `${ref}:${file}`], this.core.root, {}, true)
+        .catch(() => "");
+      if (data === "") continue;
+      const ext = file.slice(file.lastIndexOf("."));
+      return { mediaType: SHOT_MEDIA_TYPES[ext] ?? "application/octet-stream", data };
     }
     // 새 캡처 (PLAN L6) — 자산 브랜치의 `shots/<사이클 브랜치>/<이름>`. ref 는
     // 캡처를 올릴 때 생기지만 재시작 뒤엔 없을 수 있다 — 이때만 한 번 받는다.
-    // read-legacy — 옛 브랜치(colo-design-assets)도 같은 모양으로 읽는다.
-    for (const assetsBranch of [ASSETS_BRANCH, LEGACY_ASSETS_BRANCH]) {
-      const found = await this.readShotFromAssets(assetsBranch, branch, name);
-      if (found) return found;
-    }
-    return null;
-  }
-
-  /** 자산 브랜치에서 이 사이클 브랜치의 캡처 하나를 꺼낸다 — 없으면 null. */
-  private async readShotFromAssets(
-    assetsBranch: string,
-    branch: string,
-    name: string,
-  ): Promise<{ mediaType: string; data: string } | null> {
-    const assetsRef = `refs/remotes/origin/${assetsBranch}`;
+    const assetsRef = `refs/remotes/origin/${ASSETS_BRANCH}`;
     const haveAssets = (
       await this.core.git(["rev-parse", "--verify", assetsRef]).catch(() => "")
     ).trim();
     if (haveAssets === "") {
       await this.core.lane
         .run("submit", () =>
-          this.core.git(["fetch", "origin", `refs/heads/${assetsBranch}:${assetsRef}`]),
+          this.core.git(["fetch", "origin", `refs/heads/${ASSETS_BRANCH}:${assetsRef}`]),
         )
         .catch(() => "");
     }

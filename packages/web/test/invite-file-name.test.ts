@@ -11,9 +11,9 @@ function named(name: string): File {
 
 test("isInviteFile: 두 확장자를 다 받는다 (개명 1단계)", () => {
   assert.equal(isInviteFile(named("회원 관리.nova-invite")), true);
-  assert.equal(isInviteFile(named("회원 관리.colo-invite")), true); // read-legacy — 옛 확장자
+  assert.equal(isInviteFile(named("회원 관리.nova-invite")), true);
   assert.equal(isInviteFile(named("사진.png")), false);
-  assert.equal(isInviteFile(named("a.colo-invite.txt")), false);
+  assert.equal(isInviteFile(named("a.nova-invite.txt")), false);
   // 대소문자는 구분한다 — 데스크톱 지우기(invite-discard)와 같은 잣대.
   assert.equal(isInviteFile(named("a.NOVA-INVITE")), false);
 });
@@ -26,7 +26,7 @@ test("readInviteFile: 초대 파일이 아니면 확장자를 말하지 않는 �
 });
 
 test("readInviteFile: 두 확장자는 이름 문을 지나 내용 문에서 답한다 (개명 1단계)", async () => {
-  const names = ["회원 관리.nova-invite", "회원 관리.colo-invite"]; // read-legacy — 옛 확장자
+  const names = ["회원 관리.nova-invite"];
   for (const name of names) {
     const read = await readInviteFile(named(name));
     assert.equal(read.ok, false, name);

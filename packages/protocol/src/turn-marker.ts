@@ -169,10 +169,8 @@ interface MarkedTurn {
  * line or it is not a marker. A turn whose BODY happens to contain the string
  * must not be reinterpreted from the middle.
  *
- * read-legacy — 0.4.0 개명 전의 대화 기록은 `colo-design:` 접두로 저장되어
- * 있다. 쓰기는 nova-design(markTurn), 읽기는 둘 다.
  */
-const MARKER = /^<!--\s*(?:nova|colo)-design:([a-z]+)\s+(\{[^\n]*\})\s*-->\n?/; // read-legacy
+const MARKER = /^<!--\s*nova-design:([a-z]+)\s+(\{[^\n]*\})\s*-->\n?/;
 
 function isKind(value: string): value is TurnMarkerKind {
   return (KINDS as readonly string[]).includes(value);

@@ -5,15 +5,9 @@
  * 앱에 하나다.
  */
 
-/**
- * 초대 파일인가 — 이름이 `.nova-invite`(새것)나 `.colo-invite`(옛것)로 끝나는가만 본다
- * (내용은 읽는 쪽이 판단). 개명 1단계(§4.3) — 생성기가 새 확장자로 옮기기 전까지
- * 화면은 어느 쪽도 말하지 않는다.
- */
+/** 초대 파일인가 — 이름이 `.nova-invite` 로 끝나는가만 본다(내용은 읽는 쪽이 판단). */
 export function isInviteFile(file: File): boolean {
-  return (
-    file.name.endsWith(".nova-invite") || file.name.endsWith(".colo-invite") // read-legacy — 옛 확장자도 연다
-  );
+  return file.name.endsWith(".nova-invite");
 }
 
 /** 통로를 오가는 소식 — 파일이 도착했거나, 고르기 창을 열어 달라는 요청. */

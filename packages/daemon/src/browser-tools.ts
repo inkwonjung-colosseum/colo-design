@@ -486,8 +486,6 @@ export const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set(
  * `<server>/<name>`(codex). 서버 이름은 상수만 본다 — RENAME 계획이 값을
  * 바꿔도 이 판정은 흔들리지 않는다.
  *
- * read-legacy — 이어 든 옛 대화는 도구를 `colo-browser` 서버 이름으로 부른다.
- * 묶음이 갈라지지 않게 옛 접두도 함께 본다.
  */
 export function isBrowserToolName(name: string): boolean {
   if (BROWSER_TOOL_NAMES.has(name)) return true;
@@ -498,18 +496,6 @@ export function isBrowserToolName(name: string): boolean {
   const codexPrefix = `${BROWSER_MCP_SERVER_NAME}/`;
   if (name.startsWith(codexPrefix)) {
     return BROWSER_TOOL_NAMES.has(name.slice(codexPrefix.length));
-  }
-  // read-legacy
-  if (name.startsWith("mcp__colo-browser__")) {
-    // read-legacy
-    // read-legacy
-    return BROWSER_TOOL_NAMES.has(name.slice("mcp__colo-browser__".length));
-  }
-  // read-legacy
-  if (name.startsWith("colo-browser/")) {
-    // read-legacy
-    // read-legacy
-    return BROWSER_TOOL_NAMES.has(name.slice("colo-browser/".length));
   }
   return false;
 }

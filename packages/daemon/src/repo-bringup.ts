@@ -451,13 +451,7 @@ export class BringUp {
    */
   private async reclaimStalePreview(): Promise<void> {
     if (currentPlatform() === "win32") return;
-    // read-legacy — 0.3.x 가 남긴 pid 기록은 옛 이름의 파일에 있다.
-    const pidFile = [
-      join(this.core.root, ".git", "nova-design-preview.pid"),
-      // read-legacy
-      join(this.core.root, ".git", "colo-design-preview.pid"),
-    ].find((path) => existsSync(path));
-    if (!pidFile) return;
+    const pidFile = join(this.core.root, ".git", "nova-design-preview.pid");
     let recorded = 0;
     try {
       recorded = Number(readFileSync(pidFile, "utf8").trim());
@@ -698,16 +692,8 @@ function installedTreeExists(root: string): boolean {
 
 /** `.git/` 안의 설치 표식 — 첫 줄이 해시, 둘째 줄이 트리 없음 표시(선택). */
 function readInstallMarker(root: string): { hash: string; noTree: boolean } | null {
-  // read-legacy — 0.3.x 의 클론은 옛 이름의 표식을 갖고 있다. 없으면 한 번 더 본다.
-  const marker = [
-    join(root, ".git", INSTALL_MARKER),
-    // read-legacy
-    join(root, ".git", "colo-design-install-hash"),
-  ] // read-legacy
-    .find((path) => existsSync(path));
-  if (!marker) return null;
   try {
-    const [hash = "", flag = ""] = readFileSync(marker, "utf8")
+    const [hash = "", flag = ""] = readFileSync(join(root, ".git", INSTALL_MARKER), "utf8")
       .split(/\r?\n/)
       .map((line) => line.trim());
     return { hash, noTree: flag === NO_TREE_FLAG };

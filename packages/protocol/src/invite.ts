@@ -1,5 +1,5 @@
 /**
- * 초대 파일(`*.colo-invite`)의 읽는 쪽 — 바깥 봉투 v3(앱 내장 키의 AES-256-GCM)을
+ * 초대 파일(`*.nova-invite`)의 읽는 쪽 — 바깥 봉투 v3(앱 내장 키의 AES-256-GCM)을
  * 열어 안쪽 JSON 을 돌려주고(normalizeInvite), 정규화된 초대장 모양으로 묶는다.
  * 쓰는 쪽은 site/invite-format.mjs(sealInvite — 형식의 한 곳: 페이지와 터미널
  * 생성기가 함께 읽는다), 화면 잇기는 packages/web/src/components/onboarding/StartFlow.tsx
