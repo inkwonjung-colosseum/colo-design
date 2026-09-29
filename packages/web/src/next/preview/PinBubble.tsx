@@ -2,25 +2,24 @@ import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from
 import type { PinAttachment } from "../../hooks/usePins";
 import { composing } from "../../lib/ime";
 import { L } from "../labels";
+import { keyHint } from "../lib/key-hint";
+import { pinTitle } from "../lib/pin-name";
 import { bubblePlacement, bubbleRect } from "../lib/preview-geometry";
 import { TrashIcon } from "./icons";
 
 /** `nx:pins:send` — 말풍선의 ⌘↵. 입력창(단계 2)이 지금의 글과 핀을 보낸다. */
 export const PINS_SEND_EVENT = "nx:pins:send";
 
-/** 핀 하나의 이름 — 컴포넌트 · testid · 접근성 이름 · 글자, 영역이면 `영역`. 끝까지 못 짚으면 `찍은 곳`. */
+/** 핀 하나의 이름 — 사람이 읽는 말만(접근성 이름 · 글자 · 종류), 영역이면 `영역`, 끝까지 못 짚으면 `찍은 곳`. */
 export function pinName(pin: PinAttachment): string {
-  const element = pin.element;
-  if (element.kind === "region") return L.pin.area;
-  const owner = element.owners?.[0];
-  const text = element.text.trim();
-  return (
-    owner ||
-    element.attrs?.testId ||
-    element.a11y?.name ||
-    (text ? (text.length > 18 ? `${text.slice(0, 18)}…` : text) : "") ||
-    L.pin.point
-  );
+  return pinTitle(pin.element, {
+    area: L.pin.area,
+    point: L.pin.point,
+    kindButton: L.pin.kindButton,
+    kindLink: L.pin.kindLink,
+    kindImage: L.pin.kindImage,
+    kindInput: L.pin.kindInput,
+  });
 }
 
 /**
@@ -62,9 +61,12 @@ export function PinBubble({
   const input = useRef<HTMLInputElement>(null);
   const opened = useRef(pin.note);
   const [note, setNote] = useState(pin.note);
-  const [place, setPlace] = useState<{ left: number; top: number; up: boolean; arrowLeft: number } | null>(
-    null,
-  );
+  const [place, setPlace] = useState<{
+    left: number;
+    top: number;
+    up: boolean;
+    arrowLeft: number;
+  } | null>(null);
 
   // 자리는 연 순간 한 번 — 말풍선의 실제 높이를 재고 나서.
   // biome-ignore lint/correctness/useExhaustiveDependencies: 연 순간의 좌표만 쓴다.
@@ -82,9 +84,11 @@ export function PinBubble({
     );
   }, []);
 
+  // 자리가 정해져 말풍선이 보이는 그림에서 초점을 준다 — 첫 그림은 visibility:hidden 이라
+  // 그때의 focus() 는 조용히 실패하고, 바로 친 글과 Enter 가 엉뚱한 곳(찍기 단추)으로 간다.
   useEffect(() => {
-    input.current?.focus();
-  }, []);
+    if (place) input.current?.focus({ preventScroll: true });
+  }, [place]);
 
   // 바깥을 누르거나 게스트가 포커스를 가져가면 닫는다(글은 이미 칩에 있다).
   const close = useRef(onClose);
@@ -174,13 +178,14 @@ export function PinBubble({
         }}
       />
       <div className="nx-pinbub-f">
-        <span>{L.pin.bubbleKeepHint}</span>
+        <span>{keyHint(L.pin.bubbleKeepHint)}</span>
         <span className="nx-grow" />
-        <button type="button" className="nx-btn nx-btn--sm" onClick={keep}>
-          {L.pin.keep}
-        </button>
-        <button type="button" className="nx-btn nx-btn--sm nx-btn--pri" onClick={sendNow}>
+        {/* 여러 곳을 찍고 문장 하나로 보내는 것이 기본 흐름이다 — Enter 가 하는 `담기` 가 주 단추다. */}
+        <button type="button" className="nx-btn nx-btn--sm" onClick={sendNow}>
           {L.pin.sendNow}
+        </button>
+        <button type="button" className="nx-btn nx-btn--sm nx-btn--pri" onClick={keep}>
+          {L.pin.keep}
         </button>
       </div>
     </div>

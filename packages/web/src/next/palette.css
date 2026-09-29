@@ -1,0 +1,307 @@
+/*
+ * 찾기(⌘K) — 대화 · 프로젝트로 건너가는 덮개 한 장(components/shell/Palette.tsx).
+ *
+ * 스스로 `.nx` 뿌리다: 셸의 토큰과 단추 초기화는 받고, 앱 뿌리의 격자 · 100vh ·
+ * 잘림에는 갇히지 않게 앱 뿌리 옆에 선다. 그러니 `.nx.nx-pal` 이 그 뿌리의 격자와
+ * 불투명 바탕을 풀고 화면 전체를 덮는 스크림이 된다. 단추(`.nx-pal-chip`)와 입력칸은
+ * `.nx button` · 전역 `input` 초기화(0-1-1)에 한 클래스 규칙이 조용히 지므로 `.nx .…`
+ * 로 쓴다 — 줄(`li`)은 초기화가 닿지 않아 한 클래스면 된다.
+ */
+
+.nx.nx-pal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  height: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: visible;
+  padding: 10vh 20px 24px;
+  background: var(--scrim);
+  animation: nx-fade 0.12s;
+}
+
+.nx-pal-panel {
+  width: min(560px, 100%);
+  /* 스크림의 안쪽 칸(여백을 뺀 키)을 넘지 않는다 — 낮은 창에서는 목록이 줄어든다. */
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--pop);
+  animation: nx-pop 0.15s;
+}
+
+.nx-pal-panel:focus {
+  outline: none;
+}
+
+/* ── 찾는 줄 ── */
+.nx-pal-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 52px;
+  padding: 0 16px;
+  color: var(--ink3);
+  border-bottom: 1px solid var(--line);
+}
+
+.nx .nx-pal-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+/* 입력칸은 창이 열려 있는 내내 초점을 쥔다 — 전역 :focus-visible 고리와 :focus 의
+   테두리 · 바탕은 패널의 잘림 가장자리에 걸려 어긋나 보일 뿐이다. */
+.nx .nx-pal-input:focus,
+.nx .nx-pal-input:focus-visible {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.nx .nx-pal-input::placeholder {
+  color: var(--ink3);
+}
+
+.nx-pal-error {
+  flex: none;
+  margin: 8px 8px 0;
+  padding: 8px 12px;
+  border-radius: var(--r);
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+/* ── 목록 ── 줄 위에 명령 칩이 붙는다: 목록만 스크롤되고 칩은 늘 손 닿는 곳에 선다. */
+.nx-pal-box {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.nx-pal-list {
+  min-height: 0;
+  max-height: 380px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 화살표로 걷는 줄이 가장자리에 붙지 않고 아래의 옅어지는 띠 위에 선다. */
+  scroll-padding-block: 8px 30px;
+}
+
+/* 아래에 더 있을 때만 바닥이 옅어진다 — 접힌 자리에 걸린 머리글이 실수로 보이지 않게. */
+.nx-pal-list[data-more="true"] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
+
+.nx-pal-group {
+  padding: 10px 14px 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink3);
+}
+
+.nx-pal-group:first-child {
+  padding-top: 4px;
+}
+
+.nx-pal-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px 8px 14px;
+  border-radius: var(--r);
+  font-size: 13.5px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+/* 걷는 자리 — 바탕 한 겹이다. 옛 팔레트의 왼쪽 안쪽 그림자 줄은 모서리 곡률을 따라
+   휘어 ‘(’ 모양으로 보였다. */
+.nx-pal-row--on {
+  background: var(--nx-selected);
+}
+
+/* 지금 열린 대화 — 사이드바의 그 줄과 같은, 가장자리에서 띄운 짧은 강조색 막대.
+   걷는 자리(바탕)와 겹치지 않는 별개의 표시다. */
+.nx-pal-row--now::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+/* 제목 뒤에 표식이 선다(사이드바의 줄처럼) — 표식이 있든 없든 제목은 같은 가장자리에서
+   시작한다. 길면 제목만 줄고 표식은 남는다. */
+.nx-pal-t {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nx-pal-tt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-pal-tt mark {
+  /* 걷는 줄의 바탕(--nx-selected) 위에서도 보이도록 옛 16% 보다 한 단계 짙게. */
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.nx-pal-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink3);
+}
+
+/* 걷는 줄의 바탕은 한 단계 짙어져 옅은 글자가 4.5:1 밑으로 내려간다(github · codex) —
+   그 줄의 한마디만 한 단계 진하게. */
+.nx-pal-row--on .nx-pal-hint {
+  color: var(--ink2);
+}
+
+.nx-pal-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 12px;
+  font-size: 13px;
+  color: var(--ink3);
+}
+
+/* ── 명령 칩 ── 화살표가 마지막 줄에서 이어 걷는다. 걷는 자리는 줄과 같은 바탕이다. */
+.nx-pal-cmds {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+}
+
+/* 위에 목록이 없으면 찾는 줄의 아랫선이 이미 가른다 — 선이 겹쳐 굵어지지 않게. */
+.nx-pal-cmds:first-child {
+  border-top: 0;
+}
+
+.nx .nx-pal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--card);
+  color: var(--ink2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.nx .nx-pal-chip .nx-i {
+  width: 14px;
+  height: 14px;
+}
+
+.nx .nx-pal-chip kbd {
+  margin-left: 2px;
+}
+
+.nx .nx-pal-chip--on {
+  border-color: var(--line2);
+  background: var(--nx-selected);
+  color: var(--ink);
+}
+
+/* ── 바닥의 키 안내 ── 키캡은 그림 글리프로 그려 폰트마다 다른 화살표 크기에 흔들리지
+   않는다. 위 칩 줄과 줄을 겹치지 않으려 선 대신 옅은 바탕으로 가른다. */
+.nx-pal-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: none;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  /* 옅은 바탕 위라 --ink3 는 codex 에서 4.5:1 에 못 미친다. */
+  color: var(--ink2);
+  font-size: 11.5px;
+}
+
+.nx-pal-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nx .nx-pal-foot kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink2);
+  font: 500 10.5px var(--font);
+}
+
+@media (max-width: 520px) {
+  .nx.nx-pal {
+    padding-inline: 12px;
+  }
+
+  /* 좁은 창은 손으로 쓴다 — 키 안내가 자리만 차지한다. */
+  .nx-pal-foot {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `.nx *` 의 규칙은 뿌리 자신에게 닿지 않는다 — 스크림의 페이드는 여기서 끈다. */
+  .nx.nx-pal {
+    animation: none;
+  }
+}

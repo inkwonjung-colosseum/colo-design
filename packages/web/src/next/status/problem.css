@@ -67,7 +67,9 @@
   white-space: nowrap;
 }
 
-.nx-problem span {
+/* 「다 고쳤어요」 앞의 초록 체크(.nx-problem-fixed)도 span 이다 — 본문 규칙이 그것까지 잡으면
+   (0-1-1 이 0-1-0 을 이긴다) 체크가 회색으로 한 줄 폭만큼 늘어난다. 본문 span 만 겨눈다. */
+.nx-problem span:not(.nx-problem-fixed) {
   color: var(--ink2);
   min-width: 0;
   flex: 1;
@@ -108,7 +110,7 @@
   color: var(--red);
 }
 
-.nx--narrow .nx-problem span {
+.nx--narrow .nx-problem span:not(.nx-problem-fixed) {
   display: none;
 }
 

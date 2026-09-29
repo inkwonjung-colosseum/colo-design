@@ -3,41 +3,55 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nova Design — 말과 문서가 화면이 되는 도구</title>
+    <title>Nova Design — 말과 문서가 화면이 됩니다</title>
     <meta
       name="description"
-      content="개발 지식이 전혀 없는 사람이, 개발자의 레포에 연결해 채팅으로 화면을 만들고 고치는 도구. git, 터미널 같은 건 몰라도 쓴다."
+      content="기획자 · 디자이너 · 사업/운영 담당자를 위한 AI 화면 제작 도구. 말로 부탁하면 우리 서비스의 진짜 화면이 그 자리에서 바뀌고, 제출 한 번으로 개발자에게 넘어가요. 코딩 지식도 터미널도 필요 없어요."
     />
-    <meta property="og:title" content="Nova Design — 말과 문서가 화면이 되는 도구" />
+    <link rel="canonical" href="https://inkwonjung-colosseum.github.io/nova-design/" />
+    <meta property="og:title" content="Nova Design — 말과 문서가 화면이 됩니다" />
     <meta
       property="og:description"
-      content="git이나 터미널을 몰라도 쓰는 화면 만들기 도구. 말을 보내면 미리보기에서 바로 확인하고, 제출 한 번으로 개발자에게 넘깁니다."
+      content="말하고 · 찍고 · 제출. 우리 서비스의 진짜 화면이 그 자리에서 바뀝니다 — 코딩 지식도 터미널도 필요 없어요."
     />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="ko_KR" />
-    <meta name="theme-color" content="#0d0d0f" />
-    <link
-      rel="icon"
-      href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%230d0d0f"/><circle cx="16" cy="16" r="8" fill="%239db1c7"/></svg>'
+    <meta property="og:site_name" content="Nova Design" />
+    <meta property="og:url" content="https://inkwonjung-colosseum.github.io/nova-design/" />
+    <meta property="og:image" content="https://inkwonjung-colosseum.github.io/nova-design/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Nova Design 작업 화면 — 왼쪽은 AI 와의 대화, 오른쪽은 서비스의 실제 미리보기"
     />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#0d0d0f" />
+    <link rel="icon" href="colonova-icon.svg" type="image/svg+xml" />
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
     />
-    <link rel="stylesheet" href="style.css?v=10" />
-    <script type="module" src="invite.js?v=8"></script>
-    <script type="module" src="demo.js?v=10"></script>
-    <script type="module" src="hero3d.js"></script>
+    <!-- 동기: 저장된 테마를 첫 페인트 전에 입힌다 — 밝은 테마가 어두운 화면으로 번쩍이지 않게. -->
+    <script src="theme.js?v=1"></script>
+    <link rel="stylesheet" href="style.css?v=11" />
+    <script type="module" src="invite.js?v=9"></script>
+    <script type="module" src="demo.js?v=11"></script>
+    <script type="module" src="bento.js?v=1"></script>
+    <script type="module" src="page.js?v=1"></script>
+    <script type="module" src="hero3d.js?v=2"></script>
   </head>
   <body>
+    <a class="skip" href="#how">본문으로 건너뛰기</a>
     <header class="top">
-      <a class="top__mark" href="#">
-        <img class="top__icon" src="colonova-icon.svg" alt="" width="20" height="20" />Nova Design
+      <a class="top__mark" href="#top">
+        <img class="top__icon" src="colonova-icon.svg" alt="" width="20" height="20" /><span class="top__name">Nova Design</span>
       </a>
-      <nav class="top__nav">
+      <nav class="top__nav" aria-label="페이지 구역">
         <a href="#how">흐름</a>
         <a href="#features">기능</a>
         <a href="#install">설치</a>
+        <a href="#faq">질문</a>
         <a href="#invite">초대장</a>
         <a class="top__gh" href="https://github.com/inkwonjung-colosseum/nova-design">GitHub</a>
       </nav>
@@ -45,25 +59,30 @@
 
     <main>
       <!-- ============ 히어로 ============ -->
-      <section class="hero">
+      <section class="hero" id="top">
         <canvas class="hero__field" aria-hidden="true"></canvas>
         <div class="hero__grid" aria-hidden="true"></div>
-        <p class="hero__kicker"><span class="hero__pulse" aria-hidden="true"></span>비개발자를 위한 화면 만들기 도구</p>
+        <p class="hero__kicker">
+          <span class="hero__pulse" aria-hidden="true"></span>기획자 · 디자이너 · 사업/운영 담당자를 위한 AI 화면 제작 도구
+        </p>
         <h1>말과 문서가<br /><em>화면</em>이 됩니다</h1>
         <p class="hero__sub">
-          개발 지식이 전혀 없는 사람이 — 기획자든 디자이너든 사업·운영 담당자든 —
-          작업할 서비스의 저장소를 연결하면, 그 안에서 도는 AI 세션이 말을 화면으로
-          만들어 줍니다. git이나 터미널을 몰라도 씁니다.
+          말로 부탁하면, 우리 서비스의 <strong>진짜 화면</strong>이 그 자리에서 바뀝니다.<br />
+          기다림도, 캡처도, 긴 설명도 없이요.
         </p>
         <div class="hero__cta">
-          <a class="btn btn--primary" href="https://github.com/inkwonjung-colosseum/nova-design/releases">앱 내려받기</a>
-          <a class="btn" href="#invite">초대장 만들기</a>
+          <a class="btn btn--primary" id="hero-download" href="https://github.com/inkwonjung-colosseum/nova-design/releases">
+            앱 내려받기<span class="btn__ver" id="hero-version" hidden></span>
+          </a>
+          <a class="btn" href="#how">한 바퀴 둘러보기</a>
         </div>
-        <p class="hero__trust" aria-hidden="true">
-          <span>macOS · Windows</span>
-          <span>관리자 권한 없이</span>
-          <span>연결 코드는 이 기계에만</span>
-        </p>
+        <p class="hero__dev">개발자이신가요? <a href="#invite">초대장 만들기 →</a></p>
+        <ul class="hero__trust">
+          <li>macOS · Windows</li>
+          <li>코딩 지식 필요 없어요</li>
+          <li>터미널 안 열어요</li>
+          <li>관리자 권한 안 써요</li>
+        </ul>
 
         <!-- 제품 UI 재현 — 실제 앱의 셸(사이드바 · 상태 줄 · 대화 · 미리보기).
              데모가 이 창 안에서 제품의 한 바퀴를 직접 돌린다(demo.js). -->
@@ -122,8 +141,11 @@
                         <span class="msg-screen-link">미리보기에서 보기</span>
                       </span>
                     </div>
-                    <div class="msg-meta" id="demo-meta">12초 걸렸어요 · 전체 복사 ···</div>
-                    <div class="msg msg--receipt" id="demo-receipt">개발자에게 제출했어요 · 받을 개발자 1명</div>
+                    <div class="msg-meta" id="demo-meta">8초 걸렸어요 · 전체 복사 ···</div>
+                    <div class="msg msg--receipt" id="demo-receipt">
+                      개발자에게 제출했어요 · 받을 개발자 1명
+                      <small id="demo-receipt-note">내 한마디 · “검색창 폭만 봐 주세요”</small>
+                    </div>
                     <div class="mock-composer">
                       <span class="mc-chip" id="demo-chip"><b>1</b>검색창은 좁게</span>
                       <span class="mc-line"><i class="mc-caret" id="demo-caret"></i></span>
@@ -150,6 +172,19 @@
                     </div>
                   </div>
                 </div>
+                <!-- 제출 확인 한 장 — 제출 버튼을 누르면 화면 위로 선다. -->
+                <div class="mock-confirm" id="demo-confirm">
+                  <div class="mcf-card">
+                    <b class="mcf-title">개발자에게 제출할까요?</b>
+                    <ul class="mcf-screens">
+                      <li>회원 목록</li>
+                      <li>로그인 화면</li>
+                    </ul>
+                    <span class="mcf-label">개발자에게 한마디 <em>선택</em></span>
+                    <span class="mcf-note"><span id="demo-note"></span><i class="mc-caret"></i></span>
+                    <span class="mcf-acts"><i>그만두기</i><b id="demo-confirm-go">제출</b></span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -158,22 +193,84 @@
         </div>
       </section>
 
-      <!-- ============ 도구가 대신하는 일 ============ -->
-      <div class="ticker" aria-hidden="true">
-        <div class="ticker__track">
-          <span>브랜치 만들기</span><i>·</i><span>커밋</span><i>·</i><span>푸시</span><i>·</i><span>풀 리퀘스트</span><i>·</i><span>머지</span><i>·</i><span>충돌 겹치기</span><i>·</i><span>되돌리기</span><i>·</i>
-          <span>브랜치 만들기</span><i>·</i><span>커밋</span><i>·</i><span>푸시</span><i>·</i><span>풀 리퀘스트</span><i>·</i><span>머지</span><i>·</i><span>충돌 겹치기</span><i>·</i><span>되돌리기</span><i>·</i>
+      <!-- ============ 이런 적, 있지 않나요? ============ -->
+      <section id="story" class="section story">
+        <div class="story__grid">
+          <div class="story__text">
+            <p class="section__eyebrow">이런 적, 있지 않나요?</p>
+            <p class="story__quote">
+              검색창 하나 넣자는 말이 <mark>기획서 한 장</mark>이 되고, 캡처 속
+              <mark>빨간 동그라미</mark>가 되고, 개발자의 <mark>다음 일정</mark>이 됩니다.
+              한참 뒤 받아 본 화면 앞에서 — <q>음… 이게 아닌데.</q>
+              그리고 <mark>한 바퀴 더.</mark>
+            </p>
+            <h2>말한 그 자리에서<br /><em>화면</em>이 바뀝니다</h2>
+            <p class="section__lead story__lead">
+              Nova Design 에서는 서비스의 화면이 곧바로 바뀌어요. 왼쪽은 AI 와의 대화,
+              오른쪽은 서비스의 실제 화면이에요.
+            </p>
+          </div>
+
+          <div class="talk" id="talk" role="img" aria-label="Nova Design 에서 대화하는 모습 — 검색창을 넣어 달라고 말하고, 미리보기를 찍어 폭을 고치고, 제출 한 번으로 개발자에게 넘기는 다섯 걸음">
+            <div class="talk__bar" aria-hidden="true">
+              <span class="appwin__light"></span><span class="appwin__light"></span><span class="appwin__light"></span>
+              <span class="talk__title">회원 관리 · 회원 목록 검색</span>
+            </div>
+            <ol class="talk__lines" aria-hidden="true">
+              <li class="talk__line talk__line--me">
+                <span class="talk__who">나</span>
+                <p>회원 목록에 검색창을 넣어 줘</p>
+              </li>
+              <li class="talk__line talk__line--ai">
+                <span class="talk__who">Nova</span>
+                <p>검색창을 넣었습니다 — 미리보기에서 확인해 보세요.</p>
+                <span class="talk__screen"><b>회원 목록</b><span>미리보기에서 보기</span></span>
+              </li>
+              <li class="talk__line talk__line--me">
+                <span class="talk__who">나 · 찍기</span>
+                <p><em>(미리보기의 검색창을 콕 찍고)</em> 여기 폭은 좁게 — 옆 칸과 나란히</p>
+              </li>
+              <li class="talk__line talk__line--ai">
+                <span class="talk__who">Nova</span>
+                <p>검색창 폭을 줄여 옆 칸과 나란히 맞췄어요.</p>
+              </li>
+              <li class="talk__line talk__line--me">
+                <span class="talk__who">나 · 제출</span>
+                <p>상태 줄의 <b>제출</b> 한 번</p>
+                <span class="talk__receipt">개발자에게 제출했어요 · 받을 개발자 1명</span>
+              </li>
+            </ol>
+            <p class="talk__foot">이게 전부예요. 저장 버튼도, 파일 이름도, 개발 용어도 나오지 않아요.</p>
+          </div>
         </div>
-        <p class="ticker__caption">사용자가 말하지 않아도 되는 것들 — 전부 도구가 대신합니다</p>
+      </section>
+
+      <!-- ============ 도구가 대신하는 일 ============ -->
+      <div class="ticker">
+        <div class="ticker__track" aria-hidden="true">
+          <div class="ticker__half">
+            <span>브랜치</span><i>·</i><span>커밋</span><i>·</i><span>푸시</span><i>·</i><span>풀 리퀘스트</span><i>·</i><span>머지</span><i>·</i><span>충돌 해결</span><i>·</i><span>터미널</span><i>·</i>
+          </div>
+          <div class="ticker__half">
+            <span>브랜치</span><i>·</i><span>커밋</span><i>·</i><span>푸시</span><i>·</i><span>풀 리퀘스트</span><i>·</i><span>머지</span><i>·</i><span>충돌 해결</span><i>·</i><span>터미널</span><i>·</i>
+          </div>
+          <div class="ticker__half">
+            <span>브랜치</span><i>·</i><span>커밋</span><i>·</i><span>푸시</span><i>·</i><span>풀 리퀘스트</span><i>·</i><span>머지</span><i>·</i><span>충돌 해결</span><i>·</i><span>터미널</span><i>·</i>
+          </div>
+          <div class="ticker__half">
+            <span>브랜치</span><i>·</i><span>커밋</span><i>·</i><span>푸시</span><i>·</i><span>풀 리퀘스트</span><i>·</i><span>머지</span><i>·</i><span>충돌 해결</span><i>·</i><span>터미널</span><i>·</i>
+          </div>
+        </div>
+        <p class="ticker__caption">브랜치 · 커밋 · 푸시 · 풀 리퀘스트 · 머지 · 충돌 해결 · 터미널 — 하나도 몰라도 돼요. 전부 도구가 대신합니다.</p>
       </div>
 
       <!-- ============ 흐름 ============ -->
       <section id="how" class="section">
         <p class="section__eyebrow">한 바퀴</p>
-        <h2>작업은 <em>한 바퀴</em>로 흘러갑니다</h2>
+        <h2>말하고 · 찍고 · <em>제출</em></h2>
         <p class="section__lead">
-          상태 줄의 여정 세 점이 지금 어디쯤인지 말해 줍니다 — 판정은 전부 기계적
-          신호라 사람이 임의로 바꿀 수 없습니다.
+          할 일은 딱 세 가지예요. 상태 줄의 세 점이 지금 어디쯤인지 말해 주고, 판정은
+          전부 기계적 신호라 사람이 임의로 바꿀 수 없어요.
         </p>
         <div class="jline" id="jline" aria-hidden="true">
           <span class="jline__dot" id="jline-0"><i></i><b>제출 전</b></span>
@@ -185,85 +282,205 @@
         <ol class="flow" id="flow">
           <li class="flow__step" data-dot="0">
             <span class="flow__no">01</span>
-            <strong>말하기</strong>
-            <span>만들고 싶은 화면을 말로 보냅니다. 참고 그림이나 문서 파일을 함께 붙여도 됩니다.</span>
+            <strong>말하고</strong>
+            <span>원하는 화면을 말로 보내요. 참고 그림이나 기획 문서를 끌어다 놓아도 돼요.</span>
           </li>
           <li class="flow__step" data-dot="0">
             <span class="flow__no">02</span>
-            <strong>미리보기 · 찍기</strong>
-            <span>서비스의 앱이 그대로 뜬 화면에서 결과를 확인합니다. 고칠 곳은 ⌥+클릭으로 찍어 말풍선을 남깁니다.</span>
+            <strong>찍고</strong>
+            <span>고칠 곳은 설명 대신 <kbd>⌥ Option</kbd> + 클릭 <small>(Windows 는 <kbd>Alt</kbd>)</small>. 그 자리에 메모가 붙어요.</span>
           </li>
           <li class="flow__step" data-dot="1">
             <span class="flow__no">03</span>
             <strong>제출</strong>
-            <span>완성되면 제출 한 번 — 확인 한 장이 뜨고, 도구가 묶어서 개발자에게 요청으로 보냅니다. 개발자의 코멘트는 AI가 바로 반영해 다시 제출합니다.</span>
+            <span>다 됐으면 버튼 하나. 확인 한 장을 거쳐 개발자에게 바로 가고, 개발자의 코멘트는 AI 가 바로 반영해 다시 제출해요.</span>
           </li>
           <li class="flow__step" data-dot="2">
             <span class="flow__no">04</span>
             <strong>반영됨</strong>
-            <span>개발자가 합치면 셋째 점이 반영됐어요가 되고, 반영된 내용은 도구가 스스로 받아 옵니다. 다음에 만드는 것은 새 작업입니다.</span>
+            <span>개발자가 제품에 합치면 셋째 점이 반영됐어요가 돼요. 반영된 내용은 도구가 스스로 받아 오고, 다음에 만드는 것은 새 작업이에요.</span>
           </li>
         </ol>
         <p class="note">
-          저장이라는 말도 없습니다 — AI가 한 차례 답할 때마다 도구가 스스로 그 시점을
-          보관하고, 작업 기록 서랍에서 언제든 그 시점으로 되돌아갈 수 있습니다.
+          알아 둘 말은 <strong>제출</strong>과 <strong>반영됨</strong>, 둘뿐이에요. <em>저장</em>이라는 말은
+          없어요 — AI 가 한 차례 답할 때마다 도구가 스스로 그 시점을 보관하고, 작업 기록 서랍에서
+          언제든 그 시점으로 되돌릴 수 있어요.
         </p>
       </section>
 
       <!-- ============ 기능 ============ -->
       <section id="features" class="section">
-        <p class="section__eyebrow">도구의 면</p>
+        <p class="section__eyebrow">할 줄 아는 것</p>
         <h2>말하는 것 말고는, <em>전부</em> 도구가 합니다</h2>
-        <div class="bento">
-          <!-- 찍기 — 커서를 올리면 핀이 따라오고, 누르면 말풍선이 뜬다 -->
-          <div class="bento__cell bento__cell--wide" id="bento-pin">
-            <p class="bento__name">찍기</p>
-            <p class="bento__desc">고칠 곳을 말로 설명하지 않아도 됩니다 — 화면을 직접 짚어 메모를 붙이면 그 핀이 첨부로 갑니다.</p>
-            <div class="bp-stage" id="bp-stage">
-              <div class="bp-screen">
-                <div class="bp-head"></div>
-                <div class="bp-hero"></div>
-                <div class="bp-cols"><i></i><i></i><i></i></div>
+        <p class="section__lead">눌러 보고, 끌어다 놓아 보세요 — 아래 카드는 전부 직접 만져 볼 수 있어요.</p>
+
+        <div class="bento" data-stagger>
+          <!-- 말 · 그림 · 문서로 주문 — 파일을 끌어다 놓으면 대화에 첨부된다(브라우저 밖으로 나가지 않는다) -->
+          <div class="bento__cell bento__cell--wide" id="bento-order">
+            <p class="bento__name">말 · 그림 · 문서로 주문해요</p>
+            <p class="bento__desc">원하는 화면을 말로 보내요. 참고 그림이나 기획 문서(한 건 8MB 까지)를 끌어다 놓아도 돼요. 답마다 <b>고친 화면</b> 카드가 서고, 미리보기가 그 화면으로 스스로 옮겨 가요.</p>
+            <div class="bo-stage" id="bo-stage" data-state="idle">
+              <div class="bo-drop" id="bo-drop" tabindex="0" role="button" aria-label="예시 문서를 놓아 보기">
+                <svg class="bo-drop__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14" /></svg>
+                <span class="bo-drop__text">그림 · 문서를 여기에 끌어다 놓아 보세요</span>
+                <span class="bo-drop__sub">파일은 이 브라우저 밖으로 나가지 않아요 · 눌러서 예시로 보기</span>
               </div>
-              <span class="bp-ghost" id="bp-ghost">＋</span>
-              <span class="bp-pin" id="bp-pin" hidden>1</span>
-              <span class="bp-bubble" id="bp-bubble" hidden><b>1 · 큰 그림</b>이 카드 살짝 좁게</span>
-              <span class="bp-hint" id="bp-hint">여기를 눌러 보세요</span>
+              <div class="bo-flow" aria-live="polite">
+                <div class="bo-files" id="bo-files"></div>
+                <div class="bo-msg bo-msg--user" id="bo-user">이 문서대로 주문 상세 화면을 만들어 줘</div>
+                <div class="bo-msg bo-msg--ai" id="bo-ai">
+                  <span id="bo-ai-text">문서를 읽고 새 화면을 지었어요.</span>
+                  <span class="talk__screen"><b id="bo-screen-name">주문 상세</b><span>미리보기에서 보기</span></span>
+                </div>
+              </div>
+              <button type="button" class="bo-reset btn btn--sm" id="bo-reset" hidden>다시 해 보기</button>
             </div>
           </div>
 
-          <!-- 테마 — 누르면 이 페이지 전체가 갈아입는다 -->
-          <div class="bento__cell" id="bento-theme">
-            <p class="bento__name">테마</p>
-            <p class="bento__desc">앱의 설정 그대로 — 누르면 이 페이지 전체가 갈아입습니다.</p>
-            <div class="bt-row" role="group" aria-label="페이지 테마 고르기">
-              <button type="button" class="bt-chip" data-site-theme="dark">어두움</button>
-              <button type="button" class="bt-chip" data-site-theme="light">밝음</button>
-              <button type="button" class="bt-chip" data-site-theme="claude">Claude</button>
-              <button type="button" class="bt-chip" data-site-theme="github">GitHub</button>
+          <!-- 진짜 서비스 위에서 — 크기를 바꾸고, 검색해 본다 -->
+          <div class="bento__cell" id="bento-real">
+            <p class="bento__name">진짜 서비스 위에서 봐요</p>
+            <p class="bento__desc">미리보기는 시안이 아니라 그 서비스의 앱이에요. 검색도 버튼도 폼도 실제로 동작하고, 크기를 바꿔 볼 수 있어요.</p>
+            <div class="br-bar" role="group" aria-label="화면 크기 고르기">
+              <button type="button" class="br-size on" data-size="pc" aria-pressed="true">PC</button>
+              <button type="button" class="br-size" data-size="tablet" aria-pressed="false">태블릿</button>
+              <button type="button" class="br-size" data-size="phone" aria-pressed="false">휴대폰</button>
+            </div>
+            <div class="br-stage">
+              <div class="br-frame" id="br-frame" data-size="pc">
+                <div class="br-url">member/MemberList</div>
+                <label class="br-search">
+                  <i aria-hidden="true"></i>
+                  <input id="br-input" type="search" placeholder="이름으로 찾기" aria-label="회원 이름으로 찾기" autocomplete="off" spellcheck="false" />
+                </label>
+                <ul class="br-list" id="br-list">
+                  <li><span>김하늘</span><em>활동</em></li>
+                  <li><span>이서준</span><em>활동</em></li>
+                  <li class="off"><span>박지우</span><em>휴면</em></li>
+                  <li><span>최민서</span><em>활동</em></li>
+                  <li class="off"><span>정다은</span><em>휴면</em></li>
+                </ul>
+                <p class="br-empty" id="br-empty" hidden>맞는 회원이 없어요</p>
+              </div>
             </div>
           </div>
 
-          <!-- 작업 기록 -->
+          <!-- 찍기 — 여러 곳을 찍고, 문장 하나로 보낸다. 뜻은 문장이 정한다. -->
+          <div class="bento__cell bento__cell--wide" id="bento-pin">
+            <p class="bento__name">설명하지 말고, 찍어요</p>
+            <p class="bento__desc">요소를 누르거나 영역을 끌어 짚으면 그 자리에 말풍선이 떠요. 여러 곳을 찍고 문장 하나로 보내요 — “고쳐 줘”면 고치고, “이게 뭐야?”면 설명해요.</p>
+            <div class="bp-wrap">
+              <div class="bp-stage" id="bp-stage" role="group" tabindex="0" aria-label="미리보기 — 눌러서 찍어 보세요. 키보드는 Enter 로 다음 자리를 찍어요.">
+                <div class="bp-screen">
+                  <div class="bp-head" data-pin-name="머리글"></div>
+                  <div class="bp-hero" data-pin-name="큰 그림"></div>
+                  <div class="bp-cols" data-pin-name="카드"><i></i><i></i><i></i></div>
+                </div>
+                <span class="bp-ghost" id="bp-ghost">＋</span>
+                <span class="bp-bubble" id="bp-bubble" hidden></span>
+                <span class="bp-hint" id="bp-hint">여기를 눌러 보세요</span>
+              </div>
+              <div class="bp-side">
+                <div class="bp-composer">
+                  <div class="bp-chips" id="bp-chips" aria-label="찍은 곳"><span class="bp-chips__empty">아직 찍은 곳이 없어요</span></div>
+                  <div class="bp-say" role="group" aria-label="이렇게 말하면">
+                    <button type="button" class="bp-say__btn on" data-intent="fix" aria-pressed="true">고쳐 줘</button>
+                    <button type="button" class="bp-say__btn" data-intent="explain" aria-pressed="false">이게 뭐야?</button>
+                  </div>
+                  <button type="button" class="btn btn--primary btn--sm bp-send" id="bp-send" disabled>보내기</button>
+                </div>
+                <p class="bp-reply" id="bp-reply" aria-live="polite">화면을 찍고 문장을 골라 보내 보세요 — 뜻은 문장이 정해요.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 제출은 버튼 하나 — 확인 한 장에 한마디를 얹는다 -->
+          <div class="bento__cell" id="bento-submit">
+            <p class="bento__name">제출은 버튼 하나</p>
+            <p class="bento__desc">확인 한 장에 <b>개발자에게 한마디</b>를 얹어 보내요. 개발자의 코멘트는 AI 가 바로 반영해 다시 싣고, 반영된 내용은 도구가 스스로 받아 와요.</p>
+            <div class="bs-card" id="bs-card" data-state="ask">
+              <div class="bs-ask">
+                <b class="bs-title">개발자에게 제출할까요?</b>
+                <ul class="bs-screens"><li>회원 목록</li><li>로그인 화면</li></ul>
+                <label class="bs-note">
+                  <span>개발자에게 한마디 <em>선택</em></span>
+                  <input id="bs-input" placeholder="예: 검색창 폭만 봐 주세요" maxlength="60" autocomplete="off" />
+                </label>
+                <div class="bs-acts">
+                  <button type="button" class="bs-cancel" id="bs-cancel">그만두기</button>
+                  <button type="button" class="bs-go" id="bs-go">제출</button>
+                </div>
+              </div>
+              <div class="bs-done" aria-live="polite">
+                <b>개발자에게 제출했어요</b>
+                <span>받을 개발자 1명</span>
+                <span class="bs-done__note" id="bs-done-note" hidden></span>
+                <button type="button" class="bs-again" id="bs-again">다시 해 보기</button>
+              </div>
+            </div>
+            <p class="bento__foot">입력창에서 Enter 로도 제출돼요</p>
+          </div>
+
+          <!-- 저장 버튼이 없어요 — 내가 한 말로 시점을 골라 되돌린다 -->
           <div class="bento__cell" id="bento-history">
-            <p class="bento__name">작업 기록</p>
-            <p class="bento__desc">AI가 답할 때마다 스스로 보관합니다 — 줄을 누르면 그 시점의 화면으로 되돌아갑니다.</p>
+            <p class="bento__name">저장 버튼이 없어요</p>
+            <p class="bento__desc">AI 가 답할 때마다 저절로 보관돼요. 내가 한 말로 시점을 골라 되돌려요.</p>
             <ul class="bh-list" id="bh-list">
-              <li class="bh-row"><span>「로그인 화면 만들어 줘」</span><em>로그인 화면</em></li>
-              <li class="bh-row"><span>「목록에 검색창 넣어 줘」</span><em>회원 목록</em></li>
-              <li class="bh-row"><span>「폭은 좁게 — 핀 참조」</span><em>회원 목록</em></li>
+              <li><button type="button" class="bh-row" data-i="0"><span>「로그인 화면 만들어 줘」</span><em>로그인 화면</em></button></li>
+              <li><button type="button" class="bh-row" data-i="1"><span>「회원 목록에 검색창을 넣어 줘」</span><em>회원 목록</em></button></li>
+              <li class="bh-cut" aria-hidden="true"><span>제출</span></li>
+              <li><button type="button" class="bh-row" data-i="2"><span>「검색창 폭은 좁게」</span><em>회원 목록</em></button></li>
             </ul>
-            <p class="bento__foot">기록은 지워지지 않습니다</p>
+            <div class="bh-confirm" id="bh-confirm" hidden>
+              <p class="bh-confirm__q" id="bh-confirm-q"></p>
+              <p class="bh-confirm__sub">기록은 지워지지 않고, 되돌리기도 기록에 남아요. 그 뒤에 한 변경만 화면에서 빠져요.</p>
+              <div class="bh-confirm__acts">
+                <button type="button" class="btn btn--sm" id="bh-cancel">그만두기</button>
+                <button type="button" class="btn btn--primary btn--sm" id="bh-do">되돌리기</button>
+              </div>
+            </div>
+            <p class="bento__foot" id="bh-foot">기록은 지워지지 않아요</p>
           </div>
 
+          <!-- 오류는 사람 몫이 아니에요 — 도구가 먼저 열어 보고, AI 가 고친다 -->
+          <div class="bento__cell bento__cell--wide" id="bento-safety">
+            <p class="bento__name">오류는 사람 몫이 아니에요</p>
+            <p class="bento__desc">화면을 만진 답이 끝나면 도구가 그 화면을 다시 열어 봐요. 빈 화면이나 오류를 찾으면 AI 가 그림을 보고 고치고, 꺼진 미리보기는 도구가 먼저 다시 켜요.</p>
+            <div class="bg-stage" id="bg-stage" data-step="4">
+              <div class="bg-screen" aria-hidden="true">
+                <div class="bg-screen__bar"><i></i><i></i><i></i></div>
+                <div class="bg-screen__body">
+                  <div class="bg-screen__head"></div>
+                  <div class="bg-screen__row"></div>
+                  <div class="bg-screen__row"></div>
+                  <div class="bg-screen__row bg-screen__row--short"></div>
+                </div>
+                <span class="bg-screen__blank">빈 화면</span>
+              </div>
+              <ol class="bg-log" id="bg-log" aria-live="polite">
+                <li data-at="1">화면을 다시 열어 봤어요</li>
+                <li data-at="2" class="bad">빈 화면이에요 — <b>AI가 고치는 중이에요</b></li>
+                <li data-at="3">휴대폰 크기로도 열어 봤어요 — 옆으로 밀리지 않아요</li>
+                <li data-at="4" class="good">다 고쳤어요 · 하실 일은 없어요</li>
+              </ol>
+            </div>
+            <div class="bg-foot">
+              <button type="button" class="btn btn--sm" id="bg-replay">오류 만들어 보기</button>
+              <span class="bento__foot">사람의 손이 필요한 건 <b>다시 연결이 필요해요</b> 한 가지뿐이에요</span>
+            </div>
+          </div>
+        </div>
+
+        <p class="bento-more__label"><span>그 밖에도</span></p>
+        <div class="bento" data-stagger>
           <!-- 여러 프로젝트 -->
           <div class="bento__cell" id="bento-projects">
             <p class="bento__name">여러 프로젝트</p>
-            <p class="bento__desc">한 대의 기계가 사용자가 작업하는 만큼 갖습니다 — 떠난 프로젝트의 미리보기는 따뜻하게 남습니다.</p>
+            <p class="bento__desc">여러 프로젝트를 오가도 미리보기는 보던 자리 그대로 남아요. 다른 프로젝트 줄이 가장 급한 것 하나를 말해 줘요.</p>
             <ul class="bj-rows" id="bj-rows">
-              <li class="bj-row bj-row--on" data-note="지금 만드는 중 — 로그인 화면"><i class="bj-dot bj-dot--go"></i>회원 관리<b>만드는 중</b></li>
-              <li class="bj-row" data-note="준비가 끝나면 바로 만들 수 있어요"><i class="bj-dot bj-dot--prep"></i>주문 대시보드<b>준비 중</b></li>
-              <li class="bj-row" data-note="개발자 코멘트 2개 — AI가 반영하는 중"><i class="bj-dot bj-dot--comment"></i>이벤트 페이지<b>코멘트 2</b></li>
+              <li><button type="button" class="bj-row bj-row--on" data-note="지금 만드는 중 — 로그인 화면"><i class="bj-dot bj-dot--go"></i>회원 관리<b>만드는 중</b></button></li>
+              <li><button type="button" class="bj-row" data-note="처음 열 때 준비해요 — 준비가 끝나면 바로 만들 수 있어요"><i class="bj-dot bj-dot--prep"></i>주문 대시보드<b>준비 중</b></button></li>
+              <li><button type="button" class="bj-row" data-note="개발자 코멘트 2개 — AI가 반영하는 중"><i class="bj-dot bj-dot--comment"></i>이벤트 페이지<b>코멘트 2</b></button></li>
             </ul>
             <p class="bento__foot" id="bj-note">지금 만드는 중 — 로그인 화면</p>
           </div>
@@ -271,77 +488,293 @@
           <!-- 알림 -->
           <div class="bento__cell" id="bento-notify">
             <p class="bento__name">알림</p>
-            <p class="bento__desc">작업이 끝나면 OS 알림으로 부릅니다 — 창이 앞에 있을 때는 조용히 합니다.</p>
-            <button type="button" class="btn" id="bn-try">알림 시험해 보기</button>
+            <p class="bento__desc">AI 가 일을 마치면 OS 알림이 불러요. 창이 앞에 있을 때는 조용히 하고, 알림을 누르면 그 대화가 열려요.</p>
+            <div class="bn-banner" aria-hidden="true">
+              <img src="colonova-icon.svg" alt="" width="30" height="30" />
+              <div><b>Nova Design</b><span>다 만들었어요 — 대화를 확인해 보세요</span></div>
+            </div>
+            <button type="button" class="btn btn--sm" id="bn-try">알림 시험해 보기</button>
           </div>
 
           <!-- 홈 -->
           <div class="bento__cell" id="bento-home">
             <p class="bento__name">홈</p>
-            <p class="bento__desc">큰 입력창 하나와 받은 편지함 — 내 손이 필요한 일만 숫자로 셉니다.</p>
+            <p class="bento__desc">큰 입력창 하나와 받은 편지함 — 내 손이 필요한 일만 숫자로 세요.</p>
             <div class="bm-home">
               <p class="bm-greet">김기획님, 무엇을 만들까요?</p>
-              <div class="bm-input">회원 목록에 검색창을…<i></i></div>
+              <div class="bm-input">회원 목록에 이름으로 찾는 검색창을…<i></i></div>
               <div class="bm-inbox"><b>답을 기다려요</b><span class="bm-badge">1</span></div>
             </div>
           </div>
+
+          <!-- 테마 — 카드를 누르면 이 페이지 전체가 갈아입는다 -->
+          <div class="bento__cell bento__cell--full" id="bento-theme">
+            <p class="bento__name">테마</p>
+            <p class="bento__desc">앱의 설정 그대로 — 카드를 누르면 이 페이지 전체가 갈아입어요. 앱의 기본은 Claude 예요.</p>
+            <div class="tc-row" role="group" aria-label="페이지 테마 고르기">
+              <button type="button" class="tc" data-site-theme="claude" aria-pressed="false">
+                <span class="tc__win" data-theme="claude"><i class="tc__side"></i><i class="tc__l1"></i><i class="tc__l2"></i><i class="tc__btn"></i></span>
+                <span class="tc__name">Claude</span>
+              </button>
+              <button type="button" class="tc" data-site-theme="codex" aria-pressed="false">
+                <span class="tc__win" data-theme="codex"><i class="tc__side"></i><i class="tc__l1"></i><i class="tc__l2"></i><i class="tc__btn"></i></span>
+                <span class="tc__name">Codex</span>
+              </button>
+              <button type="button" class="tc" data-site-theme="light" aria-pressed="false">
+                <span class="tc__win" data-theme="light"><i class="tc__side"></i><i class="tc__l1"></i><i class="tc__l2"></i><i class="tc__btn"></i></span>
+                <span class="tc__name">밝음</span>
+              </button>
+              <button type="button" class="tc" data-site-theme="dark" aria-pressed="false">
+                <span class="tc__win" data-theme="dark"><i class="tc__side"></i><i class="tc__l1"></i><i class="tc__l2"></i><i class="tc__btn"></i></span>
+                <span class="tc__name">어두움</span>
+              </button>
+              <button type="button" class="tc" data-site-theme="github-light" aria-pressed="false">
+                <span class="tc__win" data-theme="github-light"><i class="tc__side"></i><i class="tc__l1"></i><i class="tc__l2"></i><i class="tc__btn"></i></span>
+                <span class="tc__name">GitHub 밝음</span>
+              </button>
+              <button type="button" class="tc" data-site-theme="github" aria-pressed="false">
+                <span class="tc__win" data-theme="github"><i class="tc__side"></i><i class="tc__l1"></i><i class="tc__l2"></i><i class="tc__btn"></i></span>
+                <span class="tc__name">GitHub 어두움</span>
+              </button>
+              <button type="button" class="tc" data-site-theme="system" aria-pressed="false">
+                <span class="tc__win tc__win--split">
+                  <span class="tc__half" data-theme="light"><i class="tc__side"></i><i class="tc__l1"></i><i class="tc__l2"></i><i class="tc__btn"></i></span>
+                  <span class="tc__half tc__half--dark" data-theme="dark"><i class="tc__side"></i><i class="tc__l1"></i><i class="tc__l2"></i><i class="tc__btn"></i></span>
+                </span>
+                <span class="tc__name">시스템 따르기</span>
+              </button>
+            </div>
+          </div>
         </div>
+
+        <p class="keys" aria-label="자주 쓰는 단축키">
+          <span><kbd>⌘</kbd><kbd>K</kbd> 찾기</span>
+          <span><kbd>⌘</kbd><kbd>T</kbd> 새 대화</span>
+          <span><kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd> 찍기</span>
+          <span><kbd>⌘</kbd><kbd>B</kbd> 사이드바</span>
+          <span><kbd>⌘</kbd><kbd>=</kbd> <kbd>⌘</kbd><kbd>-</kbd> 앱 전체 키우고 줄이기</span>
+          <span>Windows 는 <kbd>Ctrl</kbd></span>
+        </p>
+      </section>
+
+      <!-- ============ 첫날, 이렇게 말해 보세요 ============ -->
+      <section id="try" class="section">
+        <p class="section__eyebrow">첫날</p>
+        <h2>이렇게 말해 <em>보세요</em></h2>
+        <p class="section__lead">말풍선을 누르면 문장이 복사돼요 — 앱 입력창에 그대로 붙여 넣어 보세요.</p>
+        <ul class="say" id="say-list" data-stagger>
+          <li>
+            <button type="button" class="say__row" data-copy="회원 목록에 이름으로 찾는 검색창을 넣어 줘">
+              <span class="say__bubble">회원 목록에 이름으로 찾는 검색창을 넣어 줘</span>
+              <span class="say__arrow" aria-hidden="true">→</span>
+              <span class="say__result">목록 위에 검색창이 생기고, 미리보기가 그 화면으로 옮겨 가요</span>
+              <span class="say__copy" aria-hidden="true">복사</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="say__row" data-copy="이 문서대로 주문 상세 화면을 만들어 줘">
+              <span class="say__bubble"><span class="say__tag">기획 문서 끌어다 놓기</span>이 문서대로 주문 상세 화면을 만들어 줘</span>
+              <span class="say__arrow" aria-hidden="true">→</span>
+              <span class="say__result">문서를 읽고 새 화면을 지어요</span>
+              <span class="say__copy" aria-hidden="true">복사</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="say__row" data-copy="이게 뭐야?">
+              <span class="say__bubble"><span class="say__tag">버튼 찍기</span>이게 뭐야?</span>
+              <span class="say__arrow" aria-hidden="true">→</span>
+              <span class="say__result">고치지 않고 설명만 해요 — 뜻은 문장이 정해요</span>
+              <span class="say__copy" aria-hidden="true">복사</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="say__row" data-copy="휴대폰에서 보면 넘쳐. 고쳐 줘">
+              <span class="say__bubble"><span class="say__tag">표 찍기</span>휴대폰에서 보면 넘쳐. 고쳐 줘</span>
+              <span class="say__arrow" aria-hidden="true">→</span>
+              <span class="say__result">고친 뒤, 미리보기를 휴대폰 크기로 바꿔 바로 확인해요</span>
+              <span class="say__copy" aria-hidden="true">복사</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="say__row" data-copy="목록이 비었을 때 안내 문구를 넣어 줘">
+              <span class="say__bubble">목록이 비었을 때 안내 문구를 넣어 줘</span>
+              <span class="say__arrow" aria-hidden="true">→</span>
+              <span class="say__result">미리보기에서 목록을 비워 보면 그 모습이 보여요</span>
+              <span class="say__copy" aria-hidden="true">복사</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="say__row" data-copy="개발자에게 보내 줘">
+              <span class="say__bubble">개발자에게 보내 줘</span>
+              <span class="say__arrow" aria-hidden="true">→</span>
+              <span class="say__result">확인 없이 AI 가 제출해 줘요</span>
+              <span class="say__copy" aria-hidden="true">복사</span>
+            </button>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ============ 안심하고 쓰세요 ============ -->
+      <section id="trust" class="section">
+        <p class="section__eyebrow">안심</p>
+        <h2><em>안심</em>하고 쓰세요</h2>
+        <ul class="trust" data-stagger>
+          <li class="trust__card">
+            <span class="trust__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg></span>
+            <strong>비밀은 이 컴퓨터에만</strong>
+            <span>연결 코드와 AI 로그인은 맥 키체인 같은 OS 자격 증명 저장소에만 있어요. 공유 서버를 거치지 않아요.</span>
+          </li>
+          <li class="trust__card">
+            <span class="trust__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z" /><path d="m9 12 2 2 4-4" /></svg></span>
+            <strong>서비스의 원본은 그대로</strong>
+            <span>만든 것은 제출로 개발자에게 가고, 합칠지는 개발자가 정해요. 그 전까지 원본에는 손대지 않아요.</span>
+          </li>
+          <li class="trust__card">
+            <span class="trust__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 8 4 4-4 4M12 17h6" /><path d="M4 4l16 16" /></svg></span>
+            <strong>관리자 권한도 터미널도 없이</strong>
+            <span>필요한 도구는 앱이 싣고 와요. AI 프로그램의 설치 · 로그인 · 업데이트도 앱 안에서 끝나요.</span>
+          </li>
+          <li class="trust__card">
+            <span class="trust__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" /></svg></span>
+            <strong>한 사람 · 한 컴퓨터 · 하나의 구독</strong>
+            <span>각자 자기 AI 계정으로, 자기 컴퓨터에서 돌려요.</span>
+          </li>
+        </ul>
       </section>
 
       <!-- ============ 설치 ============ -->
       <section id="install" class="section">
         <p class="section__eyebrow">시작하기</p>
-        <h2>설치</h2>
+        <h2>세 걸음이면 <em>시작</em>해요</h2>
         <div class="install">
           <ol class="steps">
             <li>
+              <strong>내려받아 설치하기</strong>
               <a href="https://github.com/inkwonjung-colosseum/nova-design/releases">릴리스 페이지</a>에서
-              기계에 맞는 파일을 내려받아 설치합니다 — mac은 <code>nova-design-&lt;버전&gt;-mac-arm64.dmg</code>,
-              Windows는 <code>nova-design-Setup-&lt;버전&gt;-win-x64.exe</code>.
+              컴퓨터에 맞는 파일을 받으세요.
+              <div class="files" id="files">
+                <a class="files__row" id="file-mac" data-os="mac" href="https://github.com/inkwonjung-colosseum/nova-design/releases">
+                  <span class="files__os">mac <small>(Apple 실리콘)</small></span>
+                  <code id="file-mac-name">nova-design-&lt;버전&gt;-mac-arm64.dmg</code>
+                  <span class="files__size" id="file-mac-size"></span>
+                </a>
+                <a class="files__row" id="file-win" data-os="win" href="https://github.com/inkwonjung-colosseum/nova-design/releases">
+                  <span class="files__os">Windows</span>
+                  <code id="file-win-name">nova-design-Setup-&lt;버전&gt;-win-x64.exe</code>
+                  <span class="files__size" id="file-win-size"></span>
+                </a>
+              </div>
+              <p class="steps__note">
+                서명이 없는 배포라 <strong>첫 실행에 한 번</strong> 허가가 필요해요.
+                Windows 는 SmartScreen 창에서 <b>추가 정보 → 실행</b>, mac 은 시스템 설정 → 개인정보 보호 및
+                보안 → <b>확인 없이 열기</b>.
+              </p>
             </li>
             <li>
-              첫 실행에 한 번 허가가 필요합니다 — Windows는 SmartScreen의 추가 정보 → 실행,
-              mac은 시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기.
+              <strong>AI 연결하기</strong>
+              첫 화면은 체크리스트 한 장이에요. 화면을 만드는 AI 프로그램(Claude Code)을
+              <b>설치 버튼 하나</b>로 준비하고, 브라우저에서 내 Claude 계정으로 로그인하면
+              저절로 돌아와요. Codex 는 선택이라 건너뛰어도 돼요.
             </li>
             <li>
-              첫 화면은 마법사가 아니라 <strong>체크리스트 한 장</strong>입니다 —
-              도구 준비 · AI 연결 · 초대 파일. Claude Code 는 설치 버튼 하나로
-              사용자 폴더에 깔리고, 로그인은 브라우저에서 본인 계정으로 마치면
-              저절로 넘어갑니다. 터미널은 끝까지 열지 않습니다. Codex 는 선택입니다.
-            </li>
-            <li>
-              <strong>초대 파일</strong>(<code>*.nova-invite</code>)을 창에 놓으면 끝입니다 —
-              연결 코드 저장과 개발자가 고른 프로젝트 전부의 설정이 한 번에
-              끝나고 첫 프로젝트가 열립니다. 앱과 AI의 업데이트는 설정의 업데이트
-              줄이 저절로 확인합니다.
+              <strong>초대 파일 놓기</strong>
+              개발자에게 받은 <b>초대 파일</b>(<code>*.nova-invite</code>)을 첫 화면에 끌어다 놓으면
+              끝이에요. 셋이 다 채워지면 누를 것 없이 작업 화면이 열려요.
+              <div class="ask">
+                <p class="ask__title">초대 파일이 아직 없다면 — 개발자에게 이 메시지를 그대로 보내세요.</p>
+                <div class="ask__box">
+                  <pre id="ask-text">Nova Design 초대 파일(.nova-invite) 하나 만들어 주세요!
+여기서 바로 만들 수 있어요 → https://inkwonjung-colosseum.github.io/nova-design/#invite</pre>
+                  <button type="button" class="btn btn--sm" id="ask-copy">메시지 복사</button>
+                </div>
+              </div>
             </li>
           </ol>
           <aside class="install__card" aria-label="첫 화면 체크리스트 미리보기">
-            <p class="install__card-title">첫 화면은 체크리스트 한 장</p>
+            <p class="install__card-title">Nova Design 을 시작해요</p>
+            <p class="install__card-sub">세 가지가 채워지면 저절로 넘어가요. 터미널을 열 일은 없어요.</p>
             <ul class="checklist" id="install-checklist">
-              <li><i></i><div><strong>도구 준비</strong><span>앱이 싣고 온 도구를 확인합니다</span></div></li>
-              <li><i></i><div><strong>AI 연결</strong><span>설치 버튼 → 브라우저에서 로그인</span></div></li>
-              <li><i></i><div><strong>초대 파일</strong><span>받은 파일을 창에 놓습니다</span></div></li>
+              <li><i></i><div><strong>도구 준비</strong><span>필요한 도구 확인됨</span></div></li>
+              <li><i></i><div><strong>AI 연결</strong><span>Claude Code · 로그인됨</span></div></li>
+              <li><i></i><div><strong>초대 파일</strong><span>개발자에게 받은 파일을 여기에 놓으면 가져와요</span></div></li>
             </ul>
-            <p class="install__card-foot">셋이 다 채워지면 작업 화면으로 넘어갑니다 — 시작하기 버튼은 없습니다</p>
+            <p class="install__card-done" id="install-done"><b>준비됐어요</b>이제 만들고 싶은 화면을 말씀해 주세요</p>
+            <p class="install__card-foot">시작하기 버튼은 없어요 — 셋이 채워지면 작업 화면이 열려요</p>
           </aside>
         </div>
+        <p class="note">
+          필요한 것은 mac(Apple 실리콘) 또는 Windows 컴퓨터, 내 Claude 계정, 그리고 개발자에게 받은 초대 파일
+          하나예요. 업데이트는 앱이 알아서 확인해요 — 켤 때, 앱으로 돌아올 때, 그리고 하루에 한 번.
+        </p>
+      </section>
+
+      <!-- ============ 자주 묻는 질문 ============ -->
+      <section id="faq" class="section">
+        <p class="section__eyebrow">자주 묻는 질문</p>
+        <h2>궁금한 점이 <em>있나요</em>?</h2>
+        <div class="faq" data-stagger>
+          <details class="faq__item">
+            <summary>개발을 정말 하나도 몰라도 되나요?</summary>
+            <p>네. 말로 부탁하고, 화면을 찍고, <b>제출</b>을 누르는 것이 전부예요. 브랜치 · 커밋 같은 개발 용어는 화면 어디에도 나오지 않아요.</p>
+          </details>
+          <details class="faq__item">
+            <summary>우리 서비스를 망가뜨리면 어떡하죠?</summary>
+            <p>작업은 이 컴퓨터에 있는 서비스의 복사본에서만 일어나요. 서비스의 원본은 개발자가 제출을 받아 합치기 전까지 그대로예요. 마음에 안 들면 <b>작업 기록</b>에서 언제든 되돌리면 돼요.</p>
+          </details>
+          <details class="faq__item">
+            <summary>AI 가 엉뚱한 화면을 만들었어요.</summary>
+            <p>말로 다시 고쳐 달라고 하면 돼요. 말부터 다시 하고 싶으면 보낸 말의 <b>고쳐서 다시 보내기</b>, 대화만 되감으려면 <b>···</b> → <b>여기서 새 대화</b>, 화면까지 되돌리려면 <b>작업 기록</b> 서랍에서 그 시점을 고르세요.</p>
+          </details>
+          <details class="faq__item">
+            <summary>오류 화면이 뜨면 어떻게 하나요?</summary>
+            <p>할 일이 없어요. 도구가 화면을 다시 열어 확인하고, 정말 깨져 있으면 AI 가 알아서 고쳐요. 사람의 손이 필요한 건 <b>다시 연결이 필요해요</b> 한 가지뿐이에요 — 새 초대 파일을 놓거나, 브라우저에서 로그인 한 번이면 돼요.</p>
+          </details>
+          <details class="faq__item">
+            <summary>무엇이 필요한가요?</summary>
+            <p>mac(Apple 실리콘) 또는 Windows 컴퓨터, 내 Claude 계정, 그리고 개발자에게 받은 초대 파일 하나. 나머지 도구는 앱이 싣고 와요.</p>
+          </details>
+          <details class="faq__item">
+            <summary>연결 코드와 AI 로그인은 어디에 보관되나요?</summary>
+            <p>OS 자격 증명 저장소(맥 키체인 등)에만 있어요. 공유 서버를 거치지 않고, 화면 쪽 코드에는 절대 전달되지 않아요.</p>
+          </details>
+          <details class="faq__item">
+            <summary>컴퓨터에 무엇이 남나요?</summary>
+            <p>홈의 숨은 폴더 하나 <code>~/.nova-design/</code> 가 전부예요 — 설정과 작업 중인 서비스의 복사본. 설정 → <b>개발자용</b>의 <b>폴더 열기</b>로 열어 볼 수 있어요.</p>
+          </details>
+          <details class="faq__item">
+            <summary>연결 코드가 만료됐다고 나와요.</summary>
+            <p>문제 문장 <b>다시 연결이 필요해요</b>의 <b>초대 파일 열기</b>로, 개발자에게 받은 새 초대 파일을 놓아 주세요. 대화와 보관된 작업은 그대로 남아 있어요.</p>
+          </details>
+        </div>
+        <p class="note">
+          더 자세한 설명은
+          <a href="https://github.com/inkwonjung-colosseum/nova-design/blob/main/docs/GUIDE.md">사용 설명서</a>에 있어요 —
+          화면 하나하나, 버튼 하나하나를 적었어요.
+        </p>
       </section>
 
       <!-- ============ 초대장 ============ -->
       <section id="invite" class="section section--invite">
         <p class="section__eyebrow">개발자용</p>
-        <h2>초대장 만들기</h2>
+        <h2>초대장 <em>만들기</em></h2>
         <p class="section__lead">
-          연결 코드를 넣고 레포를 고르면, 고른 레포 전부가 초대 파일 하나에
-          실립니다 — 사용자는 파일을 놓기만 하면 모든 프로젝트가 설정됩니다.
-          내려받은 파일의 내용은 앱만 읽을 수 있게 가려집니다 — 편집기로 열면
-          알아볼 수 없는 글자로 보입니다. 그래도 연결 코드가 들어 있으니
-          <strong>사용자만 보는 경로</strong>(슬랙 DM 등)로 보내고, 가져오기가
-          끝나면 지우라고 안내하세요. 입력한 값은 이 브라우저 메모리에만
-          두고, 요청은 GitHub에만 보냅니다. 나중에 레포를 더 붙이거나
-          리뷰어를 바꿀 때도 새 초대 파일을 보내면 됩니다 — 사용자는 앱 어디에나
-          끌어다 놓거나 설정 → 연결 → 초대 파일 열기로 받습니다.
+          개발자라면 팀에 들이는 데 필요한 건 거의 없어요. 서비스의 레포를 연결하는 초대 파일
+          하나를 만들어 사용자에게 보내면 끝이에요.
+        </p>
+        <ul class="dev" data-stagger>
+          <li><b>설정 파일은 없어요</b><span><code>package.json</code> 에 <code>dev</code> 스크립트(없으면 <code>start</code> · <code>serve</code> · <code>preview</code>)와 커밋된 락파일이면 돼요. 포트도 적지 않아요.</span></li>
+          <li><b>결과는 평범한 풀 리퀘스트로 와요</b><span><code>nova-design/&lt;날짜&gt;-&lt;번호&gt;</code> 브랜치에서, 본문에 화면 제목 · 경로와 작성자 이름을 적어서. 베이스 브랜치에는 쓰지 않아요.</span></li>
+          <li><b>리뷰는 평소처럼</b><span>풀 리퀘스트에 코멘트를 남기면 AI 가 반영해 같은 요청에 다시 올려요.</span></li>
+          <li><b>초대는 파일 하나</b><span>아래 폼이나 <code>node scripts/make-invite.mjs</code> 로 만들어요. 연결 코드는 브라우저 메모리에만 있어요.</span></li>
+          <li><b><code>CLAUDE.md</code> 다섯 줄이면 더 빨라져요</b><span>화면이 사는 곳 · 라우트 등록 · 목 데이터 · 자주 쓰는 컴포넌트 · 검사 명령.</span></li>
+          <li><b>AI 도 못 푸는 문제만 개발자에게 와요</b><span>열린 요청이 있으면 거기에, 없으면 서비스 쪽 게시판에.</span></li>
+        </ul>
+        <p class="callout">
+          연결 코드를 넣고 레포를 고르면, 고른 레포 전부가 초대 파일 하나에 실려요 — 사용자는 파일을
+          놓기만 하면 모든 프로젝트가 설정돼요. 내려받은 파일의 내용은 앱만 읽을 수 있게 가려져요(편집기로 열면
+          알아볼 수 없는 글자로 보여요). 그래도 연결 코드가 들어 있으니
+          <strong>사용자만 보는 경로</strong>(슬랙 DM 등)로 보내고, 가져오기가 끝나면 지우라고 안내하세요. 입력한
+          값은 이 브라우저 메모리에만 두고, 요청은 GitHub 에만 보내요.
         </p>
         <form id="invite-form" class="iform" autocomplete="off">
           <!-- ① 연결 코드 — 목록을 부르는 열쇠. 메모리에만 둔다. -->
@@ -369,7 +802,7 @@
           <!-- ③ 고른 프로젝트 — 순서가 초대장 순서, 첫째가 먼저 열린다. -->
           <div class="ichosen" id="chosen">
             <p class="ichosen__head">고른 프로젝트 <span id="chosen-count"></span></p>
-            <p class="ifield__hint">고른 순서가 초대장 순서입니다 — 첫 프로젝트가 사용자에게 먼저 열립니다.</p>
+            <p class="ifield__hint">고른 순서가 초대장 순서예요 — 첫 프로젝트가 사용자에게 먼저 열려요.</p>
             <div id="chosen-rows"></div>
           </div>
 
@@ -388,7 +821,7 @@
             <label class="ifield">
               <span class="ifield__label">작업 이름</span>
               <input name="author" placeholder="김기획" required />
-              <span class="ifield__hint">넘긴 요청의 작성 줄에 적힐 이름 — 파일 이름에도 씁니다</span>
+              <span class="ifield__hint">넘긴 요청의 작성 줄에 적힐 이름 — 파일 이름에도 써요</span>
             </label>
             <label class="ifield">
               <span class="ifield__label">리뷰어</span>
@@ -402,8 +835,8 @@
           <fieldset class="inotify" id="notify-fields">
             <legend class="ifield__label">개발자 알림 (Slack, 선택)</legend>
             <p class="ifield__hint">
-              문제가 생겼을 때 도구가 개발자를 부르는 길입니다 — 저장소에
-              알림을 남길 수 있는 연결 코드면 비워도 됩니다.
+              문제가 생겼을 때 도구가 개발자를 부르는 길이에요 — 저장소에
+              알림을 남길 수 있는 연결 코드면 비워도 돼요.
             </p>
             <label class="ifield">
               <span class="ifield__label">웹훅 주소</span>
@@ -439,9 +872,9 @@
             <span class="iform__filename" id="invite-filename"></span>
           </div>
           <p class="note">
-            이메일은 메일 앱에 초안을 엽니다 — 내려받은 파일을 첨부해 보내세요.
+            이메일은 메일 앱에 초안을 열어요 — 내려받은 파일을 첨부해 보내세요.
             공유하기는 OS가 파일 공유를 지원할 때만 나타나며, 슬랙 같은 앱으로
-            파일을 바로 넘깁니다.
+            파일을 바로 넘겨요.
           </p>
         </form>
 
@@ -458,28 +891,51 @@
           </div>
           <ol class="iguide__lines" id="guide-lines"></ol>
           <p class="note">
-            이메일로 보내기의 본문에도 같은 세 줄이 들어갑니다 — 앱 내려받기
-            링크 외에는 아무 비밀도 실리지 않습니다.
+            이메일로 보내기의 본문에도 같은 세 줄이 들어가요 — 앱 내려받기
+            링크 외에는 아무 비밀도 실리지 않아요.
           </p>
         </div>
 
         <details class="ipreview">
           <summary>파일 내용 미리 보기</summary>
           <pre id="invite-preview">{}</pre>
-          <p class="note">미리 보기에서는 연결 코드를 가립니다 — 내려받은 파일에는 실제 코드가 가려진 봉투 안에 들어 있습니다.</p>
+          <p class="note">미리 보기에서는 연결 코드를 가려요 — 내려받은 파일에는 실제 코드가 가려진 봉투 안에 들어 있어요.</p>
         </details>
+
+        <details class="ipreview">
+          <summary>링크로 미리 채우기 · 터미널로 만들기</summary>
+          <div class="ipreview__body">
+            <p>이 페이지 주소 뒤에 값을 붙이면 폼이 미리 채워져요. 연결 코드는 주소에 실을 수 없어요 — 주소는 로그와 공유에 남기 때문이에요.</p>
+            <pre>…/nova-design/?repos=org/a,org/b&amp;reviewers=dev1,dev2&amp;author=김기획#invite</pre>
+            <p>터미널이 편하면 같은 형식 모듈을 쓰는 생성기가 있어요 — 만들어지는 파일은 같아요.</p>
+            <pre>node scripts/make-invite.mjs --repo https://github.com/org/a.git \
+  --token github_pat_… --author "김기획" --reviewer dev1</pre>
+          </div>
+        </details>
+        <p class="note">
+          나중에 레포를 더 붙이거나 리뷰어를 바꿀 때도 새 초대 파일을 보내면 돼요 — 사용자는 앱 어디에나
+          끌어다 놓거나 설정 → 연결 → 초대 파일 열기로 받아요.
+        </p>
       </section>
     </main>
 
     <!-- 알림 벤토가 부르는 OS 알림 재현 — 화면 구석에 한 번 하나 -->
-    <div class="toast" id="site-toast" hidden>
+    <div class="toast" id="site-toast" hidden role="status">
       <b>Nova Design</b>
       <span id="site-toast-text">다 만들었어요 — 대화를 확인해 보세요</span>
     </div>
 
     <footer class="foot">
-      <span>Nova Design — 말과 문서가 화면이 되는 파이프라인</span>
-      <a href="https://github.com/inkwonjung-colosseum/nova-design">github.com/inkwonjung-colosseum/nova-design</a>
+      <div class="foot__brand">
+        <img class="foot__icon" src="colonova-icon.svg" alt="" width="28" height="28" />
+        <span><b>Nova Design</b> — 말하고 · 찍고 · 제출.</span>
+      </div>
+      <nav class="foot__links" aria-label="더 알아보기">
+        <a href="https://github.com/inkwonjung-colosseum/nova-design/blob/main/docs/GUIDE.md">사용 설명서</a>
+        <a href="https://github.com/inkwonjung-colosseum/nova-design/blob/main/docs/DEVELOPERS.md">개발자 · 운영자 안내</a>
+        <a href="https://github.com/inkwonjung-colosseum/nova-design/releases">릴리스</a>
+        <a href="https://github.com/inkwonjung-colosseum/nova-design">GitHub</a>
+      </nav>
     </footer>
   </body>
 </html>

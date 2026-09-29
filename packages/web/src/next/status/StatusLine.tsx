@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { L } from "../labels";
+import { keyHint } from "../lib/key-hint";
 import {
   FIRST_TURN_HINT_MS,
   heldPhase,
@@ -248,8 +249,8 @@ export function StatusLine({
         <button
           type="button"
           className="nx-ibtn"
-          title={narrow ? L.shell.menu : L.sidebar.expand}
-          aria-label={narrow ? L.shell.menu : L.sidebar.expand}
+          title={narrow ? L.shell.menu : keyHint(L.sidebar.expand)}
+          aria-label={narrow ? L.shell.menu : keyHint(L.sidebar.expand)}
           onClick={onOpenSidebar}
         >
           {narrow ? <MenuIcon /> : <PanelIcon />}

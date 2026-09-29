@@ -76,18 +76,15 @@ export function InviteConfirm({
 
   if (state.phase === "idle") return null;
 
+  // 읽지 못한 파일에 「가져왔어요」라고 말하지 않는다.
+  const title = state.phase === "error" ? L.invite.errorTitle : L.invite.title;
+
   return (
     <div className="nx nx-modal-host">
       <div className={`nx-modal-back${closing ? " nx-modal-back--out" : ""}`} role="presentation">
-        <div
-          ref={panel}
-          className="nx-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label={L.invite.title}
-        >
+        <div ref={panel} className="nx-modal" role="dialog" aria-modal="true" aria-label={title}>
           <div className="nx-mhd">
-            <h2>{L.invite.title}</h2>
+            <h2>{title}</h2>
             {state.phase !== "applying" && (
               <button
                 type="button"
@@ -104,12 +101,10 @@ export function InviteConfirm({
 
             {state.phase === "error" && (
               <>
-                {/* 첫 실행의 체크리스트가 같은 오류를 이미 말한다 — 이중으로 세지 않는다. */}
-                {!state.firstRun && (
-                  <p className="nx-snote nx-ob-d--red" role="alert">
-                    {state.error}
-                  </p>
-                )}
+                {/* 첫 실행에서도 판이 오류를 직접 말한다 — 판이 체크리스트 위를 덮어 그 뒤의 오류 줄은 안 보인다. */}
+                <p className="nx-snote nx-ob-d--red" role="alert">
+                  {state.error}
+                </p>
                 <div className="nx-mfoot">
                   <button type="button" className="nx-btn" onClick={onOpenPicker}>
                     {L.invite.otherFile}

@@ -1,9 +1,11 @@
 import {
+  ArrowDown,
   ArrowUp,
   Check,
   ChevronDown,
   ChevronRight,
   CircleCheck,
+  CornerDownLeft,
   House,
   type LucideIcon,
   Menu,
@@ -36,6 +38,11 @@ export const CheckIcon = make(Check, 14, 2.2);
 export const CalmIcon = make(CircleCheck, 16);
 export const SendIcon = make(ArrowUp, 16, 2.2);
 export const SparkIcon = make(Sparkle, 14);
+
+/** 키캡 안의 글리프 — 찾기 창 바닥의 키 안내(↑↓ · ↵). 글자 화살표는 폰트마다 크기와 무게가 달라 그림으로 그린다. */
+export const KeyUpIcon = make(ArrowUp, 11, 2.2);
+export const KeyDownIcon = make(ArrowDown, 11, 2.2);
+export const KeyEnterIcon = make(CornerDownLeft, 11, 2.2);
 
 /** 도는 표식 — 목업의 `.spin.sm`. */
 export function Spin() {

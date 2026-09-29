@@ -3,6 +3,7 @@ import { type DaemonNotice, noticeForState } from "./notices.js";
 import type { PreviewDriverFactory } from "./preview-driver.js";
 import type { RepoWorkspace } from "./repo.js";
 import {
+  type A11yBaseline,
   type GateScreen,
   gateBrief,
   inspectScreens,
@@ -53,6 +54,8 @@ export function gateOutcomeStats(outcome: GateOutcome): {
   skipped?: string;
   unsettled?: number;
   blank?: number;
+  overflow?: number;
+  a11y?: number;
   consoleLines?: number;
   netLines?: number;
   rescued?: number;
@@ -68,6 +71,8 @@ export function gateOutcomeStats(outcome: GateOutcome): {
       screens: outcome.kept,
       unsettled: outcome.troubles.filter((trouble) => trouble.unsettled).length,
       blank: outcome.troubles.filter((trouble) => trouble.blank).length,
+      overflow: outcome.troubles.filter((trouble) => trouble.overflow !== undefined).length,
+      a11y: outcome.troubles.filter((trouble) => trouble.a11y !== undefined).length,
       consoleLines: outcome.troubles.reduce((sum, trouble) => sum + trouble.consoleCount, 0),
       netLines: outcome.troubles.reduce((sum, trouble) => sum + trouble.netCount, 0),
       rescued: outcome.troubles.filter((trouble) => trouble.rescued).length,
@@ -139,8 +144,24 @@ export class PreviewDrivers {
    * 답하며 구독을 태운다. 두 번째 문제는 사람의 다음 턴이 본다.
    */
   readonly gatedSessions = new Set<string>();
+  /**
+   * 프로젝트(클론 경로)마다 지난번에 본 접근성 문제의 기억(2026-09-29) — 게이트가 "새로 생긴 것"만
+   * 문제로 세게 한다. 데몬이 살아 있는 동안만 산다: 다시 켜면 화면마다 한 번은 원래 있던 문제도
+   * 말하는 것으로 돌아가고, 그 한 번은 브리프가 범위를 좁힌다.
+   */
+  private readonly a11yBaselines = new Map<string, A11yBaseline>();
 
   constructor(private readonly deps: PreviewDriverDeps) {}
+
+  /** 이 프로젝트의 접근성 기억 — 없으면 새로 연다. */
+  private a11yBaselineOf(projectKey: string): A11yBaseline {
+    let baseline = this.a11yBaselines.get(projectKey);
+    if (baseline === undefined) {
+      baseline = new Map();
+      this.a11yBaselines.set(projectKey, baseline);
+    }
+    return baseline;
+  }
 
   /** pin·캡처 하나 — 이 턴의 목록에 담는다. preview origin 밖의 주소는
    *  게이트가 재검증할 대상이 아니므로 runGate 에서 걸러진다. */
@@ -257,7 +278,9 @@ export class PreviewDrivers {
         /** 게이트 스스로 깨진 것 — 판정이 아니라 확인 불능이다. */
         let broken = false;
         try {
-          troubles = await inspectScreens(driver, kept);
+          troubles = await inspectScreens(driver, kept, {
+            a11y: this.a11yBaselineOf(repo?.root ?? ""),
+          });
         } catch {
           // 게이트가 깨지는 것은 턴의 실패가 아니다 — 확인을 못 했을 뿐이다. 그러나
           // 못했다는 사실까지 삼키면 확인 못 한 턴과 통과한 턴이 같은 침묵이 된다.

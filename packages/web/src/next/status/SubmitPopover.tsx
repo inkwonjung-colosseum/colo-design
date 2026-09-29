@@ -41,7 +41,13 @@ export function SubmitPopover({
   const confirm = () => onConfirm(note.trim());
 
   return (
-    <Popover anchor={anchor} onClose={onClose} align="end" className="nx-work-pop nx-submit-pop">
+    <Popover
+      anchor={anchor}
+      onClose={onClose}
+      align="end"
+      className="nx-work-pop nx-submit-pop"
+      label={more ? L.submitConfirm.titleMore : L.submitConfirm.title}
+    >
       <div className="nx-wp-h">
         <b>{more ? L.submitConfirm.titleMore : L.submitConfirm.title}</b>
         <div>{more ? L.submitConfirm.subMore : L.submitConfirm.sub}</div>

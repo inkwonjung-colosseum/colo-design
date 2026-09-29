@@ -239,14 +239,6 @@
   color: var(--ink3);
 }
 
-.nx-addr-foot {
-  padding: 8px 10px 4px;
-  border-top: 1px solid var(--line);
-  margin-top: 4px;
-  font-size: 11.5px;
-  color: var(--ink3);
-}
-
 .nx-more-pop {
   width: 250px;
 }

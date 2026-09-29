@@ -33,3 +33,26 @@ export function matchRange(query: string, text: string): [number, number] | null
   const at = text.toLowerCase().indexOf(q);
   return at < 0 ? null : [at, at + q.length];
 }
+
+/**
+ * 화살표 한 번이 하이라이트를 옮기는 곳 — 대화·프로젝트 줄 다음에 명령 칩이 이어 서서
+ * 한 줄로 걷는다(`index` 는 그 한 줄의 자리: 줄이 `rows` 개, 그 뒤로 칩이 `commands` 개).
+ * ↑↓ 는 끝에서도 그 자리에 머물며 키를 가져간다 — 입력칸의 커서가 처음 · 끝으로 튀지
+ * 않게. 칩은 가로로 서 있어 칩 위에서는 ←/→ 도 걷는데, 실제로 옮겨 갈 때만 가져가고
+ * 끝에서는 null 을 돌려 입력칸의 커서에 남긴다. 걸음의 일이 아닌 키도 null.
+ */
+export function stepWalk(
+  key: string,
+  index: number,
+  rows: number,
+  commands: number,
+): number | null {
+  const total = rows + commands;
+  if (key === "ArrowDown") return Math.min(index + 1, Math.max(0, total - 1));
+  if (key === "ArrowUp") return Math.max(index - 1, 0);
+  // ←/→ 는 칩의 것이다 — 줄 위에서는 입력칸의 커서가 쓴다.
+  if (index < rows) return null;
+  if (key === "ArrowRight") return index < total - 1 ? index + 1 : null;
+  if (key === "ArrowLeft") return index > rows ? index - 1 : null;
+  return null;
+}

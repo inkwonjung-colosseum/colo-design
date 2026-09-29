@@ -11,6 +11,7 @@ import { threadScreens } from "../../lib/turn-screens";
 import { MoreIcon } from "../chat/icons";
 import { L } from "../labels";
 import { exportFileName } from "../lib/export-name";
+import { useFreshKeys } from "../lib/use-fresh-keys";
 import { ChevronRightIcon, Spin } from "../ui/icons";
 import { Popover } from "../ui/Popover";
 
@@ -57,9 +58,15 @@ export function ConversationList({
     () => threads.filter((thread) => SYSTEM_THREAD_TITLES[thread.title]),
     [threads],
   );
+  // 새로 들어온 대화만 자리를 열며 내려앉는다 — 처음 그릴 때와 프로젝트를 옮길 때는 이미
+  // 있는 줄을 새 것으로 치지 않고, 재정렬에서 옆으로 밀린 줄도 다시 등장하지 않는다.
+  const fresh = useFreshKeys(
+    threads.map((thread) => thread.id),
+    project?.slug ?? "",
+  );
 
-  // 둘째 줄의 화면 — 이 창이 기록을 읽은 대화만 안다. 읽지 않은 대화는 비워 둔다
-  // (모르는 것을 `아직 만든 화면이 없어요` 로 말하지 않는다).
+  // 둘째 줄의 화면 — 이 창이 기록을 읽은 대화만 안다. 읽지 않은 대화 · 화면이 아직 없는
+  // 대화는 둘째 줄이 없다.
   const previewUrl = daemon.repo?.previewUrl ?? null;
   const screensById = useMemo(() => {
     const toPath = (href: string) => previewPathOf(href, previewUrl);
@@ -70,7 +77,8 @@ export function ConversationList({
       const titles = threadScreens(view.blocks, toPath).flatMap((screen) =>
         screen.title ? [screen.title] : [],
       );
-      out.set(id, titles.length > 0 ? titles.join(" · ") : L.sidebar.noScreensYet);
+      // 만든 화면이 없으면 둘째 줄을 비운다 — 빈 자리를 말로 채우지 않는다.
+      out.set(id, titles.join(" · "));
     }
     return out;
   }, [daemon.sessions, previewUrl]);
@@ -168,7 +176,7 @@ export function ConversationList({
     });
   };
 
-  const row = (thread: ThreadSummary) => {
+  const rowBody = (thread: ThreadSummary) => {
     const view = daemon.sessions[thread.id];
     const failed = view?.state === "error";
     const on = threadView && thread.id === activeSessionId;
@@ -185,7 +193,7 @@ export function ConversationList({
 
     if (renaming?.id === thread.id) {
       return (
-        <div key={thread.id} className="nx-conv-row">
+        <div className="nx-conv-row">
           <input
             ref={renameInput}
             className="nx-conv-rename"
@@ -206,7 +214,6 @@ export function ConversationList({
 
     return (
       <div
-        key={thread.id}
         className={`nx-conv-row${on ? " nx-conv-row--on" : ""}${menuOpen ? " nx-conv-row--menu" : ""}`}
       >
         <button
@@ -318,6 +325,13 @@ export function ConversationList({
       </div>
     );
   };
+
+  // 줄을 격자 감싸개로 싼다 — 새 줄이 높이 0 에서 제 높이로 열리며 아래 줄을 밀어낸다.
+  const row = (thread: ThreadSummary) => (
+    <div key={thread.id} className={`nx-item${fresh.has(thread.id) ? " nx-item--new" : ""}`}>
+      {rowBody(thread)}
+    </div>
+  );
 
   const toolOpen = tool.some((thread) => thread.id === activeSessionId);
   return (

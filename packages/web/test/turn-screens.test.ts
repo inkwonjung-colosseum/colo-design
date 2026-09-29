@@ -4,10 +4,13 @@ import { test } from "node:test";
 import { previewPathOf } from "../src/lib/screen-link.ts";
 import {
   lastTurnScreens,
+  pageTitleOf,
   screenKey,
   screenLinksOf,
+  screenNameOfTitle,
   threadScreens,
   titleOfPath,
+  withoutTrailingScreenLinks,
 } from "../src/lib/turn-screens.ts";
 
 const PREVIEW = "http://127.0.0.1:5274/";
@@ -91,6 +94,45 @@ test("대화의 화면은 최근에 말한 것이 앞, 제목은 마지막 것�
   ]);
 });
 
+test("답 끝의 화면 링크 줄은 뺀다 — 카드가 같은 말을 한다", () => {
+  const text =
+    "검색창을 넣었습니다.\n\n- 이름으로 찾아 보세요\n\n[회원 목록](http://127.0.0.1:5274/member/list)\n";
+  assert.equal(
+    withoutTrailingScreenLinks(text, toPath),
+    "검색창을 넣었습니다.\n\n- 이름으로 찾아 보세요",
+  );
+});
+
+test("링크가 여러 줄이어도 목록 기호가 붙어도 끝의 링크 줄만 걷는다", () => {
+  const text =
+    "고쳤습니다.\n\n- [회원 목록](http://127.0.0.1:5274/member/list)\n\n* **[주문](http://127.0.0.1:5274/order)** · [상세](http://127.0.0.1:5274/order/1)";
+  assert.equal(withoutTrailingScreenLinks(text, toPath), "고쳤습니다.");
+});
+
+test("문장 속 링크와 앞에 말이 붙은 링크 줄은 그대로 둔다", () => {
+  const inline = "[회원 목록](http://127.0.0.1:5274/member/list) 에서 확인하세요.";
+  assert.equal(withoutTrailingScreenLinks(inline, toPath), inline);
+  const labelled = "만들었습니다.\n\n미리보기: [회원 목록](http://127.0.0.1:5274/member/list)";
+  assert.equal(withoutTrailingScreenLinks(labelled, toPath), labelled);
+});
+
+test("미리보기 밖의 링크 줄과 섞인 줄은 링크 줄이 아니다", () => {
+  const external = "참고했습니다.\n\n[문서](https://github.com/o/r)";
+  assert.equal(withoutTrailingScreenLinks(external, toPath), external);
+  const mixed =
+    "고쳤습니다.\n\n[회원 목록](http://127.0.0.1:5274/member/list) · [문서](https://github.com/o/r)";
+  assert.equal(withoutTrailingScreenLinks(mixed, toPath), mixed);
+});
+
+test("맨 주소만 있는 끝 줄도 걷고, 링크만 있는 답은 통째로 둔다", () => {
+  assert.equal(
+    withoutTrailingScreenLinks("보세요.\n\nhttp://127.0.0.1:5274/member/list", toPath),
+    "보세요.",
+  );
+  const only = "[회원 목록](http://127.0.0.1:5274/member/list)";
+  assert.equal(withoutTrailingScreenLinks(only, toPath), only);
+});
+
 test("같은 화면의 잣대는 끝 슬래시와 해시를 무시하고 쿼리는 지킨다", () => {
   assert.equal(screenKey("/member/list/"), "/member/list");
   assert.equal(screenKey("/member/list#top"), "/member/list");
@@ -100,4 +142,23 @@ test("같은 화면의 잣대는 끝 슬래시와 해시를 무시하고 쿼리�
   const screens = [{ path: "/member/list", title: "회원 목록" }];
   assert.equal(titleOfPath(screens, "/member/list/"), "회원 목록");
   assert.equal(titleOfPath(screens, "/order"), null);
+});
+
+test("문서 제목의 첫 조각이 화면 이름이다", () => {
+  assert.equal(screenNameOfTitle("대시보드 · OMS · ColoNova"), "대시보드");
+  assert.equal(screenNameOfTitle("회원 목록 | Admin"), "회원 목록");
+  assert.equal(screenNameOfTitle("주문-상세"), "주문-상세");
+  assert.equal(screenNameOfTitle("  "), null);
+});
+
+test("다른 화면과 같은 문서 제목은 화면의 이름이 아니다", () => {
+  const titles = new Map([
+    ["/oms/oms-dashboard/dashboard", "대시보드 · OMS · ColoNova"],
+    ["/oms/order", "주문 목록 · OMS · ColoNova"],
+  ]);
+  assert.equal(pageTitleOf(titles, "/oms/oms-dashboard/dashboard/"), "대시보드");
+  assert.equal(pageTitleOf(titles, "/wms"), null);
+  titles.set("/oms/order/1", "주문 목록 · OMS · ColoNova");
+  assert.equal(pageTitleOf(titles, "/oms/order"), null);
+  assert.equal(pageTitleOf(titles, "/oms/oms-dashboard/dashboard"), "대시보드");
 });

@@ -234,6 +234,8 @@ interface PreviewPage {
   zoomFactor: number;
   /** D89: the last 20 console lines, for the 화면 보여 주기 turn. */
   readonly consoleLog: string[];
+  /** 문서가 스스로 단 제목(`<title>`) — 없으면 빈 칸. 주소창이 화면 이름으로 읽는다. */
+  title: string;
   /** When the page was last on screen — the cap ends the ones left longest ago. */
   shownAt: number;
 }
@@ -1173,6 +1175,7 @@ export class PlannerPreviewView {
         failed: false,
         zoomFactor: 1,
         consoleLog: [],
+        title: "",
         shownAt: 0,
       };
       if (page.home !== null) this.pages.set(origin, page);
@@ -1258,6 +1261,8 @@ export class PlannerPreviewView {
     contents.on("did-navigate", (_event, url) => {
       page.mountedUrl = url;
       page.failed = false;
+      // 새 문서다 — 앞 문서의 제목은 이 주소의 이름이 아니다.
+      page.title = "";
       // ① kind 재계산 — URL 이 결정한다. repo origin 에 착지하면 preview 로,
       // 링크를 타고 나가면 web 으로.
       const origin = safeOrigin(url);
@@ -1295,6 +1300,11 @@ export class PlannerPreviewView {
       // 없다(origin 은 안 바뀐다) — 핀 리플레이만 kind 가드로 통과한다.
       if (page.kind !== "preview") return;
       if (this.lastPins) this.sendPins(contents, this.lastPins);
+    });
+    // 제목이 없는 문서에 Chromium 이 주소로 지어 준 제목(explicitSet 거짓)은 이름이 아니다.
+    contents.on("page-title-updated", (_event, title, explicitSet) => {
+      page.title = explicitSet ? title.trim() : "";
+      if (this.activePage === page) this.sendLocation(page);
     });
     contents.on("did-start-loading", () => {
       if (this.activePage === page) this.send("nova-preview:loading", { on: true });
@@ -1411,6 +1421,7 @@ export class PlannerPreviewView {
       kind: page.kind,
       path,
       url,
+      title: page.title,
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
     });

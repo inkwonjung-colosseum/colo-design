@@ -9,7 +9,7 @@ const overlay = (name: string): OverlayLike => ({
 });
 
 test("topmostOverlay: 팔레트가 열려 있기만 해도 그것이 맨 위다", () => {
-  const overlays = [overlay("nx-modal-back"), overlay("palette"), overlay("nx-set-back")];
+  const overlays = [overlay("nx-modal-back"), overlay("nx-pal"), overlay("nx-set-back")];
   assert.equal(topmostOverlay(overlays), overlays[1]);
 });
 
@@ -26,7 +26,7 @@ test("topmostOverlay: 열린 덮개가 없으면 맨 위도 없다", () => {
 
 test("escapeCloses: 맨 위 층의 판만 답하고, 아래 층은 기다린다", () => {
   const settings = overlay("nx-set-back");
-  const palette = overlay("palette");
+  const palette = overlay("nx-pal");
   // 설정 위에 팔레트가 떠 있으면 설정은 Esc 에 답하지 않는다.
   assert.equal(escapeCloses(settings, [settings, palette]), false);
   assert.equal(escapeCloses(palette, [settings, palette]), true);

@@ -14,6 +14,8 @@ export interface PreviewLocation {
   path: string;
   /** The full address — 외부 페이지는 주소창에 통째로 보여 준다. */
   url?: string;
+  /** 문서가 스스로 단 제목(`<title>`) — 주소창이 화면 이름의 마지막 재료로 읽는다. */
+  title?: string;
   /** repo origin 위면 `preview`, 그 밖이면 `web` — 외부 페이지 모드의 자리. */
   kind: "preview" | "web";
   canGoBack: boolean;

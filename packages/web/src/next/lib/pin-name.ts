@@ -116,3 +116,42 @@ export function shownPinLabel(label: string, spot: string): string {
   if (trimmed === "" || Object.hasOwn(BARE_TAG_NAMES, trimmed)) return spot;
   return trimmed;
 }
+
+/** 말풍선 머리의 이름표에 필요한 요소의 모양 — 짚은 요소가 이 정도만 알려 준다. */
+export interface PinTitleElement {
+  kind?: string;
+  /** 태그 이름. */
+  component: string;
+  text: string;
+  a11y?: { role?: string; name?: string };
+}
+
+/** 이름표에 필요한 낱말 — 부르는 쪽(`L.pin`)이 넘긴다. */
+export interface PinTitleWords {
+  area: string;
+  point: string;
+  kindButton: string;
+  kindLink: string;
+  kindImage: string;
+  kindInput: string;
+}
+
+const TITLE_MAX = 18;
+
+/**
+ * 핀 말풍선 머리의 이름 — 사람이 읽는 말만: 접근성 이름 → 요소의 글자 → 요소의 종류(버튼 · 링크
+ * · 그림 · 입력칸) → `찍은 곳`. 영역이면 `영역`. 컴포넌트 이름과 testid 는 개발자의 어휘라 쓰지
+ * 않는다(그것들은 AI 에게 가는 턴에는 그대로 실린다).
+ */
+export function pinTitle(element: PinTitleElement, words: PinTitleWords): string {
+  if (element.kind === "region") return words.area;
+  const named = element.a11y?.name?.trim() || element.text.trim();
+  if (named) return named.length > TITLE_MAX ? `${named.slice(0, TITLE_MAX)}…` : named;
+  const tag = element.component.toLowerCase();
+  const role = element.a11y?.role;
+  if (tag === "button" || role === "button") return words.kindButton;
+  if (tag === "a" || role === "link") return words.kindLink;
+  if (tag === "img" || tag === "svg" || role === "img") return words.kindImage;
+  if (tag === "input" || tag === "textarea" || tag === "select") return words.kindInput;
+  return words.point;
+}

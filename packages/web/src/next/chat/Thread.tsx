@@ -14,7 +14,11 @@ import type { Block } from "../../lib/daemon-client";
 import { previewPathOf } from "../../lib/screen-link";
 import { blockOnTape, mergeThinking } from "../../lib/tape-visibility";
 import { turnAnswerText, turnBlockNumbers } from "../../lib/turn-numbering";
-import { lastTurnScreens, type TurnScreen } from "../../lib/turn-screens";
+import {
+  lastTurnScreens,
+  type TurnScreen,
+  withoutTrailingScreenLinks,
+} from "../../lib/turn-screens";
 import { L } from "../labels";
 import { shownPinLabel } from "../lib/pin-name";
 import {
@@ -169,6 +173,8 @@ export function Thread(props: ThreadProps) {
   // 턴 끝마다: 그 턴이 말한 화면과 마지막 답 한 조각.
   const screensByTurn = new Map<string, TurnScreen[]>();
   const lastAnswerByTurn = new Map<string, string>();
+  // `고친 화면` 카드가 서는 답의 글 — 끝의 화면 링크 줄은 카드와 같은 말이라 글에서 뺀다.
+  const cardedTexts = new Set<string>();
   let segmentStart = 0;
   let lastText: string | null = null;
   blocks.forEach((block, index) => {
@@ -179,7 +185,13 @@ export function Thread(props: ThreadProps) {
       lastText = block.text;
     } else if (block.type === "turn") {
       if (props.previewUrl) {
-        screensByTurn.set(block.id, lastTurnScreens(blocks.slice(segmentStart, index + 1), toPath));
+        const screens = lastTurnScreens(blocks.slice(segmentStart, index + 1), toPath);
+        screensByTurn.set(block.id, screens);
+        if (screens.length > 0 && !failed(block)) {
+          for (const earlier of blocks.slice(segmentStart, index)) {
+            if (earlier.type === "text" && earlier.agentId === null) cardedTexts.add(earlier.id);
+          }
+        }
       }
       if (lastText !== null) lastAnswerByTurn.set(block.id, lastText);
     }
@@ -298,7 +310,8 @@ export function Thread(props: ThreadProps) {
               {canResend && (
                 <button
                   type="button"
-                  className="nx-ue"
+                  // 마지막 말의 것만 늘 연하게 보인다 — AI 가 엉뚱할 때 가장 먼저 찾는 탈출구다.
+                  className={`nx-ue${block.id === lastUserId ? " nx-ue--last" : ""}`}
                   title={L.transcript.editResendTip}
                   onClick={() => props.onEditResend(prompt, block.text)}
                 >
@@ -358,13 +371,16 @@ export function Thread(props: ThreadProps) {
         }
         const first = !aiOpened;
         aiOpened = true;
+        const shown = cardedTexts.has(block.id)
+          ? withoutTrailingScreenLinks(block.text, toPath)
+          : block.text;
         return (
           <div className={`nx-m-ai${first ? "" : " nx-m-ai--cont"}`}>
             <div className="nx-av" aria-hidden="true">
               {first && <SparkIcon />}
             </div>
             <div className={`nx-m-body${block.streaming ? " nx-m-live" : ""}`}>
-              <Markdown text={block.text} />
+              <Markdown text={shown} />
             </div>
           </div>
         );

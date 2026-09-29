@@ -69,6 +69,49 @@ export function screenLinksOf(text: string, toPath: ToPath): TurnScreen[] {
   return found.sort((a, b) => a.at - b.at).map((entry) => entry.screen);
 }
 
+/** 링크 줄에 남아도 되는 것 — 목록 · 제목 표시와 구분 기호뿐이다(`- ` · `1. ` · `**` · `·`). */
+const LINK_LINE_LEFTOVER = /^(?:[\s\-*+•·|,;:>#]|\d+[.)])*$/;
+
+/** 이 미리보기의 화면 링크(들)만 있는 줄인가 — 앞에 붙은 말이 있으면 링크가 아니라 문장이다. */
+function isScreenLinkLine(line: string, toPath: ToPath): boolean {
+  let count = 0;
+  const rest = line
+    .replace(MD_LINK, (whole: string, _title: string, href: string) => {
+      if (toPath(href) === null) return whole;
+      count += 1;
+      return "";
+    })
+    .replace(BARE_URL, (whole: string) => {
+      if (toPath(whole.replace(/[.,;:!?]+$/, "")) === null) return whole;
+      count += 1;
+      return "";
+    });
+  return count > 0 && LINK_LINE_LEFTOVER.test(rest);
+}
+
+/**
+ * 답 끝에 남은 화면 링크 줄을 뺀 글 — 공통 규칙이 답의 맨 끝에 `[제목](전체 주소)` 를
+ * 남기게 하는데(미리보기를 옮기고 `고친 화면` 카드를 세우는 데이터의 길이다), 카드가
+ * 서면 같은 말이 두 번 보인다. 그래서 카드가 서는 답에서만 끝의 링크 줄(들)을 글에서 뺀다.
+ * 문장 속의 링크와 링크 앞에 말이 붙은 줄은 그대로 둔다. 링크만 있는 답은 통째로 두어
+ * 빈 말풍선을 만들지 않는다.
+ */
+export function withoutTrailingScreenLinks(text: string, toPath: ToPath): string {
+  const lines = text.split("\n");
+  let keep = lines.length;
+  let dropped = false;
+  for (let at = lines.length - 1; at >= 0; at -= 1) {
+    const line = lines[at] ?? "";
+    if (line.trim() === "") continue;
+    if (!isScreenLinkLine(line, toPath)) break;
+    keep = at;
+    dropped = true;
+  }
+  if (!dropped) return text;
+  const kept = lines.slice(0, keep).join("\n").trimEnd();
+  return kept === "" ? text : kept;
+}
+
 /** 본 에이전트의 답변 글 — 하위 에이전트의 중간 보고는 사용자의 답이 아니다. */
 function answerTexts(blocks: readonly Block[]): string[] {
   const texts: string[] = [];
@@ -129,4 +172,29 @@ export function threadScreens(blocks: readonly Block[], toPath: ToPath): TurnScr
 export function titleOfPath(screens: readonly TurnScreen[], path: string): string | null {
   const key = screenKey(path);
   return screens.find((screen) => screenKey(screen.path) === key)?.title ?? null;
+}
+
+/** 문서 제목의 조각 가르개 — `화면명 · 앱 · 사이트` 의 가운뎃점과 흔한 이웃들. */
+const TITLE_SEPARATOR = /\s+[·|–—-]\s+/;
+
+/**
+ * 문서가 스스로 단 제목(`<title>`)에서 화면 이름을 — 첫 조각이다. 흔한 문양이
+ * `화면명 · 사이트` 라서 `대시보드 · OMS · ColoNova` 는 `대시보드` 다.
+ */
+export function screenNameOfTitle(title: string): string | null {
+  const first = title.trim().split(TITLE_SEPARATOR)[0]?.trim() ?? "";
+  return first === "" ? null : first;
+}
+
+/**
+ * 지나온 화면들의 문서 제목(열쇠는 screenKey) 중 이 경로의 이름. 다른 화면과
+ * 같은 제목이면 화면을 가리키는 이름이 아니다 — 모든 화면에 사이트 이름만 거는
+ * 앱, 제목을 바꾸지 않는 SPA 이동이 그렇다.
+ */
+export function pageTitleOf(titles: ReadonlyMap<string, string>, path: string): string | null {
+  const key = screenKey(path);
+  const title = titles.get(key);
+  if (title === undefined) return null;
+  for (const [other, seen] of titles) if (other !== key && seen === title) return null;
+  return screenNameOfTitle(title);
 }

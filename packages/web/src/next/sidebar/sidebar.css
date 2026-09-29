@@ -293,18 +293,32 @@
   position: relative;
   display: block;
   width: 100%;
-  padding: 7px 8px 7px 10px;
+  padding: 8px 6px 8px 14px;
   border-radius: var(--r);
 }
 
-.nx .nx-conv:hover {
+/* 강조는 줄(.nx-conv-row)이 든다 — 제목 단추와 `···` 가 한 상자 안에 있어야 눌린 줄이
+   하나로 읽힌다(단추만 칠하면 `···` 가 바탕 위에 떠 보인다). */
+.nx .nx-conv-row:hover {
   background: var(--nx-hover);
 }
 
-/* 지금 대화 — 안쪽 가장자리의 강조색 막대로 한눈에. */
-.nx .nx-conv--on {
+.nx .nx-conv-row--on,
+.nx .nx-conv-row--menu {
   background: var(--nx-selected);
-  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* 지금 대화 — 가장자리에서 띄운 짧은 강조색 막대. 모서리 곡률에 잘리지 않는다. */
+.nx .nx-conv-row--on::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
 }
 
 .nx-conv-t {
@@ -339,6 +353,7 @@
   position: relative;
   display: flex;
   align-items: center;
+  border-radius: var(--r);
 }
 
 .nx-conv-row .nx-conv {
@@ -359,16 +374,15 @@
   place-items: center;
   border-radius: 7px;
   color: var(--ink3);
-  /* 카드색 알약 — 사이드바 바탕 위에서도 단추 영역이 읽히게. */
-  background: var(--card);
-  border: 1px solid var(--line);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  /* 줄의 강조 안에 앉는 맨 단추 — 누를 자리는 호버에서만 칠한다. */
+  background: transparent;
   opacity: 0;
   pointer-events: none;
 }
 
-.nx .nx-conv-menu:hover {
-  border-color: var(--line2);
+.nx .nx-conv-menu:hover,
+.nx .nx-conv-menu[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
   color: var(--ink);
 }
 .nx .nx-conv-row--on .nx-conv-menu,

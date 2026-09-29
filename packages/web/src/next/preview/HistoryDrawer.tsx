@@ -113,7 +113,7 @@ export function HistoryDrawer({
       const target = event.target as HTMLElement | null;
       const typing = target?.closest("input, textarea, [contenteditable]") !== null;
       if (typing && !panel.current?.contains(target)) return;
-      if (document.querySelector(".modal, .palette")) return;
+      if (document.querySelector(".modal, .nx-pal")) return;
       if (confirmRef.current === null) onClose();
       else {
         setConfirm(null);

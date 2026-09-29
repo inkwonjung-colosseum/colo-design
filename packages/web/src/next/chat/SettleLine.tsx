@@ -95,7 +95,13 @@ export function SettleLine({
             <MoreIcon />
           </button>
           {open && (
-            <Popover anchor={anchor} onClose={() => setOpen(false)} up className="nx-settle-pop">
+            <Popover
+              anchor={anchor}
+              onClose={() => setOpen(false)}
+              up
+              float
+              className="nx-settle-pop"
+            >
               {onFork && (
                 <>
                   <button

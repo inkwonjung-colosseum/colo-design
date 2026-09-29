@@ -652,23 +652,6 @@ select {
   filter: drop-shadow(0 2px 6px var(--accent-glow));
 }
 
-.dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  display: inline-block;
-  flex: none;
-}
-.dot--live {
-  background: var(--ok);
-}
-/* Finished-unseen, not running: a hollow ring so the two never read alike at
-   a glance, which is the only job either of them has. */
-.dot--done {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--accent);
-}
-
 .tag {
   font: 500 var(--font-ui-100) var(--mono);
   background: transparent;
@@ -1587,13 +1570,6 @@ select {
   color: var(--text);
 }
 
-@keyframes paletterise {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.985);
-  }
-}
-
 /* --------------------------------------------------------------- settings */
 
 .modal {
@@ -1669,158 +1645,6 @@ select {
   padding: 4px 20px 20px;
   display: flex;
   flex-direction: column;
-}
-
-/* The ⌘K palette: the frame's every jump behind one overlay — threads
-   newest first, projects, and the common commands as chips under the list.
-   The modal's bones (scrim, panel, self-dismissing backdrop) one level
-   above: it may open over a dialog, never under one. */
-.palette {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  background: var(--scrim);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 10vh 20px 24px;
-  animation: nx-fade 0.12s;
-}
-.palette__panel {
-  width: 100%;
-  max-width: 520px;
-  background: var(--panel);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-dialog);
-  box-shadow: var(--shadow-float);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: paletterise 0.16s ease-out;
-}
-.palette__panel:focus {
-  outline: none;
-}
-.palette__search {
-  width: 100%;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--line-soft);
-  border-radius: 0;
-}
-.palette__searchrow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-left: 12px;
-  border-bottom: 1px solid var(--line-soft);
-  color: var(--muted);
-}
-.palette__searchrow .palette__search {
-  border-bottom: 0;
-  padding-left: 0;
-}
-.palette__search:focus {
-  /* The field is the panel's only focusable and holds focus the whole time
-     the palette is open — the global :focus-visible ring would just clip
-     against the panel's overflow:hidden edge (mockup: outline none). */
-  outline: none;
-  background: transparent;
-  border-color: var(--line-soft);
-  box-shadow: none;
-}
-.palette__list {
-  margin: 0;
-  padding: 6px;
-  list-style: none;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.palette__group {
-  padding: 8px 8px 2px;
-  color: var(--muted);
-  font: 600 var(--font-ui-110) var(--sans);
-  letter-spacing: 0.02em;
-}
-.palette__row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
-  font-size: var(--font-ui-125);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-}
-.palette__row--on {
-  background: var(--accent-soft);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-.palette__label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.palette__label mark {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: inherit;
-  border-radius: 2px;
-  padding: 0 1px;
-}
-.palette__icon {
-  display: inline-flex;
-  flex: none;
-  color: var(--muted);
-}
-.palette__hint {
-  flex: none;
-  color: var(--muted);
-  font-size: var(--font-ui-110);
-}
-.palette__foot {
-  display: flex;
-  gap: 14px;
-  padding: 7px 12px;
-  border-top: 1px solid var(--line-soft);
-  color: var(--muted);
-  font-size: var(--font-ui-110);
-}
-.palette__foot kbd {
-  font: 600 var(--font-ui-105) var(--mono);
-  color: var(--text);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 0 5px;
-  margin-right: 3px;
-}
-.palette__error {
-  margin: 0 6px;
-}
-
-/* 명령 칩 — 목록 밑의 상시 손잡이(오버레이 목업 05). 검색은 목록을 좁히고,
-   네 개의 흔한 명령은 자리를 지킨다. .chip 은 첨부 칩과 형제라 골격만
-   빌리고, 칸과 글자는 팔레트의 행에 맞춘다. */
-.palette__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--line-soft);
-}
-.palette__actions .chip {
-  background: var(--panel);
-  padding: 4px 10px;
-  font: 500 var(--font-ui-120) var(--sans);
-  color: var(--text-2);
-  cursor: pointer;
-}
-.palette__actions .chip svg {
-  flex: none;
-}
-.palette__actions .chip:hover {
-  border-color: var(--line-hover);
-  color: var(--text);
 }
 
 /* 설정의 한 열 — 검색 한 줄, 방들의 아코디언, 저장 위치의 한 줄. 접힌 방은
@@ -2467,26 +2291,6 @@ button .ic {
   flex: none;
 }
 
-/* A quiet column for "nothing here yet" inside menus and small panels —
-   the big rooms keep .empty; this is the doorway-sized one. */
-.menuempty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 22px 14px 18px;
-  color: var(--muted);
-  font: 400 var(--font-ui-125) / 1.6 var(--sans);
-  text-align: center;
-}
-.menuempty .ic {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--r-lg);
-  background: var(--panel-2);
-  color: var(--muted);
-}
-
 /* ---------------------------------------------------------------------------
  * 기존 어휘의 재사용만: 새 토큰 0, 새 색 0. 모든 모션은 전역 reduced-motion
  * 규칙과 짝을 이룬다.
@@ -2524,8 +2328,4 @@ button .ic {
   100% {
     box-shadow: 0 0 0 0 transparent;
   }
-}
-
-.dot--ask {
-  background: var(--warn);
 }

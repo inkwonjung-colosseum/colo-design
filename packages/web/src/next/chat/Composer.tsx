@@ -9,6 +9,7 @@ import { koreanNoticeWords } from "../../lib/error-words";
 import { composing } from "../../lib/ime";
 import { isInviteFile, offerInviteFile } from "../../lib/invite-bus";
 import { L } from "../labels";
+import { keyHint } from "../lib/key-hint";
 import { fastChip, fastCost, fastTipWords, fastToast, sizeText } from "../lib/thread";
 import { BoltIcon, ClipIcon, FileIcon, ImageIcon, PinIcon, StopIcon, UpIcon, XIcon } from "./icons";
 import { ModelChip } from "./ModelChip";
@@ -108,6 +109,20 @@ interface Editor {
 }
 
 const EMPTY: Editor = { text: "", attachments: [] };
+
+/**
+ * 입력창이 초점을 가져가도 되는지 — 손이 이미 다른 입력칸이나 팝 · 대화상자 안에 있으면
+ * 뺏지 않는다(미리보기의 단축키 판정과 같은 목록).
+ */
+const KEEP_FOCUS =
+  "input, textarea, select, [contenteditable], [role='dialog'], [role='alertdialog'], .nx-pop, .nx-hist";
+
+function claimFocus(el: HTMLTextAreaElement | null): void {
+  if (!el) return;
+  const now = document.activeElement;
+  if (now && now !== el && now.closest(KEEP_FOCUS)) return;
+  el.focus({ preventScroll: true });
+}
 
 /** 핀 칩의 이름 — 요소의 글자, 영역이면 `영역`, 끝까지 못 짚으면 `찍은 곳`. */
 function pinLabel(pin: PinAttachment): string {
@@ -245,6 +260,23 @@ export function Composer({
     setNotice(null);
   }, [draftKey]);
 
+  // 열자마자 칠 수 있게 — 사용자가 말을 쓰는 자리는 이 칸 하나뿐이다. 홈이 열릴 때와 대화가
+  // 바뀔 때(새 대화 · 옮기기) 입력창이 초점을 받는다. 다른 입력칸이나 팝 · 대화상자 안에
+  // 손이 가 있으면 뺏지 않는다.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 열쇠가 바뀔 때만 잡는다.
+  useEffect(() => {
+    claimFocus(area.current);
+  }, [draftKey]);
+
+  // 대화 화면은 홈이 떠 있는 동안에도 마운트돼 있어(미리보기가 살아 있게) 홈에서 넘어올 때는
+  // 열쇠가 바뀌지 않는다 — 셸이 넘어왔다고 알리면(`nx:composer:focus`) 그때 잡는다.
+  useEffect(() => {
+    if (variant !== "thread") return;
+    const onShow = () => claimFocus(area.current);
+    window.addEventListener("nx:composer:focus", onShow);
+    return () => window.removeEventListener("nx:composer:focus", onShow);
+  }, [variant]);
+
   // 고쳐서 다시 보내기 — 그 말이 입력창에 들어오고 커서가 끝에 선다.
   const prefillSeen = useRef<number | null>(null);
   useEffect(() => {
@@ -322,6 +354,11 @@ export function Composer({
       .finally(() => {
         sendingRef.current = false;
         setSending(false);
+        // 보내기 단추를 눌러 보내면 단추가 잠기며 초점이 body 로 떨어진다 — 이어서 칠 수 있게 되돌린다.
+        const now = document.activeElement;
+        if (!now || now === document.body || now.closest(".nx-send")) {
+          area.current?.focus({ preventScroll: true });
+        }
       });
   };
   const submitRef = useRef(submit);
@@ -434,7 +471,10 @@ export function Composer({
     }
   };
 
-  const showStop = running && !hasContent && onStop !== undefined;
+  // 일하는 중에는 멈추기가 늘 곁에 있다 — 글자 한 자만 쳐도 사라지면 멈추고 싶을 때 못 멈춘다.
+  // 글이 있으면 그 옆에 줄 서기 보내기가 함께 선다(답이 끝나면 나간다).
+  const showStop = running && onStop !== undefined;
+  const showSend = !showStop || hasContent;
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 홈의 입력창이 파일을 놓는 자리다 — 드롭은 포인터의 일이고, 키보드는 첨부 단추로 닿는다.
@@ -568,7 +608,12 @@ export function Composer({
         </button>
         {leading}
         {narrow && onPinMode && (
-          <button type="button" className="nx-tbtn" title={L.composer.pinTip} onClick={onPinMode}>
+          <button
+            type="button"
+            className="nx-tbtn"
+            title={keyHint(L.composer.pinTip)}
+            onClick={onPinMode}
+          >
             <PinIcon />
             <span>{L.composer.pin}</span>
           </button>
@@ -609,10 +654,10 @@ export function Composer({
             </button>
           </Tip>
         )}
-        {showStop ? (
+        {showStop && (
           <button
             type="button"
-            className="nx-send nx-send--stop"
+            className={`nx-send nx-send--stop${showSend ? " nx-send--alt" : ""}`}
             title={stopping ? L.chat.stopping : L.composer.stop}
             aria-label={stopping ? L.chat.stopping : L.composer.stop}
             disabled={stopping}
@@ -620,12 +665,13 @@ export function Composer({
           >
             <StopIcon />
           </button>
-        ) : (
+        )}
+        {showSend && (
           <button
             type="button"
             className="nx-send"
-            title={L.composer.send}
-            aria-label={L.composer.send}
+            title={keyHint(running ? L.composer.sendQueue : L.composer.send)}
+            aria-label={keyHint(running ? L.composer.sendQueue : L.composer.send)}
             disabled={!hasContent || sending || locked}
             onClick={submit}
           >

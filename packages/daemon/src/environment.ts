@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { type Dirent, existsSync, realpathSync } from "node:fs";
+import { type Dirent, existsSync, readFileSync, realpathSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -338,7 +338,16 @@ export function childPath(
 const registryAuthCache = new Map<string, { value: RegistryAuth; readAt: number }>();
 const REGISTRY_AUTH_TTL_MS = 5 * 60_000;
 
-type RegistryAuth = "ok" | "unauthenticated" | "unknown";
+export type RegistryAuth = "ok" | "unauthenticated" | "unknown";
+
+/**
+ * Where to test the connected repo's private registry: its clone (so its
+ * `.npmrc` is in scope) and the npm scope that `.npmrc` maps, `@` included.
+ */
+export interface RegistryProbe {
+  dir: string;
+  scope: string;
+}
 
 /**
  * pnpm reports a private-registry rejection as a 401/403 fetch error. A bare
@@ -349,27 +358,76 @@ export function detectsRegistryAuthFailure(output: string): boolean {
     output,
   );
 }
-/**
- * Whether this machine can read the CDS packages from GitHub Packages. Run in
- * the connected repo's clone so its `.npmrc` (registry mapping) is in scope;
- * repos that declare no registry are not probed at all.
- */
-export async function readCdsRegistryAuth(
-  pnpm: string | null,
-  cwd: string | null,
-): Promise<RegistryAuth> {
-  if (!pnpm || !cwd || !existsSync(cwd)) return "unknown";
-  const cached = registryAuthCache.get(cwd);
-  if (cached && Date.now() - cached.readAt < REGISTRY_AUTH_TTL_MS) return cached.value;
+/** Specs that never come from the registry — a probe on them proves nothing. */
+const NON_REGISTRY_SPEC =
+  /^(?:workspace|file|link|portal|npm|git(?:\+\w+)?|github|gitlab|bitbucket|https?):/i;
 
-  const value = await probeCdsRegistry(pnpm, cwd);
-  registryAuthCache.set(cwd, { value, readAt: Date.now() });
-  return value;
+/**
+ * A scoped npm name, strictly. The name comes out of the repo's own
+ * `package.json` and goes onto a command line (`shell: true` on Windows), so
+ * anything npm itself would refuse — spaces, `&`, `$(…)` — must never get there.
+ */
+const SCOPED_PACKAGE_NAME = /^@[a-z0-9~-][a-z0-9._~-]*\/[a-z0-9~-][a-z0-9._~-]*$/;
+
+/**
+ * The package to test the registry with: one dependency the repo takes from
+ * its declared scope. Only a name in that scope is routed to that registry —
+ * any other name goes to the public one and answers 404 whatever the token is.
+ * (Asking one fixed package of every repo made a repo of another scope get a
+ * false "could not verify" and hid its real 401.) `null` when the root manifest
+ * has none: nothing to test is not a problem, so there is no warning either.
+ */
+export function registryProbeTarget(dir: string, scope: string): string | null {
+  let manifest: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    manifest = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const prefix = `${scope}/`;
+  const usable = (name: string): boolean =>
+    name.startsWith(prefix) && SCOPED_PACKAGE_NAME.test(name);
+  for (const field of ["dependencies", "devDependencies", "optionalDependencies"]) {
+    const deps = manifest[field];
+    if (deps === null || typeof deps !== "object" || Array.isArray(deps)) continue;
+    for (const [name, spec] of Object.entries(deps)) {
+      if (!usable(name)) continue;
+      if (typeof spec === "string" && NON_REGISTRY_SPEC.test(spec.trim())) continue;
+      return name;
+    }
+  }
+  // A repo that IS a package of the scope publishes to that registry itself.
+  return typeof manifest.name === "string" && usable(manifest.name) ? manifest.name : null;
 }
 
-async function probeCdsRegistry(pnpm: string, cwd: string): Promise<RegistryAuth> {
+/**
+ * Whether this machine can read the connected repo's private packages from
+ * GitHub Packages. Run in the repo's clone so its `.npmrc` (registry mapping)
+ * is in scope; repos that declare no registry are not probed at all, and
+ * neither are repos with nothing of that scope to ask for (`target: null`).
+ */
+export async function readRegistryAuth(
+  pnpm: string | null,
+  probe: RegistryProbe | null,
+): Promise<{ auth: RegistryAuth; target: string | null }> {
+  if (!pnpm || !probe || !existsSync(probe.dir)) return { auth: "unknown", target: null };
+  const target = registryProbeTarget(probe.dir, probe.scope);
+  if (target === null) return { auth: "unknown", target: null };
+  const key = `${probe.dir}\u0000${target}`;
+  const cached = registryAuthCache.get(key);
+  if (cached && Date.now() - cached.readAt < REGISTRY_AUTH_TTL_MS) {
+    return { auth: cached.value, target };
+  }
+  const auth = await probeRegistry(pnpm, probe.dir, target);
+  registryAuthCache.set(key, { value: auth, readAt: Date.now() });
+  return { auth, target };
+}
+
+async function probeRegistry(pnpm: string, cwd: string, target: string): Promise<RegistryAuth> {
   try {
-    const { stdout } = await run(pnpm, ["view", "@colosseumcoinckr/cds", "version"], {
+    const { stdout } = await run(pnpm, ["view", target, "version"], {
       cwd,
       shell: currentPlatform() === "win32",
       timeout: 20_000,
@@ -382,6 +440,24 @@ async function probeCdsRegistry(pnpm: string, cwd: string): Promise<RegistryAuth
     // the user can fix by pasting a token, so it must not claim they must.
     return detectsRegistryAuthFailure(text) ? "unauthenticated" : "unknown";
   }
+}
+
+/**
+ * The header warning for a probe result. Nothing to probe says nothing; a
+ * rejection names the package that was refused (the repo's own, not a fixed one).
+ */
+export function registryWarning(read: {
+  auth: RegistryAuth;
+  target: string | null;
+}): string | null {
+  if (read.target === null) return null;
+  if (read.auth === "unauthenticated") {
+    return `GitHub 패키지 저장소가 ${read.target} 요청을 거절했습니다 — 설정의 개인 액세스 토큰(read:packages 권한)을 확인해 주세요.`;
+  }
+  if (read.auth === "unknown") {
+    return "GitHub 패키지 저장소 접근을 확인하지 못했습니다 — 기기가 오프라인이거나 인증이 없으면 연결 레포의 설치가 실패합니다.";
+  }
+  return null;
 }
 
 /**
@@ -479,10 +555,11 @@ export async function buildStatus(input: {
   liveSessions: number;
   pendingPermissions: number;
   /**
-   * Directory to probe GitHub Packages auth in — the connected repo's clone,
-   * and only when that repo declares a registry. Null otherwise.
+   * Where to probe GitHub Packages auth — the connected repo's clone and the
+   * scope its `.npmrc` maps, and only when that repo declares a registry.
+   * Null otherwise.
    */
-  registryProbeDir: string | null;
+  registryProbe: RegistryProbe | null;
   // Plan limits, the model list and the project registry are the server's to
   // own across sessions, so the machine report stops short of the wire shape.
 }): Promise<
@@ -535,16 +612,9 @@ export async function buildStatus(input: {
   // pnpm's absence is the runtime onboarding gate's news, in Korean — an
   // English header warning here would say the same thing twice (PLAN D6).
   const pnpm = await resolvePnpmExecutable();
-  const cdsRegistryAuth = await readCdsRegistryAuth(pnpm, input.registryProbeDir);
-  if (cdsRegistryAuth === "unauthenticated") {
-    warnings.push(
-      "GitHub 패키지 저장소가 @colosseumcoinckr/cds 요청을 거절했습니다 — 설정의 개인 액세스 토큰(read:packages 권한)을 확인해 주세요.",
-    );
-  } else if (cdsRegistryAuth === "unknown" && pnpm && input.registryProbeDir) {
-    warnings.push(
-      "GitHub 패키지 저장소 접근을 확인하지 못했습니다 — 기기가 오프라인이거나 인증이 없으면 연결 레포의 설치가 실패합니다.",
-    );
-  }
+  const registry = await readRegistryAuth(pnpm, input.registryProbe);
+  const registryNote = registryWarning(registry);
+  if (registryNote !== null) warnings.push(registryNote);
 
   return {
     protocolVersion: PROTOCOL_VERSION,
@@ -562,7 +632,7 @@ export async function buildStatus(input: {
     liveSessions: input.liveSessions,
     pendingPermissions: input.pendingPermissions,
     pnpmAvailable: Boolean(pnpm),
-    cdsRegistryAuth,
+    registryAuth: registry.auth,
     warnings,
   };
 }

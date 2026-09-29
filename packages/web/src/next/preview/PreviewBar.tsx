@@ -1,6 +1,7 @@
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { composing } from "../../lib/ime";
 import { L } from "../labels";
+import { keyHint } from "../lib/key-hint";
 import { zoomButtons } from "../lib/preview-geometry";
 import { Popover } from "../ui/Popover";
 import {
@@ -184,7 +185,7 @@ export function PreviewBar({
         <button
           type="button"
           className={`nx-addr${arriveTint ? " nx-addr--tint" : ""}`}
-          aria-label={L.preview.addrLabel}
+          aria-label={`${L.preview.addrLabel} · ${screenName}`}
           aria-haspopup="dialog"
           aria-expanded={addrOpen}
           data-testid="preview-address"
@@ -196,7 +197,12 @@ export function PreviewBar({
           <AddrChevronIcon />
         </button>
         {addrOpen && (
-          <Popover anchor={addrRef} onClose={() => setAddrOpen(false)} className="nx-addr-pop">
+          <Popover
+            anchor={addrRef}
+            onClose={() => setAddrOpen(false)}
+            className="nx-addr-pop"
+            label={L.preview.addrLabel}
+          >
             <AddressList
               mine={mine}
               others={others}
@@ -224,7 +230,7 @@ export function PreviewBar({
       <button
         type="button"
         className={`nx-tbtn nx-pin-t${pinOn ? " nx-tbtn--on" : ""}${pinLocked ? " nx-tbtn--locked" : ""}`}
-        title={pinLocked ?? (pinOn ? L.preview.pinOffTip : L.preview.pinTip)}
+        title={pinLocked ?? keyHint(pinOn ? L.preview.pinOffTip : L.preview.pinTip)}
         aria-label={L.preview.pin}
         aria-pressed={pinOn}
         aria-disabled={pinLocked !== null}
@@ -251,7 +257,7 @@ export function PreviewBar({
           className="nx-ibtn"
           title={L.preview.more}
           aria-label={L.preview.more}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           aria-expanded={moreOpen}
           onClick={() => setMoreOpen((open) => !open)}
         >
@@ -263,6 +269,7 @@ export function PreviewBar({
             onClose={() => setMoreOpen(false)}
             align="end"
             className="nx-more-pop"
+            label={L.preview.more}
           >
             {native && (
               <>
@@ -409,7 +416,8 @@ function AddressList({
       >
         {here ? <SmallCheckIcon /> : <EyeIcon />}
         <b>{entry.name}</b>
-        <span className="nx-mi-r">{entry.path}</span>
+        {/* 이름이 없는 화면만 주소로 말한다 — 이름이 있는 줄의 `/` 는 비개발자에게 군더더기다. */}
+        {entry.name === L.preview.untitledScreen && <span className="nx-mi-r">{entry.path}</span>}
       </button>
     );
   };
@@ -479,7 +487,6 @@ function AddressList({
           </div>
         )}
       </div>
-      <div className="nx-addr-foot">{L.preview.addrFoot}</div>
     </>
   );
 }

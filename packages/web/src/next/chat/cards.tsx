@@ -474,6 +474,9 @@ export function AskCard({
     });
   };
 
+  // 선택지에 AI 가 쓴 설명이 딸려 있으면 툴팁이 아니라 라벨 아래에 보인다 — 고를 근거가 숨지 않게.
+  const described = (q: AskQuestion) => q.options.some((option) => option.description);
+
   return (
     <div className="nx-card nx-card--ask" role="alert">
       <div className="nx-ch">
@@ -483,17 +486,25 @@ export function AskCard({
       {questions.map((q) => (
         <div key={q.question} className="nx-ask-q">
           <div className="nx-ctext">{q.question}</div>
-          <div className="nx-opts">
+          <div className={`nx-opts${described(q) ? " nx-opts--described" : ""}`}>
             {q.options.map((option) => (
               <button
                 key={option.label}
                 type="button"
-                className={`nx-btn${picked(q, option.label) ? " nx-btn--picked" : ""}`}
-                title={option.description || undefined}
+                className={`nx-btn${described(q) ? " nx-btn--opt" : ""}${
+                  picked(q, option.label) ? " nx-btn--picked" : ""
+                }`}
                 disabled={sent}
                 onClick={() => pick(q, option.label)}
               >
-                {option.label}
+                {described(q) ? (
+                  <span className="nx-opt-t">
+                    <b>{option.label}</b>
+                    {option.description && <small>{option.description}</small>}
+                  </span>
+                ) : (
+                  option.label
+                )}
                 {pressed === option.label && <i className="nx-spin" aria-hidden="true" />}
               </button>
             ))}

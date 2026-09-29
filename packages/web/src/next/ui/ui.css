@@ -422,3 +422,113 @@
     animation-delay: 0s;
   }
 }
+
+/*
+ * 접는 머리(<details>) — 열고 닫을 때 본문이 높이째 미끄러지며 흐려진다. 본문의 높이는
+ * auto 라 원래는 전환이 없지만 interpolate-size 와 ::details-content 가 그 벽을 허문다.
+ * interpolate-size 는 상속되니 뿌리가 아니라 머리에만 건다 — 뿌리에 걸면 다른 곳의 크기
+ * 전환(auto 를 오가는 것)까지 저절로 움직이기 시작한다. 모르는 엔진은 이 블록을 통째로
+ * 건너뛰어 예전처럼 곧바로 여닫힌다.
+ * overflow 는 움직이는 동안만 잘린다 — 다 열리면 visible 로 돌아와 안쪽의 초점 고리와
+ * 팝(`···` 메뉴)이 잘리지 않는다. 열 때는 전환 길이만큼 늦춰 바꾸고(늦은 discrete 전환),
+ * 닫을 때는 곧바로 자른다. 처음부터 열려 그려지는 머리는 바뀐 적이 없어 움직이지 않는다.
+ */
+@supports selector(::details-content) {
+  .nx details {
+    interpolate-size: allow-keywords;
+  }
+
+  .nx details::details-content {
+    block-size: 0;
+    opacity: 0;
+    overflow: clip;
+    transition:
+      block-size var(--nx-t-move) var(--drift),
+      opacity var(--nx-t-move) var(--drift),
+      content-visibility var(--nx-t-move) allow-discrete,
+      overflow 0s allow-discrete;
+  }
+
+  .nx details[open]::details-content {
+    block-size: auto;
+    opacity: 1;
+    overflow: visible;
+    transition:
+      block-size var(--nx-t-move) var(--drift),
+      opacity var(--nx-t-move) var(--drift),
+      content-visibility var(--nx-t-move) allow-discrete,
+      overflow 0s var(--nx-t-move) allow-discrete;
+  }
+}
+
+/* .nx * 의 동작 줄이기 규칙은 이 가상 요소에 닿지 않는다 — 여기서 따로 끈다. */
+@media (prefers-reduced-motion: reduce) {
+  .nx details::details-content,
+  .nx details[open]::details-content {
+    transition: none;
+  }
+}
+
+/*
+ * 새로 들어온 줄 — 자리를 먼저 열고(높이 0 → 제 높이) 그 안에서 내려앉는다. 줄을 감싸는
+ * 격자(.nx-item, 홈의 .nx-dfold)가 제 높이를 1fr 로 가지므로 옆 줄이 튀지 않고 밀려난다.
+ * 채움은 backwards 만 준다 — 끝난 뒤에도 남는 애니메이션은 쌓임 맥락과 fixed 자손의 기준
+ * 상자를 만들어 팝이 옆 줄 아래로 깔릴 수 있다. 등장은 `useFreshKeys` 가 새 열쇠에만
+ * 붙인다 — CSS 만으로 걸면 React 가 재정렬에서 옮긴 옆 줄들이 다시 등장한다.
+ */
+@keyframes nx-item-in {
+  from {
+    grid-template-rows: 0fr;
+    margin-bottom: 0;
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* 격자 감싸개가 없는 줄(단추 한 줄)은 자리를 열지 않고 내려앉기만 한다. */
+@keyframes nx-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.nx-item {
+  display: grid;
+  grid-template-rows: 1fr;
+  /* 열을 0 까지 줄일 수 있게 — 열 정의가 없으면 긴 제목의 min-content 가 줄 폭이 되어
+     말줄임이 사라지고 `···` 가 사이드바 밖으로 밀린다. */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.nx-item > * {
+  min-height: 0;
+}
+
+.nx-item--new {
+  overflow: hidden;
+  animation: nx-item-in var(--nx-t-move) var(--drift) backwards;
+}
+
+.nx .nx-row--new {
+  animation: nx-row-in var(--nx-t-move) var(--drift) backwards;
+}
+
+/* 숫자 배지는 값이 바뀔 때 한 번 튄다 — 처음 그릴 때는 튀지 않는다(Count 가 붙인다). */
+@keyframes nx-bump {
+  from {
+    transform: scale(0.72);
+  }
+}
+
+.nx-cnt--bump {
+  animation: nx-bump 0.36s var(--spring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-item--new,
+  .nx .nx-row--new,
+  .nx-cnt--bump {
+    animation: none;
+  }
+}

@@ -64,7 +64,7 @@ async function doctor(): Promise<number> {
     executable,
     liveSessions: 0,
     pendingPermissions: 0,
-    registryProbeDir: null,
+    registryProbe: null,
   });
 
   // The onboarding checks are doctor's product surface (PLAN M1).

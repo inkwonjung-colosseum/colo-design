@@ -139,6 +139,10 @@ interface TurnGateRow {
   /** 문제 화면의 내역 — unsettled·blank 화면 수와 문제 줄 합계(slice 전). */
   unsettled?: number;
   blank?: number;
+  /** 휴대폰 폭에서 문서가 옆으로 밀린 화면 수(2026-09-29). */
+  overflow?: number;
+  /** 새 접근성 문제(이름 없는 컨트롤 · 너무 흐린 글자)가 있던 화면 수(2026-09-29). */
+  a11y?: number;
   consoleLines?: number;
   netLines?: number;
   /** D3 재시도로 구제된 화면 수. */
@@ -384,6 +388,8 @@ export class TurnStats {
       skipped?: string;
       unsettled?: number;
       blank?: number;
+      overflow?: number;
+      a11y?: number;
       consoleLines?: number;
       netLines?: number;
       rescued?: number;
@@ -403,6 +409,8 @@ export class TurnStats {
       ...(outcome.skipped !== undefined ? { skipped: outcome.skipped } : {}),
       ...(outcome.unsettled !== undefined ? { unsettled: outcome.unsettled } : {}),
       ...(outcome.blank !== undefined ? { blank: outcome.blank } : {}),
+      ...(outcome.overflow !== undefined ? { overflow: outcome.overflow } : {}),
+      ...(outcome.a11y !== undefined ? { a11y: outcome.a11y } : {}),
       ...(outcome.consoleLines !== undefined ? { consoleLines: outcome.consoleLines } : {}),
       ...(outcome.netLines !== undefined ? { netLines: outcome.netLines } : {}),
       ...(outcome.rescued !== undefined ? { rescued: outcome.rescued } : {}),

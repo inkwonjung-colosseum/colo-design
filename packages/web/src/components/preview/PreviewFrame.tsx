@@ -213,6 +213,7 @@ export function PreviewFrame({
         (payload: {
           path: string;
           url?: string;
+          title?: string;
           kind: "preview" | "web";
           canGoBack: boolean;
           canGoForward: boolean;

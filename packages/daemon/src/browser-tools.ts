@@ -233,6 +233,10 @@ export const BROWSER_TOOLS: ToolDef[] = [
       "화면들을 확인한다 — 주소로 열어 자리 잡음과 콘솔 오류만 돌려준다. " +
       "돌려오는 각 화면의 `url` 이 그 화면의 전체 주소다 — 답변의 하이퍼링크에 그대로 쓴다. " +
       "viewport 로 휴대폰 폭도 본다 — 휴대폰에서만 깨지는 화면을 잡는다. " +
+      "mobile 이면 문서가 옆으로 밀릴 때 `overflow`(화면 폭 · 문서 폭 · 삐져나온 요소)도 돌려준다. " +
+      "a11y 를 켜면 이름 없는 컨트롤 · 그림과 너무 흐린 글자(대비 3:1 미만)를 `a11y` 로 돌려준다 — " +
+      "새로 만든 컨트롤에 이름을 달았는지, 글자색을 고쳤는지 확인할 때 쓴다. " +
+      "colorScheme 으로 다크 모드도 본다. " +
       "capture 면 문제가 있는 화면의 그림만 돌려준다. " +
       "스냅샷은 없다. 화면을 고친 뒤 답하기 전에 부른다 — 미리보기 안의 화면 경로만 받는다.",
     properties: {
@@ -249,6 +253,17 @@ export const BROWSER_TOOLS: ToolDef[] = [
         type: "string",
         enum: ["mobile", "tablet", "desktop"],
         description: "화면 폭 — mobile | tablet | desktop (기본 desktop).",
+      },
+      a11y: {
+        type: "boolean",
+        description:
+          "true 면 이름 없는 컨트롤 · 그림과 너무 흐린 글자를 돌려준다(기본 끔 — 확인이 조금 더 걸린다).",
+      },
+      colorScheme: {
+        type: "string",
+        enum: ["light", "dark"],
+        description:
+          "색 모드 — light | dark (기본 light). 다크 모드를 지원하는 화면의 글자 대비를 볼 때.",
       },
       capture: {
         type: "boolean",

@@ -8,7 +8,7 @@
     "prepare": "lefthook install",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r build && node --test packages/daemon/test/*.test.ts packages/web/test/*.test.ts scripts/bench/*.test.mjs",
+    "test": "pnpm -r build && node --test packages/daemon/test/*.test.ts packages/desktop/test/*.test.ts packages/web/test/*.test.ts scripts/bench/*.test.mjs",
     "bench": "node scripts/bench/bench.mjs",
     "dev:daemon": "NOVA_DESIGN_DEV_AGENTS=1 pnpm --filter @nova-design/daemon dev",
     "dev:web": "pnpm --filter @nova-design/web dev",

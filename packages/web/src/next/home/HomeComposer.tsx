@@ -5,6 +5,7 @@ import type { Attachment } from "../../lib/attachment";
 import type { Daemon } from "../../lib/daemon-client";
 import { Composer } from "../chat/Composer";
 import { L } from "../labels";
+import { connectionLock } from "../lib/connection-copy";
 import { CheckIcon, ChevronDownIcon } from "../ui/icons";
 import { Popover } from "../ui/Popover";
 import { ProjectMark } from "../ui/ProjectMark";
@@ -103,7 +104,7 @@ export function HomeComposer({
       draftKey={`home:${active?.slug ?? "none"}`}
       placeholder={L.home.placeholder}
       leading={projectChip}
-      lockReason={daemon.connection === "open" ? null : L.chat.connecting}
+      lockReason={connectionLock(daemon.connection, L)}
       onToast={onToast}
       onSend={(text, attachments) => send(text, attachments)}
     />

@@ -81,8 +81,14 @@ import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
 import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
 import { repoCommandEnv } from "./repo-bringup.js";
+import { scopeOf } from "./repo-config.js";
 import { filesForRoute, routesForFiles } from "./route-index.js";
-import { judgeScreen, normalizeScreenCheckArgs } from "./screen-gate.js";
+import {
+  a11yLines,
+  judgeScreen,
+  normalizeScreenCheckArgs,
+  type ScreenOverflow,
+} from "./screen-gate.js";
 import { observedFilesFor, readScreenMap } from "./screen-map.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
@@ -100,6 +106,7 @@ export type {
   BrowserActionReport,
   BrowserDriver,
   BrowserDriverFactory,
+  PreviewA11y,
   PreviewAxNode,
   PreviewCapture,
   PreviewConsoleLine,
@@ -107,6 +114,7 @@ export type {
   PreviewDriverFactory,
   PreviewOpenOptions,
   PreviewOpenResult,
+  PreviewOverflow,
   PreviewViewport,
 } from "./preview-driver.js";
 
@@ -2006,7 +2014,8 @@ export class DaemonServer {
    * 게이트(runGate)와 같은 드라이버, 같은 기준(자리 잡음 + error·실패한
    * 요청), 같은 상한. 판정 자체는 화면 하나 도우미(judgeScreen) 하나에서
    * 난다 — 두 기계의 말이 어긋나지 않게. 돌려주는 것은 화면마다 자리
-   * 잡음 · 빈 화면 · 콘솔 오류뿐이라 스냅샷 수천 토큰을 태우지 않는다.
+   * 잡음 · 빈 화면 · 콘솔 오류(휴대폰 폭이면 문서가 옆으로 밀리는지도, 부탁하면
+   * 접근성도)뿐이라 스냅샷 수천 토큰을 태우지 않는다.
    * capture 면 문제 화면의 그림 한 장(긴 변 640)이 더 간다 — base64 를
    * 텍스트에 싣지 않게 callBrowserTool 이 MCP image 블록으로 내린다.
    * 인자의 정규화(합집합 · 중복 접기 · origin · 상한)는
@@ -2049,11 +2058,22 @@ export class DaemonServer {
       settled: boolean;
       blank: boolean;
       errors: string[];
+      /** 휴대폰 폭으로 봤고 문서가 옆으로 밀릴 때만 — 게이트와 같은 문턱의 판정이다. */
+      overflow?: ScreenOverflow;
+      /**
+       * 접근성을 부탁했고 브라우저가 답했을 때만 — 문제가 없으면 빈 목록이다. 게이트와 달리 지난번과의
+       * 차를 빼지 않는다: AI 가 고친 것을 확인하려고 묻는 것이므로 지금 있는 것 전부를 본다.
+       */
+      a11y?: { unnamed: string[]; contrast: string[] };
       capture?: PreviewCapture;
     }> = [];
     try {
       for (const route of normalized.routes) {
-        const verdict = await judgeScreen(driver, route, { viewport: normalized.viewport });
+        const verdict = await judgeScreen(driver, route, {
+          viewport: normalized.viewport,
+          ...(normalized.colorScheme !== undefined ? { colorScheme: normalized.colorScheme } : {}),
+          ...(normalized.a11y ? { a11y: true } : {}),
+        });
         // 2026-09-21: 화면의 전체 주소 — 답변의 하이퍼링크가 이 주소로
         // 맺어진다. 경로만 아는 패인에게 미리보기 서버의 주소를 가르쳐
         // 주는 유일한 자리다.
@@ -2081,9 +2101,21 @@ export class DaemonServer {
           settled: !verdict.unsettled,
           blank: verdict.blank,
           errors,
+          ...(verdict.overflow !== undefined ? { overflow: verdict.overflow } : {}),
+          ...(verdict.a11y !== undefined ? { a11y: a11yLines(verdict.a11y) } : {}),
         };
+        const a11yTrouble =
+          verdict.a11y !== undefined &&
+          (verdict.a11y.unnamed.length > 0 || verdict.a11y.contrast.length > 0);
         // 그림은 문제 화면에만 — 멀쩡한 화면의 그림은 토큰만 태운다.
-        if (normalized.capture && (verdict.unsettled || verdict.blank || errors.length > 0)) {
+        if (
+          normalized.capture &&
+          (verdict.unsettled ||
+            verdict.blank ||
+            errors.length > 0 ||
+            verdict.overflow !== undefined ||
+            a11yTrouble)
+        ) {
           const shot = await driver.screenshot({ longEdge: 640 }).catch(() => null);
           if (shot !== null) screen.capture = shot;
         }
@@ -2106,12 +2138,15 @@ export class DaemonServer {
 
   private async status() {
     const active = this.activeOrNull();
+    const registry = active?.repo.registry() ?? null;
     const base = await buildStatus({
       executable: this.claudeExecutable,
       liveSessions: this.manager.liveCount,
       pendingPermissions: this.manager.pendingCount,
-      // The registry probe only makes sense inside a repo that declares one.
-      registryProbeDir: active?.repo.registry() ? active.repo.root : null,
+      // The registry probe only makes sense inside a repo that declares one,
+      // and it asks that repo's own scope — never a package fixed in advance.
+      registryProbe:
+        active && registry ? { dir: active.repo.root, scope: scopeOf(registry) } : null,
     });
     // A repo that ships its own pre-approved tool rules widens its sessions
     // past the card flow — the planner should hear that it did. It rides its

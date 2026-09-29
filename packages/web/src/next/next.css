@@ -10,6 +10,7 @@
  */
 @import "./ui/ui.css";
 @import "./shell.css";
+@import "./palette.css";
 @import "./sidebar/sidebar.css";
 @import "./status/status.css";
 @import "./status/problem.css";
@@ -45,8 +46,8 @@
   --nx-hover: color-mix(in srgb, var(--ink) 6%, transparent);
   --nx-selected: color-mix(in srgb, var(--ink) 10%, transparent);
   --font:
-    -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR",
-    "Segoe UI", sans-serif;
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Noto Sans KR", "Segoe UI", sans-serif;
   --serif: "AppleMyungjo", "Nanum Myeongjo", "Iowan Old Style", Georgia, serif;
   --pop: var(--shadow-pop);
   --r-sm: 6px;
@@ -54,6 +55,10 @@
   --r-md: 10px;
   --r-lg: 12px;
   --r-pill: 999px;
+  /* 움직임의 길이 두 가지 — 손끝(호버 · 눌림 · 선택)은 짧게, 자리를 옮기는 것(접힘 ·
+     등장)은 한 박자 길게. 가락은 팔레트의 --drift(옮김)와 --spring(튐)이 맡는다. */
+  --nx-t-touch: 150ms;
+  --nx-t-move: 220ms;
 
   box-sizing: border-box;
   font-family: var(--font);
@@ -137,6 +142,34 @@ html[data-theme="claude"] .nx {
    줄어들면 지금 뭘 닫으려는지 알 수 없다. */
 .nx .nx-scrim:active:not(:disabled) {
   transform: none;
+}
+
+/*
+ * 손끝의 답 — 호버 · 선택 · 눌림에서 색이 뚝 바뀌지 않고 한 박자에 옮겨 간다. 누를
+ * 수 있는 것 전부(단추 · 접는 머리 · 링크 · 호버로 밝아지는 줄)에 깔리는 기본값이다.
+ * :where() 로 특이도를 0 에 둬서 제 전환을 이미 가진 부품(.nx-sw · .nx-shot …)이
+ * 어디서 선언했든 그쪽이 이긴다 — `.nx button` 초기화(0-1-1)에 한 클래스 규칙이 조용히
+ * 지는 이 파일의 사정 때문에, 이 기본값은 더 세게 쓰지 않고 더 약하게 쓴다. 눌림의
+ * 80ms 는 위 :active 규칙이 duration 만 덮어써서 그대로 산다(놓을 때는 이 150ms 로
+ * 돌아온다). 초점 고리(outline)는 넣지 않는다 — 키보드가 밟는 자리는 즉시 보여야 한다.
+ * 같은 까닭으로 화살표 키로 훑는 목록(role="option" — 팔레트 · 주소 목록)도 뺐다:
+ * 하이라이트가 키를 따라 꼬리를 끌면 굼떠 보인다. transform 은 눌림의 되돌아옴을
+ * 위해 들었다 — JSX 에 인라인 transform 이 없어서 위치를 transform 으로 옮기는
+ * 단추가 이 전환에 끌려가는 일은 없다.
+ */
+:where(.nx) :where(button:not([role="option"]), summary, a[href], .nx-hitem, .nx-pinrow) {
+  transition-property: background-color, color, border-color, box-shadow, opacity, transform;
+  transition-duration: var(--nx-t-touch);
+  transition-timing-function: var(--drift);
+}
+
+/* 팝을 여는 단추의 아래 화살표는 열려 있는 동안 뒤집혀 서서 열려 있음을 말한다. */
+.nx .lucide-chevron-down {
+  transition: transform var(--nx-t-touch) var(--drift);
+}
+
+.nx [aria-expanded="true"] .lucide-chevron-down {
+  transform: rotate(180deg);
 }
 
 /*

@@ -15,6 +15,33 @@
   padding-top: 7vh;
 }
 
+/* 홈이 앞에 설 때 — 인사 · 입력창 · 안내 · 받은 편지함이 위에서 아래로 한 박자씩 뜬다.
+   홈은 들어올 때마다 새로 그려지므로(nx-work 가 뜨는 것과 짝) 돌아올 때마다 한 번 선다.
+   채움은 backwards 만 — 끝난 뒤에도 남는 transform 애니메이션은 쌓임 맥락을 만들어 입력창의
+   팝이 아래 받은 편지함에 깔린다. 뒤의 세 자식은 지연 동안 첫 모양(흐림)으로 기다린다. */
+.nx-home-inner > * {
+  animation: nx-home-in 0.36s var(--drift) backwards;
+}
+
+.nx-home-inner > :nth-child(2) {
+  animation-delay: 50ms;
+}
+
+.nx-home-inner > :nth-child(3) {
+  animation-delay: 100ms;
+}
+
+.nx-home-inner > :nth-child(4) {
+  animation-delay: 150ms;
+}
+
+@keyframes nx-home-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 .nx-greet {
   font-family: var(--serif);
   font-weight: 400;
@@ -234,5 +261,10 @@
 @media (prefers-reduced-motion: reduce) {
   .nx-dfold {
     transition: none;
+  }
+
+  /* 지연이 남으면 첫 모양(흐림)으로 기다리게 된다 — 움직임을 줄인 창은 곧바로 선다. */
+  .nx-home-inner > * {
+    animation: none;
   }
 }

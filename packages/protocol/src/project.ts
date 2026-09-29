@@ -274,10 +274,12 @@ export interface DaemonStatus {
   /** pnpm may drive the connected repo's install and preview commands. */
   pnpmAvailable: boolean;
   /**
-   * Whether this machine can read @colosseumcoinckr packages from GitHub
-   * Packages. Probed only when the connected repo declares a `registry`.
+   * Whether this machine can read the connected repo's private packages from
+   * GitHub Packages, tested with one dependency from the scope its `.npmrc`
+   * maps. `unknown` when the repo declares no registry, has nothing of that
+   * scope to ask for, or the answer was inconclusive.
    */
-  cdsRegistryAuth: "ok" | "unauthenticated" | "unknown";
+  registryAuth: "ok" | "unauthenticated" | "unknown";
   /**
    * The plan's rolling limits per provider's account, as the daemon last saw
    * them. One machine signs into one account per provider — claude's 43% and

@@ -372,6 +372,12 @@
   display: block;
   overflow: visible;
   pointer-events: none;
+  /* `.nx` 뿌리의 바탕을 물려받으면 숙주가 불투명한 시트가 되어 뒤의 화면을 통째로 덮는다 —
+     어둡히는 일은 스크림(.nx-modal-back)이 맡는다. */
+  background: transparent;
+  /* fixed 는 z-index 가 없어도 자기 쌓임 맥락이 된다 — 숙주 안의 스크림(70)이 사이드바(5)
+     밑에 깔려 사이드바가 어두워지지도 막히지도 않았다. 숙주 자체를 위로 올린다. */
+  z-index: 70;
 }
 
 .nx.nx-modal-host .nx-modal-back {

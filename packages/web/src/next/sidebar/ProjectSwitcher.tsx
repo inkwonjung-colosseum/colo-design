@@ -6,6 +6,7 @@ import { requestInvitePicker } from "../../lib/invite-bus";
 import { openLink } from "../../lib/open-link";
 import { L } from "../labels";
 import { neverPrepared, projectCycle, projectStatus } from "../lib/project-note";
+import { Count } from "../ui/Count";
 import { CheckIcon, ChevronDownIcon } from "../ui/icons";
 import { Popover } from "../ui/Popover";
 import { NoteMark, ProjectMark } from "../ui/ProjectMark";
@@ -102,7 +103,7 @@ export function ProjectSwitcher({
                   </small>
                 </span>
                 {project.pendingCount > 0 ? (
-                  <span className="nx-cnt nx-r">{project.pendingCount}</span>
+                  <Count n={project.pendingCount} className="nx-r" />
                 ) : current ? (
                   <span className="nx-ck nx-r">
                     <CheckIcon />

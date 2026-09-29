@@ -120,6 +120,7 @@ test("잔여 검사 — 옛 이름은 read-legacy 줄과 주석 안에만 있다
     ...walk(join(ROOT, "site")),
     ...walk(join(ROOT, "scripts")),
     ...walk(join(ROOT, ".github")),
+    ...walk(join(ROOT, "docs")),
     join(ROOT, "README.md"),
     join(ROOT, "package.json"),
     join(ROOT, "AGENTS.md"),

@@ -13,6 +13,7 @@ import type {
   BrowserActionReport,
   BrowserDriver,
   BrowserDriverFactory,
+  PreviewA11y,
   PreviewAxNode,
   PreviewCapture,
   PreviewConsoleLine,
@@ -20,12 +21,22 @@ import type {
   PreviewDriverFactory,
   PreviewOpenOptions,
   PreviewOpenResult,
+  PreviewOverflow,
   PreviewViewport,
 } from "@nova-design/daemon/server";
 import type { NovaDesignCommentTarget } from "@nova-design/protocol";
 import { BrowserWindow, type WebContents } from "electron";
+import {
+  type AuditCollected,
+  type AxNodeLike,
+  collectAuditInPage,
+  labelOfInPage,
+  unnamedControlsOf,
+  withDeadline,
+} from "./a11y-probe.js";
 import { describeElementInPage, ownersOfElement } from "./element-identity.js";
 import { VIEWPORT_METRICS } from "./emulation.js";
+import { measureOverflowInPage } from "./overflow-probe.js";
 import type { PlannerPreviewView } from "./preview-view.js";
 
 /**
@@ -47,6 +58,14 @@ const BROWSER_CONSOLE_RING = 200;
 const NET_URL_CAP = 512;
 /** settle 통과 뒤의 여유 상한 — 폰트·프레임이 못 박는 바깥 시계. */
 const SETTLE_GRACE_MS = 1500;
+/**
+ * 접근성 점검(2026-09-29)이 브라우저에 묻는 호출 하나의 시한과 전체 시한, 그리고 라벨을 붙일
+ * 이름 없는 컨트롤의 표본 수. 시한이 지나면 거기까지의 재료로 답한다 — 게이트가 화면 하나에
+ * 매이지 않게.
+ */
+const A11Y_CALL_MS = 2000;
+const A11Y_BUDGET_MS = 4000;
+const A11Y_CONTROL_SAMPLES = 40;
 
 /** url 의 origin — 못 읽는 주소는 null. */
 function urlOrigin(url: string): string | null {
@@ -438,7 +457,147 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
     // D2: 다 로드된 문서가 글자도 그림도 없으면 빈 화면이다 — 콘솔이 조용한
     // 죽음(빈 라우트 · 렌더 실패)을 게이트가 대신 잡는다.
     const blank = settled && (await this.blankProbe());
-    return { ok: true, settled, ...(blank ? { blank: true } : {}) };
+    // 휴대폰 폭에서만 문서가 옆으로 밀리는지 잰다(2026-09-29) — 휴대폰
+    // 에뮬레이션만 겹치는 스크롤바를 흉내 내서, 다른 폭에서는 `100vw` 같은 멀쩡한
+    // 화면도 스크롤바 폭만큼 넘쳐 보인다.
+    const overflow = settled && options?.viewport === "mobile" ? await this.overflowProbe() : null;
+    // 접근성의 재료는 부탁한 열기에서만 모은다 — 브라우저에 여러 번 묻는 값이다.
+    const a11y = settled && options?.a11y === true ? await this.a11yProbe() : null;
+    return {
+      ok: true,
+      settled,
+      ...(blank ? { blank: true } : {}),
+      ...(overflow !== null ? { overflow } : {}),
+      ...(a11y !== null ? { a11y } : {}),
+    };
+  }
+
+  /**
+   * 접근성의 재료(a11y-probe.ts): 이름이 빈 컨트롤 · 그림과 글자 색 조합에 그 배경색을 붙인 것.
+   * 브라우저에 묻는 길이라 실패는 조용하다 — 호출이 실패하거나 시한을 넘으면 거기까지의
+   * 재료로 답하고, 재료가 없는 것은 판정에 영향 없다. 창 하나를 여러 화면이 돌려 쓰므로 켠
+   * 도메인은 끝에 반드시 끈다(다음 화면의 로드가 DOM 추적을 끌고 가지 않게).
+   */
+  private async a11yProbe(): Promise<PreviewA11y | null> {
+    const dbg = this.debugger();
+    const deadline = Date.now() + A11Y_BUDGET_MS;
+    const group = "nova-a11y";
+    /** 호출 하나 — 실패 · 시한 초과는 null. `always` 는 전체 시한이 지나도 부르는 뒷정리다. */
+    const ask = async <T>(
+      method: string,
+      params: Record<string, unknown> = {},
+      always = false,
+    ): Promise<T | null> => {
+      if (!always && Date.now() > deadline) return null;
+      return await withDeadline(dbg.sendCommand(method, params) as Promise<T>, A11Y_CALL_MS).catch(
+        () => null,
+      );
+    };
+    const unnamed: PreviewA11y["unnamed"] = [];
+    let unnamedTotal = 0;
+    const texts: PreviewA11y["texts"] = [];
+    try {
+      await ask("DOM.enable");
+      await ask("DOM.getDocument", { depth: 0 });
+      await ask("CSS.enable");
+
+      // 컨트롤 — 브라우저의 접근성 트리가 계산한 이름이 빈 것. 라벨은 그 노드의 DOM 에서 뽑는다.
+      const tree = await ask<{ nodes?: AxNodeLike[] }>("Accessibility.getFullAXTree");
+      const controls = unnamedControlsOf(tree?.nodes ?? [], A11Y_CONTROL_SAMPLES);
+      unnamedTotal += controls.total;
+      for (const target of controls.targets) {
+        const resolved = await ask<{ object?: { objectId?: string } }>("DOM.resolveNode", {
+          backendNodeId: target.backendNodeId,
+          objectGroup: group,
+        });
+        const objectId = resolved?.object?.objectId;
+        if (!objectId) continue;
+        const named = await ask<{ result?: { value?: unknown } }>("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: `function () { return (${labelOfInPage.toString()})(this); }`,
+          returnByValue: true,
+        });
+        const label = named?.result?.value;
+        unnamed.push({ role: target.role, label: typeof label === "string" ? label : target.role });
+      }
+
+      // 그림과 글자 색 조합 — 페이지 안에서 모으고, 색 조합의 대표마다 배경색을 브라우저에 묻는다.
+      const collected = await ask<{ result?: { objectId?: string } }>("Runtime.evaluate", {
+        expression: `(${collectAuditInPage.toString()})(${labelOfInPage.toString()})`,
+        objectGroup: group,
+        returnByValue: false,
+      });
+      const collectedId = collected?.result?.objectId;
+      if (collectedId !== undefined) {
+        const summary = await ask<{
+          result?: {
+            value?: { images?: AuditCollected["images"]; meta?: AuditCollected["texts"]["meta"] };
+          };
+        }>("Runtime.callFunctionOn", {
+          objectId: collectedId,
+          functionDeclaration:
+            "function () { return { images: this.images, meta: this.texts.meta }; }",
+          returnByValue: true,
+        });
+        const images = summary?.result?.value?.images;
+        if (images) {
+          unnamedTotal += images.total;
+          for (const label of images.labels) unnamed.push({ role: "img", label });
+        }
+        const meta = summary?.result?.value?.meta ?? [];
+        if (meta.length > 0) {
+          const elements = await ask<{ result?: { objectId?: string } }>("Runtime.callFunctionOn", {
+            objectId: collectedId,
+            functionDeclaration: "function () { return this.texts.els; }",
+            objectGroup: group,
+            returnByValue: false,
+          });
+          const listId = elements?.result?.objectId;
+          const props =
+            listId === undefined
+              ? null
+              : await ask<{
+                  result?: Array<{ name?: string; value?: { objectId?: string } }>;
+                }>("Runtime.getProperties", { objectId: listId, ownProperties: true });
+          for (const entry of props?.result ?? []) {
+            const index = Number(entry.name);
+            const found = meta[index];
+            const elementId = entry.value?.objectId;
+            if (!Number.isInteger(index) || found === undefined || elementId === undefined)
+              continue;
+            const node = await ask<{ nodeId?: number }>("DOM.requestNode", { objectId: elementId });
+            if (!node?.nodeId) continue;
+            const paint = await ask<{ backgroundColors?: string[] }>("CSS.getBackgroundColors", {
+              nodeId: node.nodeId,
+            });
+            const backgrounds = paint?.backgroundColors ?? [];
+            // 페인트한 배경을 못 잰 글자는 판정하지 않는다 — 못 센 침묵이 잘못된 지적보다 싸다.
+            if (backgrounds.length > 0) texts.push({ ...found, backgrounds });
+          }
+        }
+      }
+    } finally {
+      await ask("Runtime.releaseObjectGroup", { objectGroup: group }, true);
+      await ask("CSS.disable", {}, true);
+      await ask("DOM.disable", {}, true);
+    }
+    return { unnamed, unnamedTotal, texts };
+  }
+
+  /**
+   * 문서가 화면 밖으로 밀리는지의 재료(overflow-probe.ts). 재지 못했으면 null —
+   * 재료가 없는 것은 판정에 영향 없다. 값은 페이지가 내놓은 것이라 모양을
+   * 믿지 않는다: 데몬의 `overflowOf` 가 숫자 · 개수 · 길이를 다시 조인다.
+   */
+  private async overflowProbe(): Promise<PreviewOverflow | null> {
+    const result = (await this.debugger()
+      .sendCommand("Runtime.evaluate", {
+        expression: `(${measureOverflowInPage.toString()})()`,
+        returnByValue: true,
+      })
+      .catch(() => null)) as { result?: { value?: unknown } } | null;
+    const value = result?.result?.value;
+    return value !== null && typeof value === "object" ? (value as PreviewOverflow) : null;
   }
 
   /** D2: 문서가 내용을 가졌는가 — 글자·그림·틀이 하나도 없으면 빈 화면이다. */

@@ -1,12 +1,15 @@
 /**
- * 소개 페이지의 살아 있는 자리들 — 데모 타임라인 한 곳.
+ * 소개 페이지의 큰 움직임 — 히어로 데모와 흐름, 스크롤 리빌 한 곳.
  *
- * 1. 테마 — 기능 벤토의 칩이 이 페이지 전체를 앱의 네 팔레트로 갈아입힌다.
- * 2. 히어로 목업 창 — 제품의 한 바퀴(말하기 → 만드는 중 → 찍기 → 제출 → 반영됨)를
- *    창 안에서 직접 돌린다. 상태 줄의 여정 세 점이 앱의 어휘로 움직인다.
- * 3. 흐름 — 네 걸음 카드가 차례로 밝아지고 여정 큰 점이 따라 옮아간다.
- * 4. 기능 벤토 — 찍기 놀이 · 작업 기록 되돌림 · 프로젝트 줄 · 알림 시연.
- * 5. 설치 체크리스트 — 화면에 들어오면 셋이 차례로 채워진다.
+ * 1. 히어로 목업 창 — 제품의 한 바퀴(말하기 → 만드는 중 → 찍기 → 제출 확인 → 반영됨)를
+ *    창 안에서 직접 돌린다. 상태 줄의 여정 세 점은 앱의 라벨(labels.ts 의 journey)을
+ *    그대로 쓴다 — 아는 만큼만 말한다: 제출 뒤에는 "개발자가 보고 있어요"가 아니라
+ *    "개발자 확인을 기다려요"다.
+ * 2. 흐름 — 네 걸음 카드가 차례로 밝아지고 여정 큰 점이 따라 옮아간다.
+ * 3. 스크롤 리빌 — 섹션이 들어올 때 떠오르고, 카드는 차례로 올라온다.
+ *
+ * 테마는 theme.js(동기, <head>), 기능 카드의 놀이는 bento.js, 릴리스 · 복사 · 설치
+ * 체크리스트는 page.js 가 맡는다.
  *
  * prefers-reduced-motion 이면 루프를 돌리지 않고 완성된 한 장으로 멈춘다.
  * JS 가 통하지 않으면 애초에 정적 장면이 보인다(스타일의 기본값).
@@ -15,45 +18,6 @@
 const $ = (id) => document.getElementById(id);
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/* ---------- 테마 — 앱의 네 팔레트를 그대로 ---------- */
-const THEME_KEY = "nova-site-theme";
-const THEME_META = { dark: "#0d0d0f", light: "#ffffff", claude: "#faf9f5", github: "#0d1117" };
-const themeChips = [...document.querySelectorAll("[data-site-theme]")];
-
-function applyTheme(name) {
-  const root = document.documentElement;
-  if (THEME_META[name] && name !== "dark") root.dataset.theme = name;
-  else delete root.dataset.theme;
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = THEME_META[name] ?? THEME_META.dark;
-  for (const chip of themeChips) {
-    const on = chip.dataset.siteTheme === name;
-    chip.classList.toggle("on", on);
-    chip.setAttribute("aria-pressed", on ? "true" : "false");
-  }
-  // hero3d 의 파티클 색이 따라 오는 고리.
-  dispatchEvent(new CustomEvent("nova-theme", { detail: name }));
-}
-
-let savedTheme = null;
-try {
-  savedTheme = localStorage.getItem(THEME_KEY);
-} catch {
-  // file:// 나 저장 금지 환경 — 기본 팔레트로 만족한다.
-}
-applyTheme(THEME_META[savedTheme] ? savedTheme : "dark");
-
-for (const chip of themeChips) {
-  chip.addEventListener("click", () => {
-    applyTheme(chip.dataset.siteTheme);
-    try {
-      localStorage.setItem(THEME_KEY, chip.dataset.siteTheme);
-    } catch {
-      // 마찬가지 — 이 세션 동안만 테마가 바뀐다.
-    }
-  });
-}
 
 /* ---------- 히어로 목업 창 — 제품의 한 바퀴 ---------- */
 const appwin = $("appwin");
@@ -68,6 +32,7 @@ if (appwin) {
   const screenCard = $("demo-screencard");
   const meta = $("demo-meta");
   const receipt = $("demo-receipt");
+  const receiptNote = $("demo-receipt-note");
   const composer = appwin.querySelector(".mock-composer");
   const composerLine = composer?.querySelector(".mc-line");
   const composerCaret = $("demo-caret");
@@ -76,11 +41,16 @@ if (appwin) {
   const pin = $("demo-pin");
   const bubble = $("demo-bubble");
   const merged = $("demo-merged");
+  const confirmSheet = $("demo-confirm");
+  const confirmGo = $("demo-confirm-go");
+  const note = $("demo-note");
 
   const USER_LINE = "회원 목록에 검색창을 넣어 줘";
   const AI_LINE = "검색창을 넣었습니다 — 미리보기에서 확인해 보세요.";
+  const NOTE_LINE = "검색창 폭만 봐 주세요";
   const typed = document.createElement("span");
   composerLine?.insertBefore(typed, composerCaret);
+  receiptNote.textContent = `내 한마디 · “${NOTE_LINE}”`;
 
   // 데모가 맡는 순간부터 .show 를 기다린다 — 이 줄 뒤로 목업은 애니메이션한다.
   appwin.classList.add("demo-live");
@@ -97,10 +67,24 @@ if (appwin) {
 
   function resetScene() {
     typed.textContent = "";
+    note.textContent = "";
     composer?.classList.remove("typing");
     submitBtn.textContent = "제출";
     submitBtn.className = "mst-submit";
-    for (const el of [userMsg, aiMsg, screenCard, meta, receipt, chip, search, pin, bubble, merged]) {
+    confirmGo.classList.remove("press");
+    for (const el of [
+      userMsg,
+      aiMsg,
+      screenCard,
+      meta,
+      receipt,
+      chip,
+      search,
+      pin,
+      bubble,
+      merged,
+      confirmSheet,
+    ]) {
       show(el, false);
     }
     dotLabels[0].textContent = "제출 전 · 화면 1개";
@@ -183,7 +167,20 @@ if (appwin) {
       appwin.dataset.phase = "pin";
       await sleep(2300);
 
-      // ⑤ 제출 — 버튼이 스스로 답한다, 여정 둘째 점
+      // ⑤ 제출 — 확인 한 장이 서고, 한마디를 적고, 제출을 누른다
+      submitBtn.classList.add("press");
+      await sleep(260);
+      submitBtn.classList.remove("press");
+      show(confirmSheet);
+      appwin.dataset.phase = "confirm";
+      await sleep(800);
+      await type(note, NOTE_LINE, 70);
+      await sleep(650);
+      confirmGo.classList.add("press");
+      await sleep(240);
+      show(confirmSheet, false);
+      confirmGo.classList.remove("press");
+      // 버튼이 스스로 답한다 — 제출하는 중… → 제출됐어요, 여정 둘째 점
       submitBtn.textContent = "제출하는 중…";
       submitBtn.classList.add("busy");
       await sleep(1000);
@@ -192,12 +189,14 @@ if (appwin) {
       submitBtn.classList.add("done");
       show(receipt);
       setJourney(1);
-      dotLabels[1].textContent = "개발자가 보고 있어요";
+      dotLabels[0].textContent = "제출됨";
+      dotLabels[1].textContent = "개발자 확인을 기다려요";
       appwin.dataset.phase = "review";
-      await sleep(2500);
+      await sleep(2800);
 
       // ⑥ 반영됨 — 셋째 점, 다음에 만드는 것은 새 작업
       setJourney(2);
+      dotLabels[1].textContent = "확인됨";
       dotLabels[2].textContent = "반영됐어요";
       show(merged);
       appwin.dataset.phase = "merged";
@@ -215,7 +214,7 @@ const jDots = [$("jline-0"), $("jline-1"), $("jline-2")];
 const jRails = [$("jline-rail0"), $("jline-rail1")];
 
 function applyStep(index) {
-  steps.forEach((li, i) => li.classList.toggle("on", i === index));
+  for (const [i, li] of steps.entries()) li.classList.toggle("on", i === index);
   const dot = Number(steps[index]?.dataset.dot ?? 0);
   jDots.forEach((d, i) => {
     d?.classList.toggle("on", i === dot);
@@ -263,98 +262,38 @@ if (steps.length > 0) {
   play();
 }
 
-/* ---------- 기능 벤토 ---------- */
+/* ---------- 스크롤 리빌 ----------
+   .js 를 먼저 달아 숨김 상태를 켜고, 들어온 요소에 .in 을 단다. 여기서 실패하면 .js 가
+   달리지 않아 페이지는 그냥 다 보인다. IntersectionObserver 가 답하지 않는 환경(숨겨진
+   탭 등)을 위해 스크롤 폴백을 둔다. */
+document.documentElement.classList.add("js");
 
-// 찍기 놀이 — 커서를 따라오는 항아리 핀, 누르면 그 자리에 찍힌다.
-const bpStage = $("bp-stage");
-if (bpStage) {
-  const ghost = $("bp-ghost");
-  const bpPin = $("bp-pin");
-  const bpBubble = $("bp-bubble");
-
-  bpStage.addEventListener("pointermove", (e) => {
-    const rect = bpStage.getBoundingClientRect();
-    ghost.style.left = `${e.clientX - rect.left}px`;
-    ghost.style.top = `${e.clientY - rect.top}px`;
-  });
-  bpStage.addEventListener("pointerleave", () => {
-    ghost.style.opacity = "";
-  });
-  bpStage.addEventListener("pointerdown", (e) => {
-    const rect = bpStage.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    bpPin.hidden = false;
-    bpPin.style.left = `${x}px`;
-    bpPin.style.top = `${y}px`;
-    bpBubble.hidden = false;
-    bpBubble.style.left = `${Math.min(x + 14, rect.width - 158)}px`;
-    bpBubble.style.top = `${Math.min(y + 18, rect.height - 64)}px`;
-    bpStage.classList.add("pinned");
-  });
+// 카드 묶음은 차례로 올라온다 — 자식마다 순번(--i)을 매긴다.
+for (const list of document.querySelectorAll("[data-stagger]")) {
+  for (const [i, el] of [...list.children].entries()) el.style.setProperty("--i", String(i));
 }
 
-// 작업 기록 — 줄을 누르면 그 시점으로, 뒤의 변경은 사라진다.
-const bhRows = [...document.querySelectorAll("#bh-list .bh-row")];
-for (const [i, row] of bhRows.entries()) {
-  row.addEventListener("click", () => {
-    bhRows.forEach((other, k) => {
-      other.classList.toggle("on", k === i);
-      other.classList.toggle("undo", k > i);
-    });
-  });
-}
-bhRows[0]?.classList.add("on");
-
-// 여러 프로젝트 — 줄을 누르면 가장 급한 것이 바뀐다.
-const bjRows = [...document.querySelectorAll("#bj-rows .bj-row")];
-const bjNote = $("bj-note");
-for (const row of bjRows) {
-  row.addEventListener("click", () => {
-    for (const other of bjRows) other.classList.toggle("on", other === row);
-    if (bjNote) bjNote.textContent = row.dataset.note ?? "";
-  });
-}
-
-// 알림 시연 — OS 알림의 재현을 화면 구석에 띄운다.
-const bnTry = $("bn-try");
-const toast = $("site-toast");
-const toastText = $("site-toast-text");
-let toastTimer = null;
-bnTry?.addEventListener("click", () => {
-  if (!toast) return;
-  toast.hidden = false;
-  if (toastText) toastText.textContent = "다 만들었어요 — 대화를 확인해 보세요";
-  // 다시 열릴 때 애니메이션이 살아나게 — display 토글로 재생된다.
-  toast.style.animation = "none";
-  void toast.offsetWidth;
-  toast.style.animation = "";
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toast.hidden = true;
-  }, 3200);
-});
-
-/* ---------- 설치 체크리스트 — 들어오면 차례로 채운다 ---------- */
-const checklist = $("install-checklist");
-if (checklist) {
-  const items = [...checklist.querySelectorAll("li")];
-  const fillAll = () => {
-    items.forEach((li, i) => {
-      setTimeout(() => li.classList.add("ok"), reduced ? 0 : 550 * (i + 1));
-    });
-  };
-  if (reduced) fillAll();
-  else {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          fillAll();
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "0px 0px -15% 0px" },
-    );
-    observer.observe(checklist);
+const revealTargets = [...document.querySelectorAll(".section, .appwin")];
+const revealInView = () => {
+  for (const el of revealTargets) {
+    if (el.classList.contains("in")) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.top < window.innerHeight * 0.92 && rect.bottom > 0) el.classList.add("in");
   }
+};
+if ("IntersectionObserver" in window) {
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("in");
+          observer.unobserve(entry.target);
+        }
+      }
+    },
+    { rootMargin: "0px 0px -8% 0px" },
+  );
+  for (const el of revealTargets) observer.observe(el);
 }
+window.addEventListener("scroll", revealInView, { passive: true });
+revealInView();

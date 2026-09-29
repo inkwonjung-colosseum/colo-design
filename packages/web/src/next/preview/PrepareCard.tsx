@@ -107,21 +107,13 @@ export function PrepareCard({
 }
 
 /** 화면을 다시 켜는 중(C5) · AI가 막힌 곳을 고치는 중 — 오류 문장은 없다. */
-export function StageNotice({
-  kind,
-  restarts,
-}: {
-  kind: "restarting" | "fixing";
-  restarts: number;
-}) {
+export function StageNotice({ kind }: { kind: "restarting" | "fixing" }) {
   return (
     <div className="nx-prep-card" role="status">
       <i className="nx-spin nx-spin--lg" aria-hidden="true" />
       <h3>{kind === "restarting" ? L.preview.restartingTitle : L.preview.fixingTitle}</h3>
       <p className="nx-prep-lines">
-        {kind === "restarting"
-          ? L.preview.restartingBody(Math.min(2, Math.max(1, restarts)))
-          : L.preview.fixingBody}
+        {kind === "restarting" ? L.preview.restartingBody : L.preview.fixingBody}
       </p>
     </div>
   );

@@ -31,7 +31,7 @@ export const L = {
       "제출이 막혀 개발자에게 알렸어요. 풀리면 도구가 다시 제출해요 — 지금은 계속 만들어도 돼요.",
     notifiedOther: "AI도 고칠 수 없는 문제라 개발자에게 알렸어요. 풀리면 저절로 이어져요.",
     reconnectInvite:
-      "연결 코드가 만료됐어요. 개발자에게 받은 새 초대 파일을 이 창에 놓아 주세요. 대화와 작업은 그대로예요.",
+      "연결 코드가 만료됐어요. 개발자에게 받은 새 초대 파일을 열어 주세요. 대화와 작업은 그대로예요.",
     reconnectLogin: "AI 로그인이 끝났어요. 브라우저에서 한 번만 다시 로그인해 주세요.",
     openInvite: "초대 파일 열기",
     loginInBrowser: "브라우저에서 로그인",
@@ -48,8 +48,9 @@ export const L = {
     beforeBlocked: "제출 전 · 제출하지 못했어요",
     submittedDone: "제출됨",
     review: "개발자 확인",
-    reviewing: "개발자가 보고 있어요",
-    reviewingComments: (n: number) => `개발자가 보고 있어요 · 코멘트 ${n}`,
+    // 열린 요청이 있다는 것만 안다 — 개발자가 실제로 열어 봤는지는 모른다. 아는 만큼만 말한다.
+    reviewing: "개발자 확인을 기다려요",
+    reviewingComments: (n: number) => `개발자 확인을 기다려요 · 코멘트 ${n}`,
     reviewed: "확인됨",
     merged: "반영됨",
     mergedNow: "반영됐어요",
@@ -75,8 +76,10 @@ export const L = {
     convs: "대화",
     toolWorkCount: (n: number) => `도구가 한 일 ${n}`,
     settings: "설정",
-    collapse: "사이드바 접기",
-    expand: "사이드바 열기",
+    /** 바퀴에 점이 켜져 있을 때의 이름 — 점의 뜻을 낭독과 툴팁이 말한다. */
+    settingsUpdate: "설정 · AI 새 버전이 있어요",
+    collapse: "사이드바 접기 · ⌘B",
+    expand: "사이드바 열기 · ⌘B",
     switchTo: (name: string) => `옮기기 · ${name}`,
     projects: "프로젝트",
     prepareOnFirstOpen: "처음 열 때 준비해요",
@@ -86,19 +89,18 @@ export const L = {
     waitingAnswerCount: (n: number) => `답을 기다려요 ${n}`,
     comments: (n: number) => `코멘트 ${n}`,
     aiFailedRetry: "AI가 답을 못 했어요 — 다시 시도할 수 있어요",
-    noScreensYet: "아직 만든 화면이 없어요",
   },
   /** 사이클 상태의 한 단어 — 사이드바 · 전환기 · 팔레트가 함께 쓴다. */
   cycle: {
     draft: "제출 전",
-    review: "개발자가 보고 있어요",
+    review: "개발자 확인을 기다려요",
     merged: "반영됐어요",
   },
   home: {
     greet: (name: string) => `${name}님, 무엇을 만들까요?`,
-    placeholder: "만들고 싶은 화면을 말해 주세요",
+    placeholder: "예: 회원 목록에 이름으로 찾는 검색창을 넣어 줘",
     hint: "그림이나 문서를 끌어다 놓아도 돼요 · 보내면 그 프로젝트의 새 대화가 열려요",
-    whichService: "어느 서비스에서 만들까요?",
+    whichService: "어느 프로젝트에서 만들까요?",
     waiting: "답을 기다려요",
     calm: "기다리는 일이 없어요",
     running: "지금 진행 중",
@@ -187,7 +189,9 @@ export const L = {
     attach: "그림 · 문서 첨부 (한 건 8MB까지)",
     pin: "찍기",
     pinTip: "화면에서 고칠 곳 찍기 · ⌘⇧P",
-    send: "보내기 · ↵",
+    send: "보내기 · ↵ (줄바꿈은 ⇧↵)",
+    /** AI 가 일하는 동안 보내면 줄을 선다 — 답이 끝나면 나간다. */
+    sendQueue: "답이 끝나면 보내요 · ↵",
     stop: "멈추기",
     pinNote: "어떻게 바꿀까요? (선택)",
     pinRemove: "빼기",
@@ -204,7 +208,6 @@ export const L = {
     noMatch: "맞는 모델이 없어요",
     think: "생각 시간",
     usage: "사용량",
-    loggedIn: "로그인됨",
   },
   /**
    * 빠르게의 문장 묶음(§5.4) — 칩의 이름 · 툴팁 카드 · 토스트. `FastWords`
@@ -236,7 +239,10 @@ export const L = {
   transcript: {
     emptyTitle: "무엇을 만들까요?",
     emptyBody: (name: string) =>
-      `오른쪽은 ${name}의 실제 화면이에요.\n말로 시키거나, 화면을 찍어서 짚어 주세요.`,
+      `오른쪽은 ${name}의 실제 화면이에요.\n말로 시키거나, 화면을 찍어서 짚어 주세요.\n그림이나 기획 문서를 끌어다 놓아도 돼요.`,
+    /** 좁은 창(900px 미만)에서는 미리보기가 오른쪽이 아니라 탭이다. */
+    emptyBodyNarrow: (name: string) =>
+      `${name}의 실제 화면은 화면 탭에서 봐요.\n말로 시키거나, 화면을 찍어서 짚어 주세요.\n그림이나 기획 문서를 끌어다 놓아도 돼요.`,
     emptyPreparing: (name: string) =>
       `${name} · 처음 켜는 중이에요.\n먼저 말해 두면 준비가 끝나는 대로 시작해요.`,
     queued: "준비가 끝나면 바로 보낼게요",
@@ -401,14 +407,11 @@ export const L = {
     addrPlaceholder: "화면 이름이나 주소",
     addrMine: "이 대화에서 만든 화면",
     addrOthers: "다른 화면",
-    addrFoot: "글자를 치면 거르고, / 로 시작하면 그 주소로 가요",
     restartingTitle: "화면을 다시 켜는 중이에요",
-    restartingBody: (n: number) =>
-      `미리보기가 저절로 꺼져서 도구가 다시 켜고 있어요 · ${n}/2\n두 번 켜도 안 되면 그때부터 AI가 고쳐요.`,
+    restartingBody: "미리보기가 저절로 꺼져서 다시 켜고 있어요.\n잠시만 기다려 주세요.",
     restarted: "화면이 다시 켜졌어요",
     fixingTitle: "AI가 막힌 곳을 고치고 있어요",
-    fixingBody:
-      "미리보기가 뜨지 않았어요. 오류 문장 대신 AI가 원인을 찾아 고치고, 끝나면 화면이 저절로 다시 떠요.",
+    fixingBody: "미리보기를 다시 띄우는 중이에요. 끝나면 화면이 저절로 떠요.",
     addrLabel: "화면 고르기",
     homeScreen: "첫 화면",
     untitledScreen: "이름 없는 화면",
@@ -434,7 +437,7 @@ export const L = {
     elapsedSec: (s: number) => `${s}초`,
     elapsedMin: (m: number, s: number) => `${m}분 ${s}초`,
     stepEta: (eta: string, elapsed: string) => `${eta} · ${elapsed}`,
-    addrNoScreens: "아직 화면이 없어요",
+    addrNoScreens: "아직 화면이 없어요 · 말로 부탁하면 여기에 생겨요",
     /** 아래는 AI 가 읽는 기계의 말 — 화면에는 서지 않는다. */
     stalledReport: "미리보기 화면이 새로 고친 뒤에도 30초 넘게 뜨지 않았어요.",
     lookAsk: "이 화면이 이렇게 보여요. 무엇이 잘못됐는지 보고 고쳐 주세요.",
@@ -447,7 +450,7 @@ export const L = {
     stripCount: (n: number) => `${n}개 담음`,
     stripOff: "끄기",
     bubblePlaceholder: "어떻게 바꿀까요? (안 적어도 돼요)",
-    bubbleKeepHint: "↵ 담기",
+    bubbleKeepHint: "↵ 담기 · ⌘↵ 보내기",
     keep: "담기",
     sendNow: "지금 보내기",
     removePin: "이 핀 빼기",
@@ -488,7 +491,7 @@ export const L = {
     cancel: "그만두기",
     /** U9 — 시각이 아니라 제목으로 묻는다. `n` 과 코멘트 여부는 목록에서 센다. */
     confirm: (title: string, n: number, withComments: boolean) =>
-      `「${title}」 직후의 화면으로 되돌릴까요?\n그 뒤에 한 변경 ${n}가지${withComments ? " (개발자 코멘트 반영 포함)" : ""}가 화면에서 사라져요.\n기록은 지워지지 않고, 개발자에게는 다음 제출 때 전해져요.`,
+      `「${title}」 직후의 화면으로 되돌릴까요?\n기록은 지워지지 않고, 되돌리기도 기록에 남아요. 개발자에게는 다음 제출 때 전해져요.\n그 뒤에 한 변경 ${n}가지${withComments ? " (개발자 코멘트 반영 포함)" : ""}만 화면에서 빠져요.`,
     revertedToast: (time: string) => `${time} 시점으로 되돌렸어요 — 되돌리기도 기록에 남아요`,
     /** 코멘트 반영 차례의 제목 머리(U9 · U14) — `revertSummary` 가 이것으로 센다. */
     commentPrefix: "코멘트 반영 — ",
@@ -686,6 +689,8 @@ export const L = {
     rowKeep: "그대로",
     /** 옛 초대장이 이름을 싣지 않았을 때만 묻는 선택 칸. */
     authorLabel: "이 작업에 적을 이름 (선택)",
+    /** 파일을 읽지 못했을 때 확인판의 제목 — 「가져왔어요」가 아니다. */
+    errorTitle: "초대 파일을 열지 못했어요",
   },
   /** 바뀜 행의 무엇이 바뀌었는가(U11) — 짝의 지금 값과 비교해 만든 한 줄. */
   inviteChange: {
@@ -703,7 +708,6 @@ export const L = {
     title: "설정",
     ai: "AI",
     aiSub: "다음 새 대화가 쓰는 AI",
-    unavailable: (n: number) => `쓸 수 없는 AI ${n}`,
     notInstalled: "설치되지 않았어요 · 없어도 모든 일이 돼요",
     install: "설치",
     login: "로그인",
@@ -712,6 +716,9 @@ export const L = {
     loginCode: "로그인 코드 붙여넣기",
     loginCodeSend: "코드 보내기",
     theme: "테마",
+    /** 테마 쪽 아래의 안내 줄 — 앱 전체를 키우고 줄이는 단축키(Windows 는 Ctrl). */
+    zoom: "글자 크기",
+    zoomSub: "앱 전체를 키우고 줄여요 · ⌘= 키우기 · ⌘- 줄이기 · ⌘0 원래대로",
     themeSub: "화면 전체의 색깔이에요 · Claude 가 기본이에요",
     notify: "알림",
     /** 테마 줄의 선택지 — 설정이 보여주는 목록(lib/settings 의 PICKER_THEMES)과
@@ -732,19 +739,26 @@ export const L = {
     notifyAll: "모든 답",
     sound: "소리",
     testNotify: "시험 알림",
+    testRow: "알림이 오는지 확인",
     openSystemNotify: "시스템 알림 설정 열기",
     testNotifyNote:
       "시험 알림이 오지 않으면 이 컴퓨터가 알림을 막아 둔 거예요. 시스템 알림 설정에서 켜 주세요.",
     connection: "연결",
     connectionSub: "개발자에게 받은 초대 파일로 이어져요",
     authorName: "작업에 적을 이름",
+    authorNameSub: "제출에 작성자로 적혀요",
     connectionCode: "연결 코드",
+    inviteRow: "초대 파일",
+    inviteRowSub: "새 프로젝트를 더하거나 연결을 다시 이을 때 열어요",
     openInvite: "초대 파일 열기",
     update: "업데이트",
     updateSub: "켤 때 · 돌아올 때 · 하루 한 번 저절로 확인해요",
     developer: "개발자용",
     developerSub: "보통은 열 일이 없어요",
-    developerFold: "문제 해결 도구 펼치기",
+    /** 왼쪽 목록의 점이 읽히는 말 — 새 버전이 있거나 연결이 곧 끝나는 쪽에 점이 서고, 쪽마다 이유를 말한다. */
+    attentionUpdate: "새 버전이 있어요",
+    attentionSoon: "곧 끝나요",
+    attentionExpired: "끝났어요",
     toolFolder: "도구 폴더",
     openFolder: "폴더 열기",
     dailyLog: "하루 로그",
@@ -773,8 +787,8 @@ export const L = {
     deferred: "도는 작업이 끝나면 설치해요",
     run: "업데이트",
     runApp: "지금 다시 시작해 설치",
-    autoLabel: "새 AI 버전이 나오면",
-    autoNote: "스스로 설치해요 · 도는 작업이 있으면 끝난 뒤에",
+    autoLabel: "새 AI 버전은 스스로 설치해요",
+    autoNote: "도는 작업이 있으면 끝난 뒤에 설치해요",
     checkNow: "지금 확인",
     checking: "확인하는 중",
     foundCount: (n: number) => `새 버전 ${n}개 · 방금 확인`,
@@ -811,14 +825,15 @@ export const L = {
     findInProject: "이 프로젝트의 대화 찾기",
     recentConvs: "최근 대화",
     projectConvs: (name: string) => `${name}의 대화`,
-    screens: "화면",
     commands: "명령",
     nowOpen: "지금 열림",
-    noMatch: (word: string) => `'${word}'와 맞는 것이 없어요`,
+    noMatch: (word: string) => `'${word}'에 맞는 것이 없어요`,
     noConvs: "아직 대화가 없어요",
     noConvsInProject: "이 프로젝트에 아직 대화가 없어요",
     moveFailed: "프로젝트로 옮기지 못했어요 — 잠시 뒤 다시 시도해 주세요",
-    settingsHint: "AI · 알림 · 연결 · 업데이트",
+    settingsHint: "AI · 테마 · 알림 · 연결 · 업데이트",
+    newConvHint: "빈 새 대화를 열어요",
+    homeHint: "홈으로 가요",
     move: "이동",
     open: "열기",
     close: "닫기",
@@ -826,7 +841,7 @@ export const L = {
 } as const;
 
 /**
- * 개발자용 폴드의 문장(U12 · J5) — `L` 의 금칙어 검사에서 빠진다. 진단 줄은
+ * 개발자용 쪽의 문장(U12 · J5) — `L` 의 금칙어 검사에서 빠진다. 진단 줄은
  * 개발자의 어휘(데몬 · 프로토콜)로 쓰는 것이 읽는 사람을 위한 것이므로.
  * `test/next-labels.test.ts` 가 이 export 를 금칙어 검사에서 건너뛴다.
  */

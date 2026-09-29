@@ -78,11 +78,11 @@ test("한 번도 연 적 없는 프로젝트 — 아직 열지 않음, 전환기
   assert.equal(projectNote(fresh, L).text, L.sidebar.notOpened);
 });
 
-test("사이클 한 단어 — 제출 전 · 개발자가 보고 있어요 · 반영됐어요", () => {
+test("사이클 한 단어 — 제출 전 · 개발자 확인을 기다려요 · 반영됐어요", () => {
   assert.equal(projectStatus(BASE, L).text, "제출 전");
   assert.equal(
     projectStatus({ ...BASE, handoff: handoff("open") }, L).text,
-    "개발자가 보고 있어요",
+    "개발자 확인을 기다려요",
   );
   assert.equal(projectStatus({ ...BASE, handoff: handoff("merged") }, L).text, "반영됐어요");
   assert.equal(projectStatus({ ...BASE, working: true }, L).spin, true);

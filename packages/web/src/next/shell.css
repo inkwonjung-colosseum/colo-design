@@ -83,6 +83,17 @@
   padding: 0 12px;
 }
 
+.nx-homebar-name {
+  min-width: 0;
+  margin-left: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .nx-body {
   position: relative;
   flex: 1;
@@ -170,6 +181,14 @@
   height: 0;
   overflow: hidden;
   visibility: hidden;
+}
+
+/* 탭을 옮기면 새로 앞에 선 칸이 흐림에서 걷힌다 — 가려진 칸은 마운트된 채 자리만 비우므로
+   규칙이 맞기 시작하는 순간(탭이 바뀐 순간)마다 한 번 돈다. 미리보기 게스트가 든 칸이라
+   위치가 아니라 투명도만 만진다. */
+.nx--narrow .nx-body[data-tab="chat"] .nx-chat,
+.nx--narrow .nx-body[data-tab="preview"] .nx-preview {
+  animation: nx-fade var(--nx-t-move) var(--drift);
 }
 
 .nx--narrow .nx-chat {

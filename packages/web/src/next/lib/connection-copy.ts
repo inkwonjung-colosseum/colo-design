@@ -35,6 +35,18 @@ const DAY_MS = 86_400_000;
 /** 미리 말하는 창(날) — 데몬의 예산표(BUDGETS.tokenExpiry)와 같은 값. */
 const WARN_DAYS = 14;
 
+/**
+ * 보내기를 잠그는 이유 — 끊겼으면 끊겼다고, 잇는 중이면 잇는 중이라고 말하고, 열려 있으면
+ * 잠그지 않는다(null). 대화 칸 · 홈의 입력창 · 홈의 받은 편지함이 같은 판정을 쓴다.
+ */
+export function connectionLock(
+  state: "idle" | "connecting" | "open" | "closed" | "error",
+  words: Pick<typeof L, "chat">,
+): string | null {
+  if (state === "open") return null;
+  return state === "closed" || state === "error" ? words.chat.offline : words.chat.connecting;
+}
+
 /** 설정 → 연결 한 줄의 판정 — 상태에서만 나온다. */
 export function connectionCopy(
   input: ConnectionInput,

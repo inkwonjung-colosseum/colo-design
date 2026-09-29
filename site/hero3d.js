@@ -111,7 +111,7 @@ if (!reduced && hero && appwin) {
       const px = p.x - curX * 26 * s;
       const py = p.y - curY * 18 * s;
       ctx.globalAlpha = 0.08 + s * 0.5;
-      ctx.fillStyle = "#9db1c7";
+      ctx.fillStyle = accentColor;
       ctx.beginPath();
       ctx.arc(px, py, 0.6 + s * 1.7, 0, Math.PI * 2);
       ctx.fill();

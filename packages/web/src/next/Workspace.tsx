@@ -8,6 +8,7 @@ import { ChatColumn } from "./chat/ChatColumn";
 import { HomeView } from "./home/HomeView";
 import { L } from "./labels";
 import { deriveJourney } from "./lib/journey";
+import { keyHint } from "./lib/key-hint";
 import { firstTurn, makingPhase } from "./lib/making";
 import { submitCopy } from "./lib/submit-copy";
 import { useNarrow, useShellNav } from "./lib/use-shell-nav";
@@ -20,12 +21,28 @@ import type { SlotProps } from "./slots";
 import { ProblemLine } from "./status/ProblemLine";
 import { StatusLine } from "./status/StatusLine";
 import { useWorkLedger } from "./status/use-work-ledger";
+import { Count } from "./ui/Count";
 import { MenuIcon, PanelIcon } from "./ui/icons";
 import { Toast } from "./ui/Toast";
 
-/** 대화 칸의 폭(U1) — 360~420px, 처음은 목업의 400. */
-const CHAT_BOUNDS = { min: 360, max: 420 } as const;
+/**
+ * 대화 칸의 폭(U1) — 320~640px, 처음은 목업의 400. 미리보기가 `PREVIEW_MIN` 아래로 줄지 않게
+ * 위쪽 한도는 창 폭에 따라 더 낮아진다. 고른 폭은 기억한다(다음에 켤 때도 그대로).
+ */
+const CHAT_MIN = 320;
+const CHAT_MAX = 640;
 const CHAT_DEFAULT = 400;
+const PREVIEW_MIN = 360;
+const CHAT_KEY = "nova-design.chatWidth";
+
+function storedChatWidth(): number {
+  try {
+    const value = Number(localStorage.getItem(CHAT_KEY));
+    return Number.isFinite(value) && value >= CHAT_MIN && value <= CHAT_MAX ? value : CHAT_DEFAULT;
+  } catch {
+    return CHAT_DEFAULT;
+  }
+}
 
 /** 턴이 살아 있는 상태 — 진행 시계와 `만드는 중` 이 읽는다. */
 const LIVE = new Set(["starting", "running", "waiting_permission", "waiting_question"]);
@@ -110,17 +127,24 @@ export function Workspace({
 
   // 팔레트와 단축키(⌘K · ⌘T · ⌘,) — 조합키가 붙어 입력창의 타이핑과 만나지 않는다.
   const [palette, setPalette] = useState(false);
-  const keys = useRef({ palette: () => {}, fresh: () => {}, settings: () => {} });
+  const keys = useRef({
+    palette: () => {},
+    fresh: () => {},
+    settings: () => {},
+    sidebar: () => {},
+  });
   keys.current = {
     palette: () => setPalette((open) => !open),
     fresh: () => nav.newThread(),
     settings: openSettings,
+    // ⌘B — 사이드바를 접고 편다(좁은 창에서는 서랍을 여닫는다).
+    sidebar: () => (narrow ? setDrawer(!state.drawer) : setCollapsed(!state.collapsed)),
   };
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
       // 대화상자가 떠 있으면 물러선다 — 팔레트 자기 토글(⌘K)만 예외.
-      const modal = document.querySelector(".modal, .palette, .nx-set") !== null;
+      const modal = document.querySelector(".modal, .nx-pal, .nx-set") !== null;
       const key = event.key.toLowerCase();
       if (modal && key !== "k") return;
       if (key === "k") {
@@ -132,17 +156,44 @@ export function Workspace({
       } else if (key === ",") {
         event.preventDefault();
         keys.current.settings();
+      } else if (key === "b") {
+        event.preventDefault();
+        keys.current.sidebar();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // 대화 칸의 폭 — 넓은 창의 한 경계. 설정에 남기지 않는다(폭이 60px 뿐이다).
-  const [chatWidth, setChatWidth] = useState(CHAT_DEFAULT);
+  // 대화 칸의 폭 — 넓은 창의 한 경계. 끌어 바꾸면 기억하고, 창이 좁아져 못 맞으면 조여서 그린다.
+  const [chatWidth, setChatWidth] = useState(storedChatWidth);
   const [drag, setDrag] = useState<{ startX: number; startWidth: number } | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [bodyWidth, setBodyWidth] = useState(0);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const measure = () => setBodyWidth(el.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const chatBounds = {
+    min: CHAT_MIN,
+    max: bodyWidth > 0 ? Math.max(CHAT_MIN, Math.min(CHAT_MAX, bodyWidth - PREVIEW_MIN)) : CHAT_MAX,
+  };
   const clamp = (value: number) =>
-    Math.round(Math.min(CHAT_BOUNDS.max, Math.max(CHAT_BOUNDS.min, value)));
+    Math.round(Math.min(chatBounds.max, Math.max(chatBounds.min, value)));
+  const shownChatWidth = clamp(chatWidth);
+  useEffect(() => {
+    if (drag !== null) return;
+    try {
+      localStorage.setItem(CHAT_KEY, String(chatWidth));
+    } catch {
+      /* 비공개 모드 — 이번 실행에서만 산다 */
+    }
+  }, [chatWidth, drag]);
 
   /** 지금 화면의 제목 — 미리보기 칸이 알린다(단계 3). 좁은 창의 탭이 읽는다. */
   const [screenName, setScreenName] = useState<string | null>(null);
@@ -182,7 +233,7 @@ export function Workspace({
     sidebarRef.current?.querySelector<HTMLElement>(".nx-side-nav .nx-side-row")?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (document.querySelector(".modal, .palette, .nx-set") !== null) return;
+      if (document.querySelector(".modal, .nx-pal, .nx-set") !== null) return;
       setDrawer(false);
     };
     window.addEventListener("keydown", onKey);
@@ -195,11 +246,23 @@ export function Workspace({
   useEffect(() => {
     if (sidebarHidden === sidebarWasHidden.current) return;
     sidebarWasHidden.current = sidebarHidden;
-    if (!sidebarHidden) return;
+    if (!sidebarHidden) {
+      // 펴면 손이 있던 펴기 단추가 사라지며 초점이 body 로 떨어진다 — 사이드바 첫 줄로 옮긴다.
+      if (document.activeElement === document.body) {
+        sidebarRef.current?.querySelector<HTMLElement>(".nx-side-nav .nx-side-row")?.focus();
+      }
+      return;
+    }
     if (!sidebarRef.current?.contains(document.activeElement)) return;
     const bar = home ? ".nx-homebar" : ".nx-statusbar";
     document.querySelector<HTMLElement>(`${bar} .nx-ibtn`)?.focus();
   }, [sidebarHidden, home]);
+
+  // 대화 화면이 홈 뒤에서 나올 때 — 대화 화면은 홈이 떠 있는 동안에도 마운트돼 있어(미리보기가
+  // 살아 있게) 입력창의 열쇠가 안 바뀐다. 입력창이 초점을 받도록 알린다.
+  useEffect(() => {
+    if (!home) window.dispatchEvent(new Event("nx:composer:focus"));
+  }, [home]);
 
   return (
     <>
@@ -226,7 +289,8 @@ export function Workspace({
           />
         )}
 
-        <main className="nx-main">
+        {/* 좁은 창의 서랍이 열려 있는 동안 뒷화면은 눌리지도 초점을 받지도 않는다(서랍은 모달처럼 보인다). */}
+        <main className="nx-main" inert={narrow && state.drawer}>
           {home && (
             <div className="nx-view">
               {sidebarHidden && (
@@ -234,12 +298,14 @@ export function Workspace({
                   <button
                     type="button"
                     className="nx-ibtn"
-                    title={narrow ? L.shell.menu : L.sidebar.expand}
-                    aria-label={narrow ? L.shell.menu : L.sidebar.expand}
+                    title={narrow ? L.shell.menu : keyHint(L.sidebar.expand)}
+                    aria-label={narrow ? L.shell.menu : keyHint(L.sidebar.expand)}
                     onClick={openSidebar}
                   >
                     {narrow ? <MenuIcon /> : <PanelIcon />}
                   </button>
+                  {/* 사이드바가 들어가면 지금 어느 프로젝트인지 이 막대가 말한다. */}
+                  {project && <span className="nx-homebar-name">{project.name}</span>}
                 </div>
               )}
               {/* 홈에서도 같은 한 줄(W2) — 가져온 직후 첫 화면이 홈이므로 초대 파일
@@ -297,21 +363,24 @@ export function Workspace({
                   onClick={() => nav.showTab("preview")}
                 >
                   {L.narrow.screenTab(screenName ?? project?.name ?? "")}
-                  {pinCount > 0 && <span className="nx-cnt">{pinCount}</span>}
+                  {pinCount > 0 && <Count n={pinCount} />}
                 </button>
               </div>
             )}
             <div
+              ref={bodyRef}
               className={`nx-body${drag ? " planner__body--resizing" : ""}`}
               data-tab={narrow ? state.tab : undefined}
-              style={narrow ? undefined : { gridTemplateColumns: `${chatWidth}px minmax(0, 1fr)` }}
+              style={
+                narrow ? undefined : { gridTemplateColumns: `${shownChatWidth}px minmax(0, 1fr)` }
+              }
             >
               <ChatColumn {...slot} />
               {!narrow && (
                 <Splitter
                   side="left"
-                  width={chatWidth}
-                  bounds={CHAT_BOUNDS}
+                  width={shownChatWidth}
+                  bounds={chatBounds}
                   label={L.shell.chatWidth}
                   active={drag !== null}
                   onPointerDown={(event) => {
@@ -322,7 +391,7 @@ export function Workspace({
                     } catch {
                       /* 이미 떠난 포인터 — 창 안의 끌기는 그대로 된다 */
                     }
-                    setDrag({ startX: event.clientX, startWidth: chatWidth });
+                    setDrag({ startX: event.clientX, startWidth: shownChatWidth });
                   }}
                   onPointerMove={(event) => {
                     if (!drag) return;
@@ -338,7 +407,7 @@ export function Workspace({
                     }
                     setDrag(null);
                   }}
-                  onNudge={(delta) => setChatWidth((prev) => clamp(prev + delta))}
+                  onNudge={(delta) => setChatWidth(clamp(shownChatWidth + delta))}
                   onReset={() => setChatWidth(CHAT_DEFAULT)}
                 />
               )}
@@ -358,8 +427,8 @@ export function Workspace({
         )}
       </div>
 
-      {/* 팔레트는 옛 셸의 것을 그대로 쓴다 — `.nx` 의 버튼 초기화가 그 모양을
-          덮지 않게 뿌리 밖에 그린다. 단계 6 이 새 모양으로 바꿀 때까지. */}
+      {/* 팔레트는 스스로 `.nx` 뿌리다(`palette.css`) — 앱 뿌리의 격자 · 100vh · 잘림에
+          갇히지 않게 그 옆에 그린다. */}
       {palette && (
         <Palette
           titleForThread={titleForThread}
@@ -369,6 +438,7 @@ export function Workspace({
           activeSlug={daemon.activeSlug}
           onOpenThread={(slug, thread) => nav.openThread(slug, thread.id)}
           onCreateSession={() => nav.newThread()}
+          onOpenHome={() => nav.goHome()}
           onActivateProject={(slug) => daemon.api.projectActivate(slug).then(() => undefined)}
           onOpenSettings={openSettings}
           onClose={() => setPalette(false)}

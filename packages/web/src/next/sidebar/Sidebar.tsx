@@ -3,8 +3,10 @@ import type { Ref } from "react";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
+import { keyHint } from "../lib/key-hint";
 import { hasNewerVersion } from "../lib/version";
 import type { ShellNav } from "../slots";
+import { Count } from "../ui/Count";
 import { GearIcon, HomeIcon, PanelIcon, PlusIcon, SearchIcon } from "../ui/icons";
 import { ConversationList } from "./ConversationList";
 import { OtherProjects } from "./OtherProjects";
@@ -68,8 +70,8 @@ export function Sidebar({
         <button
           type="button"
           className="nx-ibtn nx-collapse-btn"
-          title={L.sidebar.collapse}
-          aria-label={L.sidebar.collapse}
+          title={keyHint(L.sidebar.collapse)}
+          aria-label={keyHint(L.sidebar.collapse)}
           onClick={onCollapse}
         >
           <PanelIcon />
@@ -79,7 +81,7 @@ export function Sidebar({
         <button type="button" className="nx-side-row" onClick={() => nav.newThread()}>
           <PlusIcon />
           {L.sidebar.newConv}
-          <kbd>⌘T</kbd>
+          <kbd>{keyHint("⌘T")}</kbd>
         </button>
         <button
           type="button"
@@ -89,12 +91,12 @@ export function Sidebar({
         >
           <HomeIcon />
           {L.sidebar.home}
-          {waiting > 0 && <span className="nx-cnt nx-r">{waiting}</span>}
+          {waiting > 0 && <Count n={waiting} className="nx-r" />}
         </button>
         <button type="button" className="nx-side-row" onClick={onPalette}>
           <SearchIcon />
           {L.sidebar.find}
-          <kbd>⌘K</kbd>
+          <kbd>{keyHint("⌘K")}</kbd>
         </button>
       </nav>
       <ProjectSwitcher
@@ -125,8 +127,8 @@ export function Sidebar({
         <button
           type="button"
           className="nx-me"
-          aria-label={L.sidebar.settings}
-          title={L.sidebar.settings}
+          aria-label={updateReady ? L.sidebar.settingsUpdate : L.sidebar.settings}
+          title={updateReady ? L.sidebar.settingsUpdate : L.sidebar.settings}
           onClick={() => nav.openSettings()}
         >
           {author && <span className="nx-av">{Array.from(author)[0]}</span>}

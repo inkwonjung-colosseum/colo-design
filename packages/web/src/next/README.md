@@ -10,7 +10,8 @@
 훅(`useDaemon` · `useSessions` · `usePins` · `use-invite-import`), 대화록의 블록
 (`components/transcript/{blocks,activity,todo,shared}`), 미리보기 무대의 선로
 (`components/preview/PreviewFrame` — 데스크톱이 `[data-testid=preview-slot]` 을 찾는다 —
-와 `types.ts`), `components/shell/{Palette,Splitter}`, `ShortcutsSheet`, `lib/`.
+와 `types.ts`), `components/shell/{Palette,Splitter}`(팔레트의 옷은 `palette.css` — 스스로
+`.nx` 뿌리라 셸의 토큰을 받고, 앱 뿌리의 격자 · 잘림에는 갇히지 않는다), `ShortcutsSheet`, `lib/`.
 
 ## 규칙
 
@@ -27,6 +28,29 @@
   `styles.css` 의 전역 변수와 섞이지 않는다. 창 전체를 쓰는 뿌리(처음 한 번의
   `.nx-ob`)는 `.nx` 의 작업 틀 격자를 `display: block` 으로 풀어야 한다.
 - 주석은 한국어로 써도 된다 — 검사는 주석을 걷고 본다.
+
+## 움직임
+
+- **손끝에는 기본값이 있다.** 단추 · 접는 머리 · 링크 · 호버로 밝아지는 줄의 호버 · 선택 ·
+  눌림은 `next.css` 의 `:where()` 규칙이 150ms(`--nx-t-touch`)에 옮긴다 — 새 단추에
+  `transition` 을 따로 쓰지 않는다. 특이도가 0 이라 제 전환을 선언한 부품(`.nx-sw` …)이
+  이긴다. 화살표 키로 훑는 목록(`role="option"`)은 뺐다 — 하이라이트가 꼬리를 끌면 굼뜨다.
+- **자리를 옮기는 것은 `--nx-t-move`(220ms).** 가락은 `styles.css` 의 `--drift`(옮김) ·
+  `--spring`(튐). 접는 머리(`<details>`)는 `ui/ui.css` 가 높이째 여닫는다 —
+  `::details-content` 를 아는 엔진에서만이고, 모르면 예전처럼 곧바로 여닫힌다.
+- **등장은 새 줄에만.** CSS 만으로 등장을 걸면 React 가 재정렬에서 옮긴 옆 줄이 다시
+  등장한다. `lib/use-fresh-keys.ts` 의 `useFreshKeys(keys, scope)` 가 앞 렌더에 없던 열쇠만
+  가려 `nx-item--new`(격자 감싸개 `nx-item` — 자리를 열며) · `nx-row--new`(단추 한 줄 —
+  내려앉기만)를 붙인다. 처음 그릴 때와 `scope`(프로젝트)가 바뀔 때는 이미 있는 줄을 새
+  것으로 치지 않는다. 판정은 `lib/fresh-keys.ts`(순수).
+- **숫자 배지는 `ui/Count`.** 값이 바뀔 때만 한 번 튄다.
+- **끝난 뒤에도 남는 `transform` 애니메이션(`forwards` · `both`)을 쓰지 않는다** — 쌓임
+  맥락이 남아 입력창의 팝이 아래 형제에 깔린다. 채움은 `backwards` 만.
+- **동작 줄이기.** `.nx *` 규칙은 시간을 0 으로 만들 뿐이라 ① 지연(`animation-delay` ·
+  늦춘 전환)은 남고 ② `::details-content` 같은 가상 요소에는 닿지 않는다 — 그런 규칙은
+  자기 `@media (prefers-reduced-motion)` 블록을 갖는다.
+- **재는 법.** 움직임은 시험이 못 본다 — 견본 페이지(`dev/`)나 격리 데몬에서 rAF 로
+  계산된 값을 프레임마다 읽거나 `document.getAnimations()` 로 도는 것을 센다.
 
 ## labels.ts 의 칸
 

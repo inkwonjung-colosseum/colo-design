@@ -10,6 +10,7 @@ import { lookToTurn } from "../../lib/preview-turns";
 import { previewPathOf, registerScreenOpener, screenPath } from "../../lib/screen-link";
 import {
   lastTurnScreens,
+  pageTitleOf,
   screenKey,
   type TurnScreen,
   threadScreens,
@@ -77,6 +78,8 @@ const LIVE = new Set<SessionState>([
   "waiting_question",
 ]);
 const RECENT_MAX = 8;
+/** 이동과 제목 갱신이 따로 도착한 뒤 위치가 멎는 시간 — 그 뒤의 짝만 화면의 제목으로 적는다. */
+const TITLE_SETTLE_MS = 400;
 
 /**
  * 미리보기 칸(PLAN-UI 단계 3) — 막대 · 무대 · 찍기 알약 · 말풍선 · 준비 화면과
@@ -189,6 +192,27 @@ export function PreviewColumn({
     );
   }, [location, native, target]);
 
+  // 지나온 화면이 스스로 단 제목(`<title>`) — 대화도 작업도 이름을 모르는 화면의
+  // 마지막 재료다. 이동과 제목 갱신은 어느 쪽이 먼저든 따로 도착하므로, 위치가
+  // 잠깐 멎은 뒤의 짝만 적는다.
+  const [pageTitles, setPageTitles] = useState<ReadonlyMap<string, string>>(() => new Map());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 프로젝트가 바뀌면 새로 쌓는다.
+  useEffect(() => setPageTitles(new Map()), [root]);
+  useEffect(() => {
+    if (location?.kind !== "preview" || !location.title) return;
+    const key = screenKey(location.path);
+    const title = location.title;
+    const timer = setTimeout(() => {
+      setPageTitles((map) => {
+        if (map.get(key) === title) return map;
+        const next = new Map(map);
+        next.set(key, title);
+        return next;
+      });
+    }, TITLE_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [location]);
+
   // --- 이 대화가 말한 화면 ---------------------------------------------
   const toPath = useCallback((href: string) => previewPathOf(href, previewUrl), [previewUrl]);
   const blocks = activeSessionId ? (daemon.sessions[activeSessionId]?.blocks ?? null) : null;
@@ -242,8 +266,10 @@ export function PreviewColumn({
     (path: string): string =>
       titleOfPath(convScreens, path) ??
       cycleTitle(path) ??
-      (screenKey(path) === "/" ? L.preview.homeScreen : L.preview.untitledScreen),
-    [convScreens, cycleTitle],
+      (screenKey(path) === "/"
+        ? L.preview.homeScreen
+        : (pageTitleOf(pageTitles, path) ?? L.preview.untitledScreen)),
+    [convScreens, cycleTitle, pageTitles],
   );
   const screenName = nameOf(herePath);
   const hasScreen = previewUrl !== null && location?.kind !== "web";
@@ -296,15 +322,6 @@ export function PreviewColumn({
 
   const previewStopped = phase === "error" && repo?.errorKind === "preview";
   const restarting = previewStopped && repo?.detail?.startsWith(L.preview.restartPrefix) === true;
-  const [restarts, setRestarts] = useState(0);
-  const wasRestarting = useRef(false);
-  useEffect(() => {
-    if (restarting && !wasRestarting.current) setRestarts((n) => n + 1);
-    wasRestarting.current = restarting;
-  }, [restarting]);
-  useEffect(() => {
-    if (phase === "ready") setRestarts(0);
-  }, [phase]);
   // 서버가 저절로 꺼졌다 다시 섰다 — 한 줄로 알린다.
   const hadRestart = useRef(false);
   useEffect(() => {
@@ -624,7 +641,7 @@ export function PreviewColumn({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (sectionRef.current?.closest(".nx-offstage") != null) return;
-      if (document.querySelector(".modal, .palette")) return;
+      if (document.querySelector(".modal, .nx-pal")) return;
       const mod = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
       if (mod && event.shiftKey && !event.altKey && key === "p") {
@@ -652,9 +669,9 @@ export function PreviewColumn({
         finale={prepHold !== null}
       />
     ) : restarting ? (
-      <StageNotice kind="restarting" restarts={restarts} />
+      <StageNotice kind="restarting" />
     ) : fixing ? (
-      <StageNotice kind="fixing" restarts={restarts} />
+      <StageNotice kind="fixing" />
     ) : !previewUrl && location?.kind !== "web" ? (
       <div className="nx-pv-placeholder">{L.slot.previewWaiting}</div>
     ) : null;

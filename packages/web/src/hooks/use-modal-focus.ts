@@ -14,6 +14,10 @@ export function useModalFocus(panel: RefObject<HTMLElement | null>, open: boolea
     if (!open) return;
     const opener = document.activeElement as HTMLElement | null;
 
+    // Elements outside the tab order (tabindex -1) are not ends of the trap: a
+    // roving group (radio cards, tabs) leaves only its checked item tabbable,
+    // and if the last node in the DOM were an unreachable one, Tab would walk
+    // out of the dialog instead of wrapping.
     const focusables = (root: HTMLElement): HTMLElement[] =>
       Array.from(
         root.querySelectorAll<HTMLElement>(
@@ -27,7 +31,7 @@ export function useModalFocus(panel: RefObject<HTMLElement | null>, open: boolea
             '[tabindex]:not([tabindex="-1"])',
           ].join(", "),
         ),
-      ).filter((el) => el.getClientRects().length > 0);
+      ).filter((el) => el.tabIndex >= 0 && el.getClientRects().length > 0);
 
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
@@ -80,7 +84,7 @@ export function useModalFocus(panel: RefObject<HTMLElement | null>, open: boolea
 /** 덮개의 뿌리가 되는 클래스 — 낡은 셸의 것과 새 셸의 창 · 확인판이 함께 산다. */
 export const MODAL_ROOT_SELECTOR = [
   ".modal",
-  ".palette",
+  ".nx-pal",
   ".onboarding",
   ".nx-set-back",
   ".nx-modal-back",
@@ -95,7 +99,7 @@ export interface OverlayLike {
 export function topmostOverlay<T extends OverlayLike>(overlays: readonly T[]): T | null {
   if (overlays.length === 0) return null;
   return (
-    overlays.find((el) => el.classList.contains("palette")) ?? overlays[overlays.length - 1] ?? null
+    overlays.find((el) => el.classList.contains("nx-pal")) ?? overlays[overlays.length - 1] ?? null
   );
 }
 

@@ -361,6 +361,23 @@ test("noteGateCheck — fallback 칸은 되짚은 수를 싣고 0이면 싣지 �
   }
 });
 
+test("noteGateCheck — overflow 칸은 휴대폰 폭에서 밀린 화면 수를 싣고 0 도 싣는다 (2026-09-29)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: true, overflow: 1 });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: true, overflow: 0 });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 0, reopened: false, skipped: "no-screens" });
+    const rows = readRows(dir).filter((r) => r.kind === "gateset");
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]?.overflow, 1);
+    assert.equal(rows[1]?.overflow, 0, "문제가 다른 것뿐이어도 0 을 싣는다");
+    assert.equal("overflow" in (rows[2] ?? {}), false, "못 돈 게이트는 칸이 없다");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("noteGateCheck — 타입 검사를 돌렸으면 오류 0 도 싣는다 (PLAN-HARNESS §3.D D-5)", () => {
   const dir = mkdtempSync(join(tmpdir(), "nova-stats-"));
   try {

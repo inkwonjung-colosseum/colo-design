@@ -9,6 +9,7 @@ import { openScreenPath, screenPath } from "../../lib/screen-link";
 import { tailMoving } from "../../lib/tape-visibility";
 import type { TurnScreen } from "../../lib/turn-screens";
 import { L } from "../labels";
+import { connectionLock } from "../lib/connection-copy";
 import { isPreparing } from "../lib/project-note";
 import { dedupeScreens } from "../lib/thread";
 import type { ChatColumnProps } from "../slots";
@@ -267,12 +268,7 @@ export function ChatColumn({
   const [dragDepth, setDragDepth] = useState(0);
 
   const visiblePending = pending.filter((request) => request.sessionId === activeId);
-  const lockReason =
-    daemon.connection === "closed" || daemon.connection === "error"
-      ? L.chat.offline
-      : daemon.connection !== "open"
-        ? L.chat.connecting
-        : null;
+  const lockReason = connectionLock(daemon.connection, L);
   const cycleMerged = daemon.repo?.handoff?.state === "merged";
   const placeholder = preparing
     ? L.composer.placeholderPreparing
@@ -319,7 +315,9 @@ export function ChatColumn({
               <p>
                 {preparing
                   ? L.transcript.emptyPreparing(project.name)
-                  : L.transcript.emptyBody(project.name)}
+                  : narrow
+                    ? L.transcript.emptyBodyNarrow(project.name)
+                    : L.transcript.emptyBody(project.name)}
               </p>
             )}
           </div>

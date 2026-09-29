@@ -599,7 +599,7 @@ export function useSettings(): {
   useEffect(() => {
     const root = document.documentElement;
     const doc = document as Document & {
-      startViewTransition?: (update: () => void) => unknown;
+      startViewTransition?: (update: () => void) => { ready?: Promise<unknown> } | undefined;
     };
     const mode = themeSwapMode(
       root.dataset.theme === undefined,
@@ -611,7 +611,9 @@ export function useSettings(): {
       syncThemeColor();
     };
     if (mode === "view") {
-      doc.startViewTransition?.(paint);
+      // 전환이 건너뛰어지면(StrictMode 의 이중 실행 · 다른 전환이 끼어듦) `ready` 가 거절된다 —
+      // 색은 이미 바뀌었으니 삼킨다. 안 삼키면 처리 안 된 거절이 크래시 기록에 남는다.
+      doc.startViewTransition?.(paint)?.ready?.catch(() => undefined);
       return;
     }
     // 낡은 길 — 두 팔레트 사이의 어긋난 프레임을 50ms 동안 건너뛴다.

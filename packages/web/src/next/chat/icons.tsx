@@ -12,6 +12,7 @@ import {
   FileText,
   GitFork,
   Image,
+  Lock,
   type LucideIcon,
   Mail,
   MapPin,
@@ -55,6 +56,7 @@ export const ImageIcon = make(Image, 16);
 export const SparkIcon = make(Sparkle, 13);
 export const CheckIcon = make(Check, 13, 2.2);
 export const ChevIcon = make(ChevronDown, 12, 2);
+export const LockIcon = make(Lock, 12);
 export const FwdIcon = make(ChevronRight, 14, 2);
 
 // 프로바이더 표식 — 모델 칩이 지금 AI 의 제 얼굴을 입어 Codex 대화가 Claude 의

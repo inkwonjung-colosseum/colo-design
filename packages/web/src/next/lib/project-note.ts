@@ -22,7 +22,9 @@ export interface ProjectNote {
 /**
  * 선로에 없는 두 사실 — 부르는 쪽이 알면 넘긴다. `aiFailed` 는 그 프로젝트의
  * 대화가 `AI가 답을 못 했어요` 에서 멈춰 있는가(살아 있는 세션을 아는 활성
- * 프로젝트만 안다), `comments` 는 도착한 코멘트 수(단계 4 의 장부).
+ * 프로젝트만 안다 — 다른 프로젝트 줄은 활성이 아닌 프로젝트만 그리므로 지금은 넘기는
+ * 곳이 없고, 그 실패는 그 프로젝트의 대화 안 카드가 기다린다), `comments` 는 도착한
+ * 코멘트 수(단계 4 의 장부).
  */
 export interface ProjectNoteExtra {
   aiFailed?: boolean;

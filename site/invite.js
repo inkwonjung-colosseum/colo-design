@@ -224,7 +224,7 @@ const GUIDE_INSTALL_LINE = {
   win: '설치: https://github.com/inkwonjung-colosseum/nova-design/releases/latest 에서 nova-design-Setup-…-win-x64.exe 를 내려받아 설치하세요. 처음 실행할 때 한 번만 "추가 정보" → "실행" 을 눌러 주세요.',
 };
 const GUIDE_COMMON_LINES = [
-  '앱이 필요한 것을 스스로 설치합니다. "Claude Code 로그인" 을 누르고 브라우저에서 본인 계정으로 로그인만 하면 됩니다.',
+  '앱이 필요한 도구는 스스로 준비합니다. 첫 화면에서 "Claude Code 설치" 를 누르고, 브라우저가 열리면 본인 Claude 계정으로 로그인만 하면 됩니다.',
   "준비가 끝나면 함께 보낸 초대 파일을 앱 창에 끌어다 놓으세요. 그다음부터는 앱을 켜면 바로 작업 화면이 열립니다.",
 ];
 /** 고른 OS 의 세 줄 — 메일 초안과 복사 버튼이 같은 것을 쓴다. */
@@ -954,31 +954,3 @@ if (params.get("repo")) addManual(params.get("repo"), params.get("base") ?? "mai
 state.author = form.elements.author.value;
 state.reviewers = form.elements.reviewers.value;
 render();
-
-/* 스크롤 리빌 — .js 를 먼저 달아 숨김 상태를 켜고, 들어온 요소에 .in 을 단다.
-   IntersectionObserver 가 답하지 않는 환경(숨겨진 탭 등)을 위해 스크롤 폴백을 둔다. */
-document.documentElement.classList.add("js");
-const revealTargets = [...document.querySelectorAll(".section, .appwin")];
-const revealInView = () => {
-  for (const el of revealTargets) {
-    if (el.classList.contains("in")) continue;
-    const rect = el.getBoundingClientRect();
-    if (rect.top < window.innerHeight * 0.92 && rect.bottom > 0) el.classList.add("in");
-  }
-};
-if ("IntersectionObserver" in window) {
-  const observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("in");
-          observer.unobserve(entry.target);
-        }
-      }
-    },
-    { rootMargin: "0px 0px -8% 0px" },
-  );
-  for (const el of revealTargets) observer.observe(el);
-}
-window.addEventListener("scroll", revealInView, { passive: true });
-revealInView();

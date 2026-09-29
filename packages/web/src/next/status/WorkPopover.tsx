@@ -92,7 +92,13 @@ export function WorkPopover({
         });
 
   return (
-    <Popover anchor={anchor} onClose={onClose} align="end" className="nx-work-pop">
+    <Popover
+      anchor={anchor}
+      onClose={onClose}
+      align="end"
+      className="nx-work-pop"
+      label={L.work.title}
+    >
       <div className="nx-wp-h">
         <b>{L.work.title}</b>
         <div>{L.work.headerSub(name, start, where)}</div>
