@@ -1,4 +1,4 @@
-# 재생 벤치 (PLAN-HARNESS §3.A)
+# 재생 벤치
 
 화면 작업의 효과를 숫자로 재는 스크립트다. 데몬에 WebSocket 으로 붙어 시나리오
 (사람의 말 또는 핀 턴)를 실제 세션으로 돌리고, 턴 통계와 바뀐 파일에서 통과
@@ -112,7 +112,7 @@ node scripts/bench/bench.mjs compare bench-results/…-before.json bench-results
 
 - 벤치는 실제 세션을 돌린다 — 구독이 타고, 클론에 커밋이 쌓이고, `--yes` 로
   돌린 프로젝트의 원격에 작업 가지가 올라간다. 되돌리기는 결과 파일의
-  `startSha` 가 기준이다(자동 되돌리기는 없다 — PLAN-HARNESS O-4).
+  `startSha` 가 기준이다(자동 되돌리기는 없다).
 - 턴 통계 파일은 7일 보존이다 — 결과 파일에 턴 행이 통째로 들어가므로 비교는
   결과 파일끼리 하면 오래간다.
 - 접속 파일(`NOVA_DESIGN_BENCH_ENDPOINT`)에는 그 실행의 토큰이 들어 있다.

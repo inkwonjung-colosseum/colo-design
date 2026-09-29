@@ -978,7 +978,7 @@ UNNotification 이 받아들이며, 차이는 cdhash 의 안정성이다 — ad-
 Windows 대상(NSIS, MinGit 동반)은 CI 가 릴리스마다 빌드한다. 자가 업데이트는 두
 플랫폼 모두 `app.isPackaged` 가드 안에서 돈다 — mac 은 zip 내려받기 → sha256 →
 `/Applications/Nova Design.app` 교체, Windows 는 설치 파일 내려받기 → sha256 →
-앱 종료 대기 → NSIS 무인 설치(`/S`) → 다시 실행.
+앱 종료 대기 → NSIS 무인 설치(`/S --force-run`) → 다시 실행.
 
 ## 릴리스
 
@@ -988,8 +988,8 @@ Windows 대상(NSIS, MinGit 동반)은 CI 가 릴리스마다 빌드한다. 자�
 # 1. packages/desktop/package.json 의 "version" 이 릴리스 버전이다 — 먼저 올린다.
 # 2. 태그는 버전과 같아야 한다(워크플로우가 검사한다). 주석(annotated tag)
 #    본문이 릴리스 노트가 된다.
-git tag -a v0.3.6 -m "말과 문서가 화면이 되는 파이프라인"
-git push origin v0.3.6
+git tag -a v0.4.0 -m "이름이 Nova Design 으로 바뀐다"
+git push origin v0.4.0
 # 3. .github/workflows/desktop-release.yml → mac(macOS dmg+zip)·win(NSIS exe)
 #    빌드 → 릴리스 페이지에 4개 에셋 첨부(dmg, zip, exe, latest.json)
 ```
@@ -1035,7 +1035,7 @@ Windows 11 일반 사용자 계정(관리자 아님)과 mac 새 사용자 계정
    대화가 그 버전을 쓴다(없으면 줄이 처음부터 `최신이에요`).
 10. 작업 도중 멈추기 — AI 가 명령을 도는 중에 Stop · 창 닫기 · 강제 종료 각각의 앞에
     `node scripts/orphan-check.mjs before`, 뒤에 `after` 를 돌려 0줄인지 본다
-    (PLAN-CRASH-PROCESS.md §3.B 의 세 시나리오).
+    (Stop · 창 닫기 · 강제 종료 세 시나리오).
 
 ## 테스트
 

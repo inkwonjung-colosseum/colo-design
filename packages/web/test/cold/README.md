@@ -1,8 +1,9 @@
-# 콜드 리뷰 스크립트
+# 콜드 리뷰 기록
 
-맥락 없는 검토자가 기획자 역할로 아홉 과제를 수행한 기록(PLAN-UI 0.3)을 되돌릴 수
-있게 옮겨 둔 것이다. **지금은 목업 `mockups/redesign.html` 을 겨눈다** — PLAN-UI
-단계 8 이 개발 실행의 실제 셸로 다시 겨눈다.
+맥락 없는 검토자가 기획자 역할로 과제를 수행한 2026-09-25 리뷰의 **보존 기록**이다
+— 결과와 발견은 `RESULT-2026-09-25.md` 에 있다. 스크립트는 당시의 재설계 목업
+(`mockups/redesign.html`, 이후 걷혔다)을 겨누므로 지금은 그대로는 돌지 않는다.
+과제 파일은 판정 문장과 과제 설계의 원본으로 남긴다.
 
 - `run.js` — 이미 떠 있는 Chrome(`--remote-debugging-port=9333`)에 붙어 과제 파일
   하나를 `page` · `shot` · `wait` · `ctx` 를 받는 함수 몸으로 돌린다.
@@ -26,7 +27,7 @@
 프로젝트 없는 첫 실행, `SMOKE_REAL_CLAUDE=1` 은 사용자의 실제 Claude 로그인(구독을
 태운다). 먼저 `pnpm build`, 그리고 `packages/web` 에서 `node_modules/.bin/vite --port 29174`.
 
-## 실제 셸의 콜드 리뷰 — `next-cold.cjs` (PLAN-UI 단계 8)
+## 실제 셸의 콜드 리뷰 — `next-cold.cjs`
 
 `next-cold.cjs` 하나가 과제 1–10 을 격리 데몬 위의 실제 셸에서 돈다 — 문장은 `next/labels.ts`
 의 것을 글자 · 역할로 찾고, 걸음마다 스크린샷 한 장, 끝에 PASS / BLOCKED(이유) / SKIPPED(이유)
