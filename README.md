@@ -13,7 +13,7 @@ git, 터미널 같은 건 몰라도 쓴다.
 [![소개 페이지](https://img.shields.io/badge/%EC%86%8C%EA%B0%9C%20%ED%8E%98%EC%9D%B4%EC%A7%80-%EC%9B%80%EC%A7%81%EC%9D%B4%EB%8A%94%20%EB%8D%B0%EB%AA%A8-1e1e2e?style=for-the-badge)](https://inkwonjung-colosseum.github.io/nova-design/)
 [![초대장 만들기](https://img.shields.io/badge/%EA%B0%9C%EB%B0%9C%EC%9E%90-%EC%B4%88%EB%8C%80%EC%9E%A5%20%EB%A7%8C%EB%93%A4%EA%B8%B0-044ece?style=for-the-badge)](https://inkwonjung-colosseum.github.io/nova-design/#invite)
 
-![version](https://img.shields.io/badge/version-0.4.0-blue)
+![version](https://img.shields.io/badge/version-0.5.0-blue)
 ![platform](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Windows-lightgrey)
 ![stack](https://img.shields.io/badge/stack-Electron%20%C2%B7%20React%20%C2%B7%20TypeScript-9feaf9?labelColor=1e1e2e)
 ![monorepo](https://img.shields.io/badge/monorepo-pnpm-orange)
